@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+@theme {
+  /* Core surfaces */
+  --color-bg: #0e1320;
+  --color-bg-elevated: #161d30;
+  --color-surface: #1b2338;
+  /* One step lighter again than --color-surface — used by the Summary
+     page's pop-down breakdown card, which needs to read as a distinct
+     layer from BOTH the page background it drops onto and the ordinary
+     surface cards sitting below it. */
+  --color-surface-raised: #252f4a;
+
+  /* Monzo-inspired card colors, pulled from the reference screenshots */
+  --color-coral: #ff5b4c;
+  --color-coral-dark: #e2483a;
+  --color-joint: #fdfdfd;
+
+  /* Text */
+  --color-ink: #f5f6fa;
+  --color-ink-muted: #8992a9;
+  --color-ink-faint: #545e78;
+
+  /* Progress rings */
+  --color-track: #38415a;
+
+  /* Semantic */
+  --color-positive: #4cd08a;
+  --color-negative: #ff5b4c;
+
+  /* RGB triplet of --color-bg, for edge-fade gradients that need to
+     interpolate down to transparent (rgba(var(--bg-rgb), 0)) rather than
+     the literal `transparent` keyword, which some browsers visibly darken
+     partway through the interpolation. */
+  --bg-rgb: 14, 19, 32;
+
+  --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+:root {
+  /* Overwritten with real measured pixel values by the script in
+     index.html — these are only the fallback used for the brief instant
+     before that script first runs. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nav-h: 54px;
+}
+
+/* html/body never scroll — #app-content (inside #app-shell) is the only
+   scrollable element. Sized from var(--app-height), the same JS-measured
+   value set in index.html, rather than raw 100dvh: bare dvh can leave dead
+   space at the bottom on first paint in iOS standalone mode. */
+html {
+  background: var(--color-bg);
+  height: 100dvh;
+  height: var(--app-height, 100dvh);
+  overflow: hidden;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+  height: 100dvh;
+  height: var(--app-height, 100dvh);
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* iOS Safari auto-zooms into any input with a computed font-size under 16px
+   when it gains focus — the viewport meta lock (user-scalable=no) stops the
+   *user* from zooming, but doesn't stop this automatic one, so it's a
+   necessary second half of the same fix, not a duplicate of it. */
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+
+/* Soft gradient strips pinned to the very top/bottom of #app-shell so
+   scrolling content fades into the background colour as it reaches the
+   edges, instead of being hard-clipped right at the safe-area boundary.
+   pointer-events: none so they never block taps; z-index sits above
+   scrolling content but below the floating nav (see BottomNav). */
+.edge-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--safe-top);
+  pointer-events: none;
+  z-index: 50;
+}
+.edge-fade-top {
+  top: 0;
+  background: linear-gradient(to bottom, rgba(var(--bg-rgb), 1) 0%, rgba(var(--bg-rgb), 0) 100%);
+}
+.edge-fade-bottom {
+  bottom: 0;
+  background: linear-gradient(to top, rgba(var(--bg-rgb), 1) 0%, rgba(var(--bg-rgb), 0) 100%);
+}
