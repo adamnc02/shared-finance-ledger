@@ -1,8 +1,17 @@
-# Finance — personal finance tracker
+# Shared Ledger — household finance tracker
 
-A personal finance dashboard: net salary (UK tax/NI/pension/student loan), loan
+A household finance dashboard: net salary (UK tax/NI/pension/student loan), loan
 payoff tracking, personal + joint account bills with a Monzo-card-style
 dashboard, and what-if scenario modelling.
+
+This repo is the **shared** app. It starts as a copy of `personal-ledger` and
+gains Supabase/PowerSync sync on top; `personal-ledger` stays offline-only. The
+two are kept deliberately close — `npm run check:divergence` fails on any
+difference not listed in `DIVERGENCE.md`.
+
+The planning docs (build plan, divergence table, app knowledge, per-session
+prompts) live outside the repo, in
+`~/Downloads/App Development & Bug Tracking/shared-finance-ledger/`.
 
 ## Getting started
 
