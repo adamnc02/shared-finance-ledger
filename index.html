@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1320" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Personal Ledger Balance" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
+    <title>Personal Ledger Balance</title>
+    <script>
+      // ── Real viewport height + safe-area fix ────────────────────────────
+      // iOS WKWebView (standalone "Add to Home Screen" mode) has a known bug
+      // where 100dvh is sometimes computed against a stale/incorrect viewport
+      // on first paint, leaving dead space at the bottom until the user
+      // scrolls and forces a recalculation. Likewise, `env(safe-area-inset-*)`
+      // read live through a CSS custom property can return a stale or wrong
+      // value, which shows up as missing top safe-area padding.
+      //
+      // Fix: measure the real values in JS (visualViewport for height, a
+      // DOM probe for the safe-area insets — an element with
+      // `height: env(safe-area-inset-*)` set directly, not through a
+      // variable) and write the resolved pixel values onto --app-height /
+      // --safe-top / --safe-bottom, re-measuring on every event that could
+      // change them. The app shell then prefers these JS-measured variables
+      // over bare 100dvh/env(), with those kept only as a fallback for the
+      // brief instant before this script first runs.
+      (function () {
+        function measureEnv(prop) {
+          var el = document.createElement('div')
+          el.style.cssText = 'position:fixed;top:0;left:0;width:0;height:env(' + prop + ', 0px);visibility:hidden;pointer-events:none;'
+          document.documentElement.appendChild(el)
+          var val = el.offsetHeight
+          document.documentElement.removeChild(el)
+          return val
+        }
+
+        // In iOS standalone mode window.innerHeight shrinks WITH the keyboard,
+        // making innerHeight - visualViewport.height ≈ 0 — useless for
+        // detection. window.screen.height is the physical screen height and
+        // never changes, so comparing visualViewport.height against 75% of it
+        // reliably distinguishes "keyboard open" from any legitimate resize.
+        function isKeyboardOpen() {
+          if (!window.visualViewport) return false
+          if (!window.navigator.standalone) return false
+          var vvh = window.visualViewport.height
+          var screenH = (window.screen && window.screen.height) || vvh * 2
+          return vvh < screenH * 0.75
+        }
+
+        function setAppHeight() {
+          // Don't shrink the app shell while the keyboard is open — the
+          // browser's own scroll-into-view behaviour already handles getting
+          // a focused field visible, and freezing height here avoids the
+          // rest of the layout visibly collapsing underneath it.
+          if (isKeyboardOpen()) return
+          var measured = (window.visualViewport && window.visualViewport.height) || window.innerHeight
+          var h = measured + measureEnv('safe-area-inset-top')
+          if (window.screen && window.screen.height) h = Math.min(h, window.screen.height)
+          document.documentElement.style.setProperty('--app-height', h + 'px')
+        }
+
+        function setSafeAreaVars() {
+          document.documentElement.style.setProperty('--safe-bottom', measureEnv('safe-area-inset-bottom') + 'px')
+          document.documentElement.style.setProperty('--safe-top', measureEnv('safe-area-inset-top') + 'px')
+        }
+
+        function measureAll() {
+          setAppHeight()
+          setSafeAreaVars()
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+          var n = 0
+          var iv = setInterval(function () {
+            measureAll()
+            if (++n > 10) clearInterval(iv)
+          }, 500)
+        })
+        measureAll()
+        requestAnimationFrame(function () {
+          requestAnimationFrame(measureAll)
+        })
+        setTimeout(measureAll, 100)
+        setTimeout(measureAll, 400)
+        window.addEventListener('resize', measureAll)
+        window.addEventListener('orientationchange', measureAll)
+        window.addEventListener('pageshow', measureAll)
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', measureAll)
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

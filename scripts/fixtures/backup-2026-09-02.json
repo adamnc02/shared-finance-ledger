@@ -1,0 +1,1314 @@
+{
+  "primaryPersonId": "tue8sV-d",
+  "people": [
+    {
+      "id": "vh5IbJbo",
+      "name": "Beverley’s",
+      "color": "#ff5b4c",
+      "salaryHistory": [
+        {
+          "grossAnnual": 56650,
+          "taxCode": "374L",
+          "studentLoanPlan": "none",
+          "payFrequency": "monthly",
+          "deductions": [
+            {
+              "id": "V8QPgo",
+              "name": "Pension",
+              "type": "salary_sacrifice",
+              "amountType": "percent",
+              "amount": 12.5
+            },
+            {
+              "id": "zldOlz",
+              "name": "Holiday Buy",
+              "type": "salary_sacrifice",
+              "amountType": "fixed",
+              "amount": 70.39
+            },
+            {
+              "id": "IbU1gV",
+              "name": "Charity",
+              "type": "relief_at_source",
+              "amountType": "fixed",
+              "amount": 10
+            }
+          ],
+          "employerPensionPercent": 5,
+          "effectiveFrom": "2026-08-22",
+          "id": "4m4x3f0w",
+          "personId": "vh5IbJbo"
+        }
+      ],
+      "salaryOverrides": [
+        {
+          "payPeriodDate": "2026-10-14",
+          "netPayOverride": 2938.89,
+          "reason": "Salary amended (this payment only)",
+          "bonusGrossAmount": 1699.5,
+          "id": "POgSLXpy",
+          "personId": "vh5IbJbo"
+        }
+      ],
+      "savingsEntries": []
+    },
+    {
+      "id": "tue8sV-d",
+      "name": "Adam",
+      "color": "#7c6fe0",
+      "salaryHistory": [
+        {
+          "grossAnnual": 62400,
+          "taxCode": "1106L",
+          "studentLoanPlan": "none",
+          "payFrequency": "monthly",
+          "deductions": [
+            {
+              "id": "NiA9DO",
+              "name": "Pension",
+              "type": "relief_at_source",
+              "amountType": "percent",
+              "amount": 3.5,
+              "percentBasis": "qualifying_earnings"
+            }
+          ],
+          "employerPensionPercent": 5,
+          "effectiveFrom": "2026-08-28",
+          "id": "Hvy2vu3y",
+          "personId": "tue8sV-d"
+        },
+        {
+          "grossAnnual": 62400,
+          "taxCode": "1106L",
+          "studentLoanPlan": "none",
+          "payFrequency": "monthly",
+          "deductions": [
+            {
+              "id": "NiA9DO",
+              "name": "Pension",
+              "type": "relief_at_source",
+              "amountType": "percent",
+              "amount": 4,
+              "percentBasis": "qualifying_earnings"
+            }
+          ],
+          "employerPensionPercent": 5,
+          "effectiveFrom": "2026-09-30",
+          "id": "-RRakbgZ",
+          "personId": "tue8sV-d"
+        }
+      ],
+      "salaryOverrides": [
+        {
+          "payPeriodDate": "2026-09-30",
+          "netPayOverride": 3717.63,
+          "reason": "Salary amended (this payment only)",
+          "bonusGrossAmount": 3062.4,
+          "id": "T5WZSVSq",
+          "personId": "tue8sV-d"
+        }
+      ],
+      "savingsEntries": []
+    }
+  ],
+  "categories": [
+    {
+      "id": "category-credit-card",
+      "name": "Credit Card",
+      "icon": "credit_card",
+      "iconColor": "#ff5b4c",
+      "isBuiltIn": true
+    },
+    {
+      "id": "category-income",
+      "name": "Income",
+      "icon": "wallet",
+      "iconColor": "#ff8a3d",
+      "isBuiltIn": true
+    },
+    {
+      "id": "category-bills",
+      "name": "Bills",
+      "icon": "receipt",
+      "iconColor": "#ffc94d",
+      "isBuiltIn": true
+    },
+    {
+      "id": "category-savings",
+      "name": "Savings",
+      "icon": "savings",
+      "iconColor": "#4cd08a",
+      "isBuiltIn": true
+    },
+    {
+      "id": "category-seed-home",
+      "name": "Home",
+      "icon": "home",
+      "iconColor": "#3dd6c5"
+    },
+    {
+      "id": "category-seed-electricity",
+      "name": "Electricity",
+      "icon": "electricity",
+      "iconColor": "#4c9eff"
+    },
+    {
+      "id": "category-seed-water",
+      "name": "Water",
+      "icon": "water",
+      "iconColor": "#8f7bff"
+    },
+    {
+      "id": "category-seed-gas",
+      "name": "Gas",
+      "icon": "gas",
+      "iconColor": "#ff6ec7"
+    },
+    {
+      "id": "category-seed-council_tax",
+      "name": "Council Tax",
+      "icon": "council_tax",
+      "iconColor": "#a8b0c3"
+    },
+    {
+      "id": "category-seed-tv",
+      "name": "TV",
+      "icon": "tv",
+      "iconColor": "#ffffff"
+    },
+    {
+      "id": "category-seed-streaming",
+      "name": "Streaming",
+      "icon": "streaming",
+      "iconColor": "#ff5b4c"
+    },
+    {
+      "id": "category-seed-music",
+      "name": "Music",
+      "icon": "music",
+      "iconColor": "#ff8a3d"
+    },
+    {
+      "id": "category-seed-phone",
+      "name": "Phone",
+      "icon": "phone",
+      "iconColor": "#ffc94d"
+    },
+    {
+      "id": "category-seed-internet",
+      "name": "Internet",
+      "icon": "internet",
+      "iconColor": "#4cd08a"
+    },
+    {
+      "id": "category-seed-insurance",
+      "name": "Insurance",
+      "icon": "insurance",
+      "iconColor": "#3dd6c5"
+    },
+    {
+      "id": "category-seed-pet",
+      "name": "Pet",
+      "icon": "pet",
+      "iconColor": "#4c9eff"
+    },
+    {
+      "id": "category-seed-health",
+      "name": "Health",
+      "icon": "health",
+      "iconColor": "#8f7bff"
+    },
+    {
+      "id": "category-seed-medication",
+      "name": "Medication",
+      "icon": "medication",
+      "iconColor": "#ff6ec7"
+    },
+    {
+      "id": "category-seed-fitness",
+      "name": "Fitness",
+      "icon": "fitness",
+      "iconColor": "#a8b0c3"
+    },
+    {
+      "id": "category-seed-car",
+      "name": "Car",
+      "icon": "car",
+      "iconColor": "#ffffff"
+    },
+    {
+      "id": "category-seed-truck",
+      "name": "Truck",
+      "icon": "truck",
+      "iconColor": "#ff5b4c"
+    },
+    {
+      "id": "category-seed-loan",
+      "name": "Loan",
+      "icon": "loan",
+      "iconColor": "#ff8a3d"
+    },
+    {
+      "id": "category-seed-cash",
+      "name": "Cash",
+      "icon": "cash",
+      "iconColor": "#ffc94d"
+    },
+    {
+      "id": "category-seed-shopping",
+      "name": "Shopping",
+      "icon": "shopping",
+      "iconColor": "#4cd08a"
+    },
+    {
+      "id": "category-seed-clothing",
+      "name": "Clothing",
+      "icon": "clothing",
+      "iconColor": "#3dd6c5"
+    },
+    {
+      "id": "category-seed-food",
+      "name": "Food",
+      "icon": "food",
+      "iconColor": "#4c9eff"
+    },
+    {
+      "id": "category-seed-coffee",
+      "name": "Coffee",
+      "icon": "coffee",
+      "iconColor": "#8f7bff"
+    },
+    {
+      "id": "category-seed-garden",
+      "name": "Garden",
+      "icon": "garden",
+      "iconColor": "#ff6ec7"
+    },
+    {
+      "id": "category-seed-gaming",
+      "name": "Gaming",
+      "icon": "gaming",
+      "iconColor": "#a8b0c3"
+    },
+    {
+      "id": "category-seed-travel",
+      "name": "Travel",
+      "icon": "travel",
+      "iconColor": "#ffffff"
+    },
+    {
+      "id": "category-seed-education",
+      "name": "Education",
+      "icon": "education",
+      "iconColor": "#ff5b4c"
+    },
+    {
+      "id": "category-seed-maintenance",
+      "name": "Maintenance",
+      "icon": "maintenance",
+      "iconColor": "#ff8a3d"
+    },
+    {
+      "id": "category-seed-fuel",
+      "name": "Fuel",
+      "icon": "fuel",
+      "iconColor": "#ffc94d"
+    },
+    {
+      "id": "category-seed-baby",
+      "name": "Baby",
+      "icon": "baby",
+      "iconColor": "#4cd08a"
+    },
+    {
+      "id": "category-seed-joint",
+      "name": "Joint",
+      "icon": "joint",
+      "iconColor": "#3dd6c5"
+    },
+    {
+      "id": "hiwNGK2z",
+      "name": "Banking",
+      "icon": "hand_coins",
+      "iconColor": "#ffc94d"
+    }
+  ],
+  "recurringTemplates": [
+    {
+      "name": "Octopus Energy",
+      "amount": 150,
+      "categoryId": "category-seed-electricity",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-14",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "9IOei2Rc",
+      "active": true
+    },
+    {
+      "name": "Hastings Insurance",
+      "amount": 63.21,
+      "categoryId": "category-seed-car",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-14",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "As8MGW_b",
+      "active": true
+    },
+    {
+      "name": "United Utilities",
+      "amount": 74.29,
+      "categoryId": "category-seed-water",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-14",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "TG5VBvUb",
+      "active": true
+    },
+    {
+      "name": "Capita",
+      "amount": 14.95,
+      "categoryId": "category-seed-tv",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-15",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "yVEsDu1u",
+      "active": true
+    },
+    {
+      "name": "Sky Mobile",
+      "amount": 48,
+      "categoryId": "category-seed-phone",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-15",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "20p0R-Ix",
+      "active": true
+    },
+    {
+      "name": "Sky",
+      "amount": 63.49,
+      "categoryId": "category-seed-tv",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-15",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "HDUztHoe",
+      "active": true
+    },
+    {
+      "name": "Stockport MBC",
+      "amount": 196,
+      "categoryId": "category-seed-council_tax",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-15",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "DNE_-hJV",
+      "active": true
+    },
+    {
+      "name": "Agria Pet Insurance - Pippa",
+      "amount": 80.32,
+      "categoryId": "category-seed-pet",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-15",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "27y8_g91",
+      "active": true,
+      "amountEffectiveFrom": "2026-09-15",
+      "amountHistory": [
+        {
+          "effectiveFrom": "2026-09-15",
+          "amount": 68.58
+        }
+      ]
+    },
+    {
+      "name": "Agria Pet Insurance - Maisie",
+      "amount": 80.32,
+      "categoryId": "category-seed-pet",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-15",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "-IXi8DOw",
+      "active": true,
+      "amountEffectiveFrom": "2026-09-15",
+      "amountHistory": [
+        {
+          "effectiveFrom": "2026-09-15",
+          "amount": 68.58
+        }
+      ]
+    },
+    {
+      "name": "Animal Healthcare - Pippa",
+      "amount": 23,
+      "categoryId": "category-seed-pet",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-15",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "wzJjD_kl",
+      "active": true
+    },
+    {
+      "name": "Animal Healthcare - Maisie",
+      "amount": 23,
+      "categoryId": "category-seed-pet",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-15",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "kHU9S-me",
+      "active": true
+    },
+    {
+      "name": "BT",
+      "amount": 28.99,
+      "categoryId": "category-seed-internet",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-20",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "u0HD4zTY",
+      "active": true
+    },
+    {
+      "name": "Aviva Insurance",
+      "amount": 20.39,
+      "categoryId": "category-seed-home",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-20",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "BNKJgO9s",
+      "active": true
+    },
+    {
+      "name": "Scope",
+      "amount": 10,
+      "categoryId": "category-bills",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-20",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "3CPSTVMI",
+      "active": true
+    },
+    {
+      "name": "Legal & General",
+      "amount": 21.2,
+      "categoryId": "category-bills",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-08-22",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "2PHWq4Fs",
+      "active": true
+    },
+    {
+      "name": "Alzheimers Society",
+      "amount": 5,
+      "categoryId": "category-bills",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-08-22",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "JWhdR4l2",
+      "active": true
+    },
+    {
+      "name": "DVLA",
+      "amount": 17.06,
+      "categoryId": "category-seed-car",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-01",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "QekMH2ZE",
+      "active": true
+    },
+    {
+      "name": "RAC",
+      "amount": 18.96,
+      "categoryId": "category-seed-car",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-01",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "JHpX_Paz",
+      "active": true
+    },
+    {
+      "name": "Jennifer",
+      "amount": 75,
+      "categoryId": "category-seed-baby",
+      "paymentMethod": "standing_order",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-01",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "9s8TJ3pV",
+      "active": true
+    },
+    {
+      "name": "Tracy Lund",
+      "amount": 4.8,
+      "categoryId": "category-bills",
+      "paymentMethod": "standing_order",
+      "frequency": "every_n_weeks",
+      "intervalWeeks": 4,
+      "anchorDate": "2026-08-21",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "gejeNDpt",
+      "active": true
+    },
+    {
+      "name": "Legal & General",
+      "amount": 21.67,
+      "categoryId": "category-bills",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-03",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "-o0PUCQN",
+      "active": true
+    },
+    {
+      "name": "PayPal",
+      "amount": 10.49,
+      "categoryId": "category-bills",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-05",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "LMg2TCxp",
+      "active": true
+    },
+    {
+      "name": "Postcode Lottery - M20 5WE",
+      "amount": 12.5,
+      "categoryId": "category-bills",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-07",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "4TnHijze",
+      "active": true
+    },
+    {
+      "name": "Postcode Lottery - SK7 1HB",
+      "amount": 12.5,
+      "categoryId": "category-bills",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-07",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "8LVc0vGY",
+      "active": true
+    },
+    {
+      "name": "GP Savings Club",
+      "amount": 10,
+      "categoryId": "category-bills",
+      "paymentMethod": "standing_order",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-10",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "vh5IbJbo",
+      "id": "jDYHP1eO",
+      "active": true
+    },
+    {
+      "name": "Gym",
+      "amount": 37,
+      "categoryId": "category-seed-fitness",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-01",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "tue8sV-d",
+      "id": "MXVm7EDk",
+      "active": true
+    },
+    {
+      "name": "GiffGaff",
+      "amount": 10,
+      "categoryId": "category-seed-phone",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-07",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "tue8sV-d",
+      "id": "tXjLilK6",
+      "active": true
+    },
+    {
+      "name": "Monzo Perks",
+      "amount": 7,
+      "categoryId": "hiwNGK2z",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-16",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "tue8sV-d",
+      "id": "xIHusKKt",
+      "active": true
+    },
+    {
+      "name": "Windscribe",
+      "amount": 7,
+      "categoryId": "category-seed-internet",
+      "paymentMethod": "direct_debit",
+      "frequency": "monthly",
+      "anchorDate": "2026-09-19",
+      "location": "personal",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "ownerId": "tue8sV-d",
+      "id": "CZR6jPiy",
+      "active": true
+    }
+  ],
+  "loans": [
+    {
+      "name": "Car Finance",
+      "principal": 10315.8,
+      "monthlyPayment": 171.93,
+      "termMonths": 60,
+      "apr": 8.9,
+      "startDate": "2026-02-28",
+      "advanceDate": "2026-02-02",
+      "categoryId": "category-seed-car",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "active": true,
+      "id": "tr1nHhZv",
+      "overpayments": []
+    },
+    {
+      "name": "Home Improvements",
+      "principal": 15000,
+      "monthlyPayment": 290.2,
+      "termMonths": 60,
+      "apr": 6.2,
+      "startDate": "2025-03-12",
+      "advanceDate": "2025-02-07",
+      "lender": "Santander",
+      "categoryId": "category-seed-home",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "active": true,
+      "id": "Pnhr__HF",
+      "overpayments": [
+        {
+          "id": "2-Ue7gX7",
+          "date": "2025-02-12",
+          "amount": 40,
+          "note": "Overpayment",
+          "recastMode": "reduce_term"
+        }
+      ],
+      "statementCalibrationLines": [
+        {
+          "date": "2025-05-07",
+          "capital": 217.19,
+          "interest": 73.01
+        },
+        {
+          "date": "2025-06-07",
+          "capital": 218.28,
+          "interest": 71.92
+        },
+        {
+          "date": "2025-07-07",
+          "capital": 219.37,
+          "interest": 70.83
+        }
+      ],
+      "interestConventionId": "flat_monthly",
+      "calibratedMonthlyRate": 0.004865250165516252
+    }
+  ],
+  "creditCards": [
+    {
+      "name": "Natwest",
+      "categoryId": "category-credit-card",
+      "color": "#8b5cf6",
+      "interestRatePercent": 0,
+      "currentBalance": 1600,
+      "minimumPayment": {
+        "type": "fixed",
+        "amount": 200
+      },
+      "paymentDayOfMonth": 14,
+      "ownerId": "vh5IbJbo",
+      "id": "M2Ak3QNc",
+      "lumpPayments": [],
+      "active": true,
+      "balanceAsOfDate": "2026-08-23"
+    },
+    {
+      "name": "Santander",
+      "categoryId": "category-credit-card",
+      "color": "#14b8a6",
+      "interestRatePercent": 0,
+      "currentBalance": 0,
+      "balanceAsOfDate": "2026-08-17",
+      "minimumPayment": {
+        "type": "percent_of_balance",
+        "percent": 100
+      },
+      "paymentDayOfMonth": 14,
+      "ownerId": "vh5IbJbo",
+      "id": "lhF0fbR8",
+      "lumpPayments": [],
+      "active": true,
+      "minimumPaymentOverrides": [
+        {
+          "date": "2026-09-14",
+          "amount": 228.07
+        }
+      ]
+    }
+  ],
+  "transactions": [
+    {
+      "date": "2026-08-22",
+      "amount": 21.2,
+      "direction": "out",
+      "categoryId": "category-bills",
+      "paymentMethod": "direct_debit",
+      "status": "cleared",
+      "type": "bill_payment",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "sourceType": "recurring_template",
+      "sourceId": "2PHWq4Fs",
+      "note": "Legal & General",
+      "id": "zy9wxxGX"
+    },
+    {
+      "date": "2026-08-22",
+      "amount": 5,
+      "direction": "out",
+      "categoryId": "category-bills",
+      "paymentMethod": "direct_debit",
+      "status": "cleared",
+      "type": "bill_payment",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "sourceType": "recurring_template",
+      "sourceId": "JWhdR4l2",
+      "note": "Alzheimers Society",
+      "id": "aRkpjQPf"
+    },
+    {
+      "date": "2026-08-22",
+      "amount": 4.8,
+      "direction": "out",
+      "categoryId": "category-bills",
+      "paymentMethod": "standing_order",
+      "status": "cleared",
+      "type": "bill_payment",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "sourceType": "recurring_template",
+      "sourceId": "gejeNDpt",
+      "note": "Tracy Lund",
+      "id": "2L5qqq9T"
+    },
+    {
+      "id": "LjpXpPeu",
+      "date": "2026-08-29",
+      "amount": 150,
+      "direction": "out",
+      "categoryId": "category-seed-cash",
+      "paymentMethod": "cash",
+      "status": "cleared",
+      "type": "expense",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "note": "Weekly shopping"
+    },
+    {
+      "id": "oUo19RFn",
+      "date": "2026-09-05",
+      "amount": 150,
+      "direction": "out",
+      "categoryId": "category-seed-cash",
+      "paymentMethod": "cash",
+      "status": "pending",
+      "type": "expense",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "note": "Weekly shopping"
+    },
+    {
+      "id": "ihwKYrUb",
+      "date": "2026-08-26",
+      "amount": 150,
+      "direction": "out",
+      "categoryId": "category-seed-baby",
+      "paymentMethod": "cash",
+      "status": "cleared",
+      "type": "expense",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "note": "Edward birthday"
+    },
+    {
+      "id": "9EDHAVpE",
+      "date": "2026-08-26",
+      "amount": 300,
+      "direction": "in",
+      "categoryId": "category-income",
+      "paymentMethod": "bank_transfer",
+      "status": "cleared",
+      "type": "income",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "personId": "vh5IbJbo",
+      "note": "Transfer from Savings"
+    },
+    {
+      "date": "2026-08-24",
+      "amount": 1,
+      "direction": "out",
+      "categoryId": "category-credit-card",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "credit_card_spend",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "creditCardId": "lhF0fbR8",
+      "note": "NYX Tesco",
+      "id": "pwNU_3u2"
+    },
+    {
+      "date": "2026-08-24",
+      "amount": 9.29,
+      "direction": "out",
+      "categoryId": "category-credit-card",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "credit_card_spend",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "creditCardId": "lhF0fbR8",
+      "note": "Vinted",
+      "id": "JrrFiJPn"
+    },
+    {
+      "date": "2026-08-24",
+      "amount": 8.74,
+      "direction": "out",
+      "categoryId": "category-credit-card",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "credit_card_spend",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "creditCardId": "lhF0fbR8",
+      "note": "Vinted",
+      "id": "mLr5J399"
+    },
+    {
+      "date": "2026-08-24",
+      "amount": 13.2,
+      "direction": "out",
+      "categoryId": "category-credit-card",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "credit_card_spend",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "creditCardId": "lhF0fbR8",
+      "note": "Vinted",
+      "id": "taZmPYxL"
+    },
+    {
+      "date": "2026-08-24",
+      "amount": 24.75,
+      "direction": "out",
+      "categoryId": "category-credit-card",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "credit_card_spend",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "creditCardId": "lhF0fbR8",
+      "note": "Vinted",
+      "id": "surQ2phY"
+    },
+    {
+      "date": "2026-08-21",
+      "amount": 25.89,
+      "direction": "out",
+      "categoryId": "category-credit-card",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "credit_card_spend",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "creditCardId": "lhF0fbR8",
+      "note": "Vinted",
+      "id": "SOvoS0KC"
+    },
+    {
+      "date": "2026-08-19",
+      "amount": 86,
+      "direction": "out",
+      "categoryId": "category-credit-card",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "credit_card_spend",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "creditCardId": "lhF0fbR8",
+      "note": "B&Q",
+      "id": "rCQjl69L"
+    },
+    {
+      "date": "2026-08-19",
+      "amount": 54.7,
+      "direction": "out",
+      "categoryId": "category-credit-card",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "credit_card_spend",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "creditCardId": "lhF0fbR8",
+      "note": "B&M",
+      "id": "x-IiE8kp"
+    },
+    {
+      "date": "2026-08-18",
+      "amount": 4.5,
+      "direction": "out",
+      "categoryId": "category-credit-card",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "credit_card_spend",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "creditCardId": "lhF0fbR8",
+      "note": "Vinted",
+      "id": "8irslSQo"
+    },
+    {
+      "id": "cz4edBAv",
+      "date": "2026-08-24",
+      "amount": 0.8,
+      "direction": "out",
+      "categoryId": "category-seed-food",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "expense",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "note": "Co op"
+    },
+    {
+      "id": "Z-RvQXv8",
+      "date": "2026-08-24",
+      "amount": 10,
+      "direction": "out",
+      "categoryId": "category-seed-gaming",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "expense",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "note": "Lottery"
+    },
+    {
+      "date": "2025-02-12",
+      "amount": 40,
+      "direction": "out",
+      "categoryId": "category-seed-home",
+      "paymentMethod": "bank_transfer",
+      "status": "cleared",
+      "type": "loan_payment",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "sourceType": "loan_overpayment",
+      "sourceId": "2-Ue7gX7",
+      "note": "Overpayment",
+      "id": "JAPtgml7"
+    },
+    {
+      "date": "2026-08-28",
+      "amount": 171.93,
+      "direction": "out",
+      "categoryId": "category-seed-car",
+      "paymentMethod": "direct_debit",
+      "status": "cleared",
+      "type": "loan_payment",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "sourceType": "loan",
+      "sourceId": "tr1nHhZv",
+      "note": "Car Finance",
+      "id": "xwAVbpq5"
+    },
+    {
+      "id": "SjagFF3z",
+      "date": "2026-08-29",
+      "amount": 24,
+      "direction": "out",
+      "categoryId": "category-seed-health",
+      "paymentMethod": "card",
+      "status": "cleared",
+      "type": "expense",
+      "location": "personal",
+      "ownerId": "tue8sV-d",
+      "note": "Haircut"
+    },
+    {
+      "id": "5BmOXihO",
+      "date": "2026-08-31",
+      "amount": 200,
+      "direction": "in",
+      "categoryId": "category-credit-card",
+      "paymentMethod": "bank_transfer",
+      "status": "cleared",
+      "type": "income",
+      "location": "personal",
+      "ownerId": "tue8sV-d",
+      "personId": "tue8sV-d",
+      "note": "Transfer from Savings"
+    },
+    {
+      "date": "2026-09-01",
+      "amount": 17.06,
+      "direction": "out",
+      "categoryId": "category-seed-car",
+      "paymentMethod": "direct_debit",
+      "status": "cleared",
+      "type": "bill_payment",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "sourceType": "recurring_template",
+      "sourceId": "QekMH2ZE",
+      "note": "DVLA",
+      "id": "U4enDNxQ"
+    },
+    {
+      "date": "2026-09-01",
+      "amount": 18.96,
+      "direction": "out",
+      "categoryId": "category-seed-car",
+      "paymentMethod": "direct_debit",
+      "status": "cleared",
+      "type": "bill_payment",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "sourceType": "recurring_template",
+      "sourceId": "JHpX_Paz",
+      "note": "RAC",
+      "id": "rd1WLp5w"
+    },
+    {
+      "date": "2026-09-01",
+      "amount": 75,
+      "direction": "out",
+      "categoryId": "category-seed-baby",
+      "paymentMethod": "standing_order",
+      "status": "cleared",
+      "type": "bill_payment",
+      "location": "personal",
+      "ownerId": "vh5IbJbo",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "sourceType": "recurring_template",
+      "sourceId": "9s8TJ3pV",
+      "note": "Jennifer",
+      "id": "MlcyLs0R"
+    },
+    {
+      "date": "2026-09-01",
+      "amount": 37,
+      "direction": "out",
+      "categoryId": "category-seed-fitness",
+      "paymentMethod": "direct_debit",
+      "status": "cleared",
+      "type": "bill_payment",
+      "location": "personal",
+      "ownerId": "tue8sV-d",
+      "payee": "",
+      "payeeSharePercent": 100,
+      "sourceType": "recurring_template",
+      "sourceId": "MXVm7EDk",
+      "note": "Gym",
+      "id": "miNzmW5M"
+    },
+    {
+      "id": "CcO2zlC4",
+      "date": "2026-09-03",
+      "amount": 1000,
+      "direction": "out",
+      "categoryId": "category-seed-shopping",
+      "paymentMethod": "card",
+      "status": "pending",
+      "type": "expense",
+      "location": "personal",
+      "ownerId": "tue8sV-d",
+      "note": "Tesco"
+    }
+  ],
+  "payCycles": [
+    {
+      "personId": "vh5IbJbo",
+      "openingBalance": 612.75,
+      "openingBalanceDate": "2026-08-22",
+      "paydayDayOfMonth": 14,
+      "paydayAdjustForNonWorkingDay": true,
+      "cycleStartDayOfMonth": 14,
+      "cycleStartFollowsPayday": true
+    },
+    {
+      "personId": "tue8sV-d",
+      "openingBalance": 150.74,
+      "openingBalanceDate": "2026-08-28",
+      "paydayDayOfMonth": 31,
+      "paydayAdjustForNonWorkingDay": true,
+      "cycleStartDayOfMonth": 31,
+      "cycleStartFollowsPayday": true
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "Loan overpayment",
+      "includeInCumulative": true,
+      "actions": [
+        {
+          "id": "7JTP8y",
+          "type": "pay_off_loan",
+          "label": "Lump sum toward a loan/credit card",
+          "value": 1000,
+          "targets": [
+            {
+              "kind": "loan",
+              "id": "Pnhr__HF"
+            }
+          ]
+        },
+        {
+          "id": "267mA-",
+          "type": "loan_overpayment",
+          "label": "Regular extra payment on a loan/credit card",
+          "value": 100,
+          "linkedTargetKind": "loan",
+          "linkedTargetId": "Pnhr__HF"
+        }
+      ],
+      "id": "ZBVZXnx4"
+    }
+  ]
+}
