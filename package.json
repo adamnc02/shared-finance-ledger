@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "check:divergence": "tsx scripts/check-divergence.ts",
     "deploy": "npm run build && gh-pages -d dist",
     "verify": "tsx scripts/verify.ts",
     "test": "vitest run"
