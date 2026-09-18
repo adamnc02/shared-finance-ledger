@@ -22,6 +22,7 @@ import { addDays } from 'date-fns'
 import { toLocalIsoDate, parseLocalDate } from './date'
 import { buildLoanSchedule, buildLoanLedgerRows, generateLoanPaymentTransactions, summarizeLoan } from './ledgerLoans'
 import { dedupeKey } from './projection'
+import type { BalanceSpendTrendSeries } from './runningBalance'
 import type { AppDataV2, Loan, Transaction } from '../types/ledger'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -274,4 +275,43 @@ export function buildLoanTrendSeries(loan: Loan, asOfDate: Date = new Date()): L
   }
 
   return { points, currentBalance: summarizeLoan(loan, asOfDate).remainingBalance }
+}
+
+/**
+ * The same all-time balance series, shaped for the existing
+ * `BalanceSpendChart` so a loan reuses the proven chart rather than
+ * getting a second one written for it.
+ *
+ * In `view="balance"` that component reads exactly three things — `days`,
+ * `todayIso` and `balance[i].clearedBalance/projectedBalance` — and draws
+ * SOLID up to `todayIso`, DOTTED after it. That split is a free and
+ * genuinely meaningful one here: solid is what has actually been paid,
+ * dotted is the schedule still to come.
+ *
+ * Two deliberate shape compromises, neither of which the balance view
+ * reads:
+ *  - `granularity` is nominal. The type only offers the two pay-cycle
+ *    values and a loan has neither — Part C gives it ONE range, all time,
+ *    so nothing ever switches on it. It is not rendered.
+ *  - `spend`/`previousPeriodSpend` are zero-filled and empty: a loan has
+ *    no spend view at all (Adam: "balance view only").
+ *
+ * `todayIso` is snapped to the last point on or before today, because the
+ * chart locates the split with `days.indexOf(todayIso)` — a real calendar
+ * "today" is almost never one of the payment dates, and a miss silently
+ * renders the whole line solid.
+ */
+export function loanTrendAsBalanceSeries(loan: Loan, asOfDate: Date = new Date()): BalanceSpendTrendSeries {
+  const { points } = buildLoanTrendSeries(loan, asOfDate)
+  const asOfIso = toLocalIsoDate(asOfDate)
+  const days = points.map((p) => p.dateIso)
+  const lastPast = [...days].reverse().find((d) => d <= asOfIso)
+  return {
+    granularity: 'next_3_cycles',
+    days,
+    todayIso: lastPast ?? days[0],
+    balance: points.map((p) => ({ date: p.dateIso, clearedBalance: p.balance, projectedBalance: p.balance })),
+    spend: points.map((p) => ({ date: p.dateIso, spendToDate: 0 })),
+    previousPeriodSpend: [],
+  }
 }

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { formatCurrency } from '../lib/format'
+import { formatCurrency, formatFullDate } from '../lib/format'
 import { toLocalIsoDate, todayIso, parseLocalDate } from '../lib/date'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, CreditCard as CreditCardIcon, Layers, PiggyBank, Wallet, SlidersHorizontal, X, TrendingUp, RotateCcw } from 'lucide-react'
 import { useLedgerData } from '../context/LedgerContext'
 import { computeProjection, horizonCycles, inCycleWindow, horizonRangeEnd, THREE_CYCLES_AHEAD, buildPersonalTrendSeries, type ProjectionHorizon } from '../lib/projection'
 import { averageAdHocSpendForCycle, daysOfSpendHistory, forecastSpendForCycle, hasAnyMatchingSpend, hasSpendHistory, MIN_SPEND_HISTORY_DAYS, type SpendScope } from '../lib/averageSpendForecast'
-import { summarizeLoanProgress } from '../lib/ledgerLoans'
+import { summarizeLoanProgress, summarizeLoan } from '../lib/ledgerLoans'
 import { computeJointSummary, buildJointPersonGroups, type JointPersonGroup } from '../lib/jointLedger'
 import { computeJointAccountProjection, jointAccountSignedAmount, buildJointTrendSeries } from '../lib/jointAccountLedger'
 import { computeHouseholdProjections, buildHouseholdTrendSeries, buildHouseholdPersonGroups, type HouseholdPersonGroup } from '../lib/householdLedger'
@@ -35,6 +35,7 @@ import { CategoryIcon } from '../components/CategoryIcon'
 import { BalanceSpendChart, SavingsPotPillChart, shortDayLabel, type BalanceSpendView } from '../components/TrendChart'
 import { SAVINGS_CATEGORY_ID, CREDIT_CARD_CATEGORY_ID } from '../types/ledger'
 import { seededCategoryIdForIcon, distinctByCategory, DEFAULT_POT_CATEGORY_ICON, DEFAULT_POT_CATEGORY_ICON_COLOR } from '../lib/categories'
+import { visibleLoanCards, loanCyclePeriods, buildLoanCycleSections, loanTrendAsBalanceSeries, loanSignedAmount } from '../lib/loanLedger'
 import type { AppDataV2, CreditCard, Loan, Pot, SavingsPot, Transaction } from '../types/ledger'
 
 // ── Deck construction — doc addendum on Summary card visibility ────────
@@ -48,6 +49,7 @@ type DeckEntry =
   | { kind: 'joint' }
   | { kind: 'household' }
   | { kind: 'credit_card'; cardId: string }
+  | { kind: 'loan'; loanId: string }
   | { kind: 'savings_pot'; potId: string }
   | { kind: 'pot'; potId: string }
 
@@ -77,6 +79,12 @@ function buildDeck(data: AppDataV2): DeckEntry[] {
   const myCards = data.creditCards.filter((c) => c.ownerId === data.primaryPersonId && c.active)
   for (const c of myCards) deck.push({ kind: 'credit_card', cardId: c.id })
 
+  // PROMPT-08a Part C — one card per loan this person owns, placed with
+  // the other debt rather than among the savings cards. Visibility
+  // (ownership, and hidden once settled OR fully repaid) is
+  // `isLoanCardVisible`'s call, not re-derived here — see lib/loanLedger.ts.
+  for (const l of visibleLoanCards(data)) deck.push({ kind: 'loan', loanId: l.id })
+
   // REDESIGN (Adam-specified, 2026-09-02 — "it needs its own hero card,
   // like credit cards/joint account in the swipe deck, and not to be in
   // any way part of the personal card's screen render"): each pot is now
@@ -101,6 +109,8 @@ function deckEntryKey(e: DeckEntry): string {
   switch (e.kind) {
     case 'credit_card':
       return `credit_card:${e.cardId}`
+    case 'loan':
+      return `loan:${e.loanId}`
     case 'savings_pot':
       return `savings_pot:${e.potId}`
     case 'pot':
@@ -511,7 +521,7 @@ function SavingsPotDetail({
           rather than its specific enumeration, which appears to have
           missed this one. */}
       {target > 0 && (
-        <HomeSection>
+        <CollapsiblePieSection>
           <div className="flex flex-col items-center gap-1" style={{ borderColor: 'var(--color-track)' }}>
             <ProgressRing
               percent={percent}
@@ -528,7 +538,7 @@ function SavingsPotDetail({
               </p>
             )}
           </div>
-        </HomeSection>
+        </CollapsiblePieSection>
       )}
     </div>
   )
@@ -921,6 +931,10 @@ function heroLabel(entry: DeckEntry, data: AppDataV2): string {
       const card = data.creditCards.find((c) => c.id === entry.cardId)
       return `${card?.name ?? 'Credit Card'} Credit Card`
     }
+    case 'loan': {
+      const loan = data.loans.find((l) => l.id === entry.loanId)
+      return `${loan?.name ?? 'Loan'} Loan`
+    }
     case 'savings_pot': {
       const pot = data.savingsPots.find((p) => p.id === entry.potId)
       return `${pot?.name ?? 'Savings'} Savings`
@@ -1064,6 +1078,28 @@ function DeckHero({ entry, data, horizon, averageSpendForecast }: { entry: DeckE
         </BankCard>
       )
     }
+    case 'loan': {
+      const loan = data.loans.find((l) => l.id === entry.loanId)
+      if (!loan) return null
+      // Owed now · projected · due date (Adam, 2026-09-18), mirroring the
+      // credit card hero this sits next to in the deck. "Projected" is
+      // owed-at-the-horizon-end, the same owed-today-vs-owed-later sense a
+      // card means by it — a debt has no projected BALANCE the way a cash
+      // account does. Both figures come from summarizeLoan, so they cannot
+      // disagree with the ledger or the trend chart's own headline.
+      const loanAsOf = horizon === 'three_cycles' ? horizonRangeEnd(data, data.primaryPersonId, horizon, new Date()) : new Date()
+      const owedNow = summarizeLoan(loan, new Date()).remainingBalance
+      const owedProjected = summarizeLoan(loan, loanAsOf).remainingBalance
+      const loanCategory = data.categories.find((c) => c.id === loan.categoryId)
+      return (
+        <BankCard variant="custom" customColor={loanCategory?.iconColor ?? 'var(--color-coral)'} bankLabel={loan.name} accountLabel="Loan" icon={<Layers size={18} strokeWidth={1.5} color="#fff" />}>
+          <div className="mt-6 space-y-1.5">
+            <CardRow label="Owed" value={owedNow} />
+            <CardRow label="Projected" value={owedProjected} emphasized />
+          </div>
+        </BankCard>
+      )
+    }
     case 'savings_pot': {
       const pot = data.savingsPots.find((p) => p.id === entry.potId)
       if (!pot) return null
@@ -1170,6 +1206,10 @@ function DeckDetail(props: {
       const pot = (data.pots ?? []).find((p) => p.id === entry.potId)
       return pot ? <PotDetail {...props} pot={pot} /> : null
     }
+    case 'loan': {
+      const loan = data.loans.find((l) => l.id === entry.loanId)
+      return loan ? <LoanDetail loan={loan} data={data} horizon={props.horizon} cycleTotals={props.cycleTotals} showCleared={props.showCleared} /> : null
+    }
   }
 }
 
@@ -1213,7 +1253,10 @@ function DeckDetail(props: {
  * untouched by this change.
  */
 function canShowCycleTotals(entry: DeckEntry, _horizon: ProjectionHorizon, grouping: Grouping, order: Order): boolean {
-  if (entry.kind === 'credit_card') return order === 'date' && grouping !== 'category'
+  // A loan card has no group-by/order-by of its own (see
+  // DECK_CONTROLS_SHOW_GROUP_ORDER), so those two are always at their
+  // defaults here — cycle-end totals simply apply, as on a credit card.
+  if (entry.kind === 'credit_card' || entry.kind === 'loan') return order === 'date' && grouping !== 'category'
   return (
     (entry.kind === 'personal' || entry.kind === 'household' || entry.kind === 'joint' || entry.kind === 'pot' || entry.kind === 'savings_pot') &&
     order === 'date' &&
@@ -2895,15 +2938,23 @@ function PersonalDetail({
         />
       </HomeSection>
 
+      {/* PROMPT-08a Part C — the per-loan rings have MOVED to each loan's
+          own hero card; only the combined total stays here (Adam: "individual
+          loan pie charts move off the personal card. The combined total pie
+          chart stays on the personal card"). `individualRings={false}` is
+          what does that; the Joint and Household callers are unchanged, since
+          the loans they show belong to other people and so have no card of
+          their own to move to. */}
       {data.loans.some((l) => l.location === 'personal' && l.ownerId === data.primaryPersonId && l.active) && (
-        <HomeSection>
+        <CollapsiblePieSection>
           <LoanProgressRingsSection
             data={data}
             horizon={horizon}
             loans={data.loans.filter((l) => l.location === 'personal' && l.ownerId === data.primaryPersonId && l.active)}
             horizonEndDate={parseLocalDate(projection.horizonEnd)}
+            individualRings={false}
           />
-        </HomeSection>
+        </CollapsiblePieSection>
       )}
     </div>
   )
@@ -2925,14 +2976,53 @@ function HomeSection({ children, className = '' }: { children: ReactNode; classN
   )
 }
 
+/**
+ * Every hero card's Pie Charts section, collapsible and COLLAPSED BY
+ * DEFAULT — PROMPT-08a Part C, and deliberately a global change across all
+ * of them (Personal, Joint, Household, Savings Pot, Credit Card and the
+ * per-loan cards), not just the loan ones: "Every pie chart on every hero
+ * card becomes collapsible, collapsed by default."
+ *
+ * The collapsed state is per-instance and starts closed on every render of
+ * a card, which is the intent — "collapsed by default" is the default
+ * every time you arrive at a card, not a preference to remember. That also
+ * keeps it consistent with CategoryGroupedList's own collapse state, which
+ * is likewise per-instance and not persisted.
+ */
+function CollapsiblePieSection({ title = 'Pie charts', children }: { title?: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <HomeSection>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between text-left"
+        aria-expanded={open}
+        aria-label={open ? `Hide ${title.toLowerCase()}` : `Show ${title.toLowerCase()}`}
+      >
+        <span className="font-body text-sm font-semibold text-[var(--color-ink)]">{title}</span>
+        {open ? <ChevronUp size={16} className="text-[var(--color-ink-muted)]" /> : <ChevronDown size={16} className="text-[var(--color-ink-muted)]" />}
+      </button>
+      {open && <div className="mt-4">{children}</div>}
+    </HomeSection>
+  )
+}
+
 function LoanProgressRingsSection({
   data,
   horizon,
   loans,
   horizonEndDate,
+  individualRings = true,
 }: {
   data: AppDataV2
   horizon: ProjectionHorizon
+  /**
+   * PROMPT-08a Part C — false on the Personal card, where each loan now has
+   * its own hero card carrying its own ring, so only the combined total
+   * belongs here. Joint/Household keep their per-loan rings: those loans
+   * can belong to other household members, who have no card in this deck.
+   */
+  individualRings?: boolean
   // Which loans this instance covers — Personal: this person's own
   // personal-location loans; Household: EVERY household member's
   // personal-location loans (Adam-specified, 2026-09-03: "Household pie
@@ -3002,7 +3092,7 @@ function LoanProgressRingsSection({
         <div>
           <h3 className="font-body text-sm font-semibold text-[var(--color-ink)] mb-3">Loans</h3>
           <div className="flex flex-col items-center gap-5">
-            {loans.map((loan, i) => {
+            {(individualRings ? loans : []).map((loan, i) => {
               const progress = loanProgress[i]
               const projected = projectedLoanProgress?.[i]
               const category = data.categories.find((c) => c.id === loan.categoryId)
@@ -3049,9 +3139,14 @@ function LoanProgressRingsSection({
               )
             })}
 
-            {loans.length > 1 && (
+            {/* With the individual rings hidden (Personal card), the combined
+                ring shows even for a single loan — it is the only ring left,
+                and "the combined total stays on the personal card" holds
+                whether there is one loan or five. Its separator only makes
+                sense when there are rings above it to separate from. */}
+            {(individualRings ? loans.length > 1 : loans.length > 0) && (
               <div
-                className="flex flex-col items-center gap-1 pt-5 mt-1 border-t w-full"
+                className={`flex flex-col items-center gap-1 w-full${individualRings ? ' pt-5 mt-1 border-t' : ''}`}
                 style={{ borderColor: 'var(--color-track)' }}
               >
                 <ProgressRing
@@ -3219,9 +3314,9 @@ function JointDetail({
           rule ("only render where a ring already renders today") says so,
           even though its specific enumeration list omitted Joint. */}
       {jointProjection && jointLoans.length > 0 && (
-        <HomeSection>
+        <CollapsiblePieSection>
           <LoanProgressRingsSection data={data} horizon={horizon} loans={jointLoans} horizonEndDate={parseLocalDate(jointProjection.horizonEnd)} />
-        </HomeSection>
+        </CollapsiblePieSection>
       )}
     </div>
   )
@@ -3437,9 +3532,9 @@ function HouseholdDetail({
       </HomeSection>
 
       {householdLoans.length > 0 && (
-        <HomeSection>
+        <CollapsiblePieSection>
           <LoanProgressRingsSection data={data} horizon={horizon} loans={householdLoans} horizonEndDate={householdHorizonEnd} />
-        </HomeSection>
+        </CollapsiblePieSection>
       )}
     </div>
   )
@@ -3596,6 +3691,122 @@ function CreditCardCycleGroupedList({
   )
 }
 
+/**
+ * A loan's own hero-card detail — PROMPT-08a Part C.
+ *
+ * Reads the SAME `loan_payment` rows the funding side shows, displayed
+ * POSITIVE via `loanSignedAmount`: one stored row, two presentations.
+ * Nothing here writes a transaction — see
+ * DECISION-2026-09-18-loan-ledger-double-entry.md for why a second stored
+ * mirror row was rejected.
+ *
+ * The cycles are the LOAN's own payment periods, never the household pay
+ * cycle — the same rule a credit card follows for its statement periods,
+ * and for the same reason (PROMPT-01 Part B: a pay-cycle window could not
+ * show a charge falling one day past its end).
+ *
+ * Deliberately narrower than the other cards' controls: the horizon pill,
+ * cycle-end totals and "show cleared" all apply (Adam, 2026-09-18: "it
+ * should look exactly like everything else"), but group-by and order-by do
+ * not — every row on one loan's ledger carries that loan's own category,
+ * so grouping by it says nothing. `DECK_CONTROLS_SHOW_GROUP_ORDER` is what
+ * enforces that.
+ */
+function LoanDetail({
+  loan,
+  data,
+  horizon,
+  cycleTotals,
+  showCleared,
+}: {
+  loan: Loan
+  data: AppDataV2
+  horizon: ProjectionHorizon
+  cycleTotals: boolean
+  showCleared: boolean
+}) {
+  const asOf = new Date()
+  const owedNow = summarizeLoan(loan, asOf).remainingBalance
+  const owedProjected = summarizeLoan(loan, horizon === 'three_cycles' ? horizonRangeEnd(data, data.primaryPersonId, horizon, asOf) : asOf).remainingBalance
+  const category = data.categories.find((c) => c.id === loan.categoryId)
+  const color = category?.iconColor ?? 'var(--color-coral)'
+  // parseLocalDate, never `new Date(iso)` — the latter parses an ISO date
+  // as UTC and can report the previous day under BST. That is the exact
+  // class of bug the 2026-09-15 date-parsing sweep exists for.
+  const dueDayOfMonth = parseLocalDate(loan.startDate).getDate()
+
+  // 1 period for "This cycle", 1 + THREE_CYCLES_AHEAD for "Next 3 cycles"
+  // — the horizon chooses HOW MANY of the loan's own periods to show, and
+  // never switches the ledger back to the pay cycle.
+  const periods = loanCyclePeriods(loan, asOf, horizon === 'three_cycles' ? 1 + THREE_CYCLES_AHEAD : 1)
+  const sections = buildLoanCycleSections(loan, data.transactions, periods)
+
+  // The flat list is FLATTENED FROM THE SECTIONS, never filtered out of
+  // data.transactions separately — that separation is exactly what let the
+  // credit card's two toggle states disagree about the same card on the
+  // same data (PROMPT-01 Part B). "Show cleared" applies to both paths
+  // identically, and bounds cleared rows to the window like any other row
+  // (the 2026-09-17 bug this must not reintroduce).
+  const visibleRows = sections.flatMap((s) => s.rows).filter((t) => showCleared || t.status !== 'cleared')
+
+  const trendSeries = loanTrendAsBalanceSeries(loan, asOf)
+
+  return (
+    <div className="flex flex-col gap-4">
+      <HomeSection>
+        <h2 className="font-display text-lg font-semibold text-[var(--color-ink)] mb-1">{loan.name}</h2>
+        <p className="text-xs text-[var(--color-ink-faint)] mb-4">
+          £{formatCurrency(owedNow)} owed · £{formatCurrency(owedProjected)} projected · due on the {dueDayOfMonth}
+          {ordinalSuffix(dueDayOfMonth)}
+        </p>
+
+        {cycleTotals ? (
+          <div className="flex flex-col gap-4">
+            {sections.map((section) => {
+              const rows = section.rows.filter((t) => showCleared || t.status !== 'cleared')
+              return (
+                <div key={section.endIso}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-semibold text-[var(--color-ink-muted)]">Due {formatFullDate(section.endIso)}</span>
+                    <span className="text-xs font-mono text-[var(--color-ink-faint)]">£{formatCurrency(section.balanceAfter)} owed after</span>
+                  </div>
+                  <div className="flex flex-col divide-y" style={{ borderColor: 'var(--color-track)' }}>
+                    {rows.map((t) => (
+                      <TransactionRow key={t.id} t={t} data={data} amountSign={loanSignedAmount} />
+                    ))}
+                    {rows.length === 0 && <p className="text-sm text-[var(--color-ink-muted)] text-center py-4">Nothing due this cycle.</p>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="flex flex-col divide-y" style={{ borderColor: 'var(--color-track)' }}>
+            {visibleRows.map((t) => (
+              <TransactionRow key={t.id} t={t} data={data} amountSign={loanSignedAmount} />
+            ))}
+            {visibleRows.length === 0 && <p className="text-sm text-[var(--color-ink-muted)] text-center py-6">No payments in this window.</p>}
+          </div>
+        )}
+      </HomeSection>
+
+      {/* Balance view only, one range: all time (Adam's spec). No
+          granularity control, which is why this renders the chart directly
+          rather than going through TrendPreview/TrendsModal — those exist to
+          switch between This cycle and Next 3 cycles, and a loan has
+          neither. The x axis is the loan's payment dates plus any
+          overpayment, which is what buildLoanTrendSeries produces. */}
+      <HomeSection>
+        <div className="flex items-baseline justify-between mb-3">
+          <h3 className="font-body text-sm font-semibold text-[var(--color-ink)]">Balance</h3>
+          <span className="text-xs text-[var(--color-ink-faint)]">£{formatCurrency(owedNow)} owed today · all time</span>
+        </div>
+        <BalanceSpendChart series={trendSeries} view="balance" color={color} height={170} />
+      </HomeSection>
+    </div>
+  )
+}
+
 function CreditCardDetail({
   card: storedCard,
   data,
@@ -3740,7 +3951,7 @@ function CreditCardDetail({
         />
       </HomeSection>
 
-      <HomeSection>
+      <CollapsiblePieSection>
         <div className="flex justify-center my-4">
           <ProgressRing
             percent={percentPaid}
@@ -3753,7 +3964,7 @@ function CreditCardDetail({
           />
         </div>
         <p className="text-xs text-[var(--color-ink-muted)] text-center">£{formatCurrency(paid)} paid to date</p>
-      </HomeSection>
+      </CollapsiblePieSection>
     </div>
   )
 }
