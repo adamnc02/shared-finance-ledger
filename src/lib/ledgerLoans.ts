@@ -58,6 +58,33 @@ export function nominalTotalPayable(loan: Loan): number {
   return round2(schedule.reduce((sum, e) => sum + e.scheduledPayment, 0))
 }
 
+/**
+ * What the person will ACTUALLY hand over across this loan's whole life,
+ * given every overpayment already logged — the real schedule's own total,
+ * not the contractual one.
+ *
+ * Distinct from `nominalTotalPayable` above, which is deliberately frozen
+ * against overpayments (pinned by verify-loan-amortisation.ts: "a moving
+ * denominator would make percentRepaid misleading"). That remains exactly
+ * right for `summarizeLoan.totalPayable` and for settlement maths, which
+ * ask a contractual question.
+ *
+ * It is the wrong denominator for a PROGRESS figure, which is why this
+ * exists alongside it (Adam, 2026-09-18): "The progress bars and pie
+ * charts 100% needs to be the amortised value after all projected payments
+ * (including scheduled one off overpayments and recurring overpayments)."
+ *
+ * The decisive symptom: against a frozen denominator, a loan with
+ * overpayments can never reach 100%. Overpaying shortens the term and cuts
+ * the interest, so the real total falls below the contractual one — and
+ * the bar would top out short of full and then the loan would simply
+ * close. Against this total, `totalPaid` reaches it exactly at payoff,
+ * because both sum the same terms over the same schedule.
+ */
+export function amortisedTotalPayable(loan: Loan, schedule: LoanScheduleEntry[] = buildLoanSchedule(loan)): number {
+  return round2(schedule.reduce((sum, e) => sum + e.scheduledPayment + e.overpaymentApplied + e.recurringOverpaymentApplied, 0))
+}
+
 export interface AppliedOneOffOverpayment {
   overpaymentId: string
   /** The overpayment's OWN calendar date — when the money actually left the person's account. */
@@ -137,7 +164,9 @@ export interface LoanProgress {
   totalBalance: number // == nominalTotalPayable — the stable, no-overpayment contractual total (principal + real total interest)
   nominalRemaining: number // totalBalance - totalPaid — "how much more cash will I hand over if I keep paying as scheduled," INCLUDING interest not yet accrued. This is deliberately the same figure the old flat model produced (validated directly against the person's own worked example: 9846.96 - 820.58 = 9026.38 after 2 real payments) — it was never a wrong NUMBER, only a wrong choice of which figure to headline as "remaining balance" elsewhere in the app.
   capitalRemaining: number // == summarizeLoan(loan, asOfDate).remainingBalance — the true amortised principal still owed (what a real lender's "balance" figure shows). Kept here too so a caller wanting BOTH figures (Home page pie chart, scope-confirmed "show both, clearly labelled" resolution) doesn't need two separate calls that could drift out of sync from different asOfDate values.
-  percentPaid: number // totalPaid / totalBalance x 100, clamped 0-100 — cash-progress, not principal-progress (see capitalRemaining for that instead)
+  amortisedTotalPayable: number // == amortisedTotalPayable(loan) — the REAL total cash this loan will take, after every overpayment already logged. The progress denominator (Adam, 2026-09-18).
+  amortisedRemaining: number // amortisedTotalPayable - totalPaid — the real cash left to hand over on the current schedule. Unlike nominalRemaining this FALLS when an overpayment shortens the term, which is what Adam means by "the amortised amount remaining".
+  percentPaid: number // totalPaid / amortisedTotalPayable x 100, clamped 0-100 — cash-progress against the REAL total, so it reaches exactly 100% at payoff however much was overpaid. Not principal-progress (see capitalRemaining for that instead).
 }
 
 /**
@@ -162,8 +191,13 @@ export function summarizeLoanProgress(loan: Loan, asOfDate: Date = new Date()): 
   )
   const capitalRemaining = summarizeLoan(loan, asOfDate).remainingBalance
   const nominalRemaining = round2(Math.max(0, totalBalance - totalPaid))
-  const percentPaid = totalBalance > 0 ? Math.min(100, (totalPaid / totalBalance) * 100) : 0
-  return { totalPaid, totalBalance, nominalRemaining, capitalRemaining, percentPaid }
+  // The progress pair, against the REAL total rather than the contractual
+  // one — see amortisedTotalPayable for why the two denominators differ
+  // and why a progress bar needs this one.
+  const amortisedTotal = amortisedTotalPayable(loan, schedule)
+  const amortisedRemaining = round2(Math.max(0, amortisedTotal - totalPaid))
+  const percentPaid = amortisedTotal > 0 ? Math.min(100, (totalPaid / amortisedTotal) * 100) : 0
+  return { totalPaid, totalBalance, nominalRemaining, capitalRemaining, amortisedTotalPayable: amortisedTotal, amortisedRemaining, percentPaid }
 }
 
 

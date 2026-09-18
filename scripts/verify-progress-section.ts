@@ -8,10 +8,11 @@
 // Beyond that bare existence, the checks that would fail against a WRONG
 // implementation are called out individually below. In particular:
 //
-//  - the combined percentage must be summed CASH over summed BALANCE, not
-//    a mean of the per-loan percentages. Mum's two loans are different
-//    enough in size that the two answers differ by several points, so
-//    `combined is not the mean` below genuinely discriminates.
+//  - the combined percentage must be summed CASH over the summed AMORTISED
+//    total, not a mean of the per-loan percentages and not the contractual
+//    total. Mum's two loans are different enough in size that the mean is
+//    several points out, and Home Improvements carries a real overpayment
+//    so the two denominators differ too — both are discriminated below.
 //  - the faded projected segment must be the GAIN, not the cumulative
 //    figure, or it would be drawn overlapping the solid fill (the exact
 //    cumulative-segment rule ProgressRing.tsx already follows).
@@ -157,8 +158,14 @@ check('one entry per loan, in the order given', combined.perLoan.map((e) => e.lo
 // sums LoanProgressRingsSection computes for its "Total Loans" ring.
 const ringPaid = round2(mumLoans.reduce((s, l) => s + summarizeLoanProgress(l).totalPaid, 0))
 const ringBalance = round2(mumLoans.reduce((s, l) => s + summarizeLoanProgress(l).totalBalance, 0))
+const ringAmortised = round2(mumLoans.reduce((s, l) => s + summarizeLoanProgress(l).amortisedTotalPayable, 0))
 check('combined totals match the ring\'s own sums', { paid: round2(combined.totalPaid), balance: round2(combined.totalBalance) }, { paid: ringPaid, balance: ringBalance })
-check('combined percent is summed cash over summed balance', round2(combined.percentPaid), round2((ringPaid / ringBalance) * 100))
+// The denominator is the AMORTISED total, not the contractual one (Adam,
+// 2026-09-18). Mum's Home Improvements carries a real £40 overpayment, so
+// the two genuinely differ here and this discriminates between them.
+check('combined percent is summed cash over summed AMORTISED total', round2(combined.percentPaid), round2((ringPaid / ringAmortised) * 100))
+check('...which is NOT the contractual total', ringAmortised !== ringBalance, true)
+check('...and gives a different answer from the contractual denominator', round2(combined.percentPaid) !== round2((ringPaid / ringBalance) * 100), true)
 
 // The discriminator: the mean of the two per-loan percentages is a
 // DIFFERENT number, and a plausible-but-wrong implementation returns it.

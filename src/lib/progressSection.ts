@@ -136,14 +136,20 @@ export interface LoanProgressEntry {
 export interface LoansProgressSummary {
   /** One entry per loan, in the order given. */
   perLoan: LoanProgressEntry[]
+  /** The contractual total, kept for callers that want it. NOT the progress denominator — see `totalAmortisedPayable`. */
   totalBalance: number
   totalPaid: number
+  /** The REAL total these loans will take, after every logged overpayment. What `percentPaid` is a percentage OF. */
+  totalAmortisedPayable: number
+  /** Real cash left to hand over on the current schedule — the figure that falls when an overpayment shortens a term. */
+  totalAmortisedRemaining: number
   totalNominalRemaining: number
   totalCapitalRemaining: number
   percentPaid: number
   /** Only set when a `horizonEndDate` was supplied (i.e. the "Next 3 cycles" horizon). */
   projectedPercentPaid?: number
   projectedPaid?: number
+  projectedAmortisedRemaining?: number
   projectedNominalRemaining?: number
   projectedCapitalRemaining?: number
 }
@@ -167,7 +173,12 @@ export function summarizeLoansProgress(loans: Loan[], horizonEndDate?: Date): Lo
 
   const totalBalance = progress.reduce((sum, p) => sum + p.totalBalance, 0)
   const totalPaid = progress.reduce((sum, p) => sum + p.totalPaid, 0)
-  const percentOf = (paid: number) => (totalBalance > 0 ? Math.min(100, (paid / totalBalance) * 100) : 0)
+  // The denominator is the AMORTISED total, not the contractual one —
+  // see amortisedTotalPayable in ledgerLoans.ts. Summed across the loans
+  // for the same reason the numerator is: a combined bar is one cash
+  // figure over another, never a mean of per-loan percentages.
+  const totalAmortisedPayable = progress.reduce((sum, p) => sum + p.amortisedTotalPayable, 0)
+  const percentOf = (paid: number) => (totalAmortisedPayable > 0 ? Math.min(100, (paid / totalAmortisedPayable) * 100) : 0)
   const projectedPaid = projected?.reduce((sum, p) => sum + p.totalPaid, 0)
 
   return {
@@ -178,11 +189,14 @@ export function summarizeLoansProgress(loans: Loan[], horizonEndDate?: Date): Lo
     })),
     totalBalance,
     totalPaid,
+    totalAmortisedPayable,
+    totalAmortisedRemaining: progress.reduce((sum, p) => sum + p.amortisedRemaining, 0),
     totalNominalRemaining: progress.reduce((sum, p) => sum + p.nominalRemaining, 0),
     totalCapitalRemaining: progress.reduce((sum, p) => sum + p.capitalRemaining, 0),
     percentPaid: percentOf(totalPaid),
     projectedPercentPaid: projectedPaid === undefined ? undefined : percentOf(projectedPaid),
     projectedPaid,
+    projectedAmortisedRemaining: projected?.reduce((sum, p) => sum + p.amortisedRemaining, 0),
     projectedNominalRemaining: projected?.reduce((sum, p) => sum + p.nominalRemaining, 0),
     projectedCapitalRemaining: projected?.reduce((sum, p) => sum + p.capitalRemaining, 0),
   }

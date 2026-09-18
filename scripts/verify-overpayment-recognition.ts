@@ -20,7 +20,7 @@
 // rather than merely exercising the path.
 
 import { readFileSync } from 'node:fs'
-import { summarizeLoan, summarizeLoanProgress, appliedOneOffOverpayments, unrecognisedOneOffOverpayments, buildLoanSchedule } from '../src/lib/ledgerLoans'
+import { summarizeLoan, summarizeLoanProgress, appliedOneOffOverpayments, unrecognisedOneOffOverpayments, buildLoanSchedule, amortisedTotalPayable, nominalTotalPayable } from '../src/lib/ledgerLoans'
 import { buildLoanTrendEvents } from '../src/lib/loanLedger'
 import { summarizeLoansProgress } from '../src/lib/progressSection'
 import { migrateLedgerData } from '../src/lib/ledgerStorage'
@@ -81,7 +81,7 @@ check('after it, the owed figure MOVES (it did not before the fix)', after.summa
 check('...by exactly the £7,000 paid, since an overpayment is 100% principal', round2(before.summary.remainingBalance - after.summary.remainingBalance), 7000)
 check('...leaving £437 owed', after.summary.remainingBalance, 437)
 check('the cash paid to date rises by the same £7,000', round2(after.progress.totalPaid - before.progress.totalPaid), 7000)
-check('...so the progress bar is no longer stuck at 13%', Math.round(after.progress.percentPaid), 86)
+check('...so the progress bar is no longer stuck at 13%', Math.round(after.progress.percentPaid), 95)
 // Not a tautology: summarizeLoansProgress is the call the progress SECTION
 // makes (both the bar and the ring in its modal), and it aggregates
 // independently of summarizeLoanProgress's own percentage. They must agree.
@@ -97,7 +97,7 @@ console.log('\n── The surfaces Adam listed ──')
 // anywhere that could still disagree.
 check('the hero card\'s OWED == summarizeLoan', summarizeLoan(withOverpayment, TODAY).remainingBalance, 437)
 check('the Borrowing page reads summarizeLoan/summarizeLoanProgress, so it moves too', summarizeLoanProgress(withOverpayment, TODAY).capitalRemaining, 437)
-check('the progress bar and pie chart read summarizeLoanProgress', Math.round(summarizeLoanProgress(withOverpayment, TODAY).percentPaid), 86)
+check('the progress bar and pie chart read summarizeLoanProgress', Math.round(summarizeLoanProgress(withOverpayment, TODAY).percentPaid), 95)
 // The trend chart was already correct before this fix (PROMPT-08a re-dated
 // overpayments for the chart only) and must STAY correct now that it
 // shares the mapping helper.
@@ -128,6 +128,34 @@ check('...so her owed figure is unchanged by this fix', summarizeLoan(homeImprov
 check('neither of her loans has any unrecognised overpayment today', mum.loans.every((l) => unrecognisedOneOffOverpayments(l, buildLoanSchedule(l), TODAY_ISO) === 0), true)
 
 // A lump bigger than the loan must clear it, never drive it negative.
+// ── The progress denominator is the AMORTISED total ───────────────────
+//
+// Adam, 2026-09-18: "the progress bar does not read the amortised amount
+// remaining, it uses the fixed amount remaining by subtracting the total
+// paid from total borrowed... The progress bars and pie charts 100% needs
+// to be the amortised value after all projected payments (including
+// scheduled one off overpayments and recurring overpayments)."
+console.log('\n── Progress reads the amortised total, not the contractual one ──')
+
+check('with no overpayments the two totals agree, so nothing changes for most loans', amortisedTotalPayable(carFinance), nominalTotalPayable(carFinance))
+check('an overpayment cuts the REAL total (shorter term, less interest)', amortisedTotalPayable(withOverpayment) < nominalTotalPayable(withOverpayment), true)
+check('...while the contractual total stays frozen, as verify-loan-amortisation pins it', nominalTotalPayable(withOverpayment), nominalTotalPayable(carFinance))
+
+// THE decisive property, and the clearest statement of the bug: against a
+// frozen contractual denominator a loan with overpayments can never reach
+// 100% — it tops out short of full and then the loan simply closes.
+const contractualPercentAtPayoff = round2((summarizeLoanProgress(withOverpayment, new Date(2030, 0, 1)).totalPaid / nominalTotalPayable(withOverpayment)) * 100)
+check('a fully-repaid overpaid loan reads EXACTLY 100%', round2(summarizeLoanProgress(withOverpayment, new Date(2030, 0, 1)).percentPaid), 100)
+check('...where the contractual denominator would have stopped short of it', contractualPercentAtPayoff < 100, true)
+console.log(`      (contractual denominator would read ${contractualPercentAtPayoff}% at payoff — the bar could never fill)`)
+check('a loan with NO overpayments also reaches exactly 100%', round2(summarizeLoanProgress(carFinance, new Date(2031, 0, 1)).percentPaid), 100)
+
+// "the amortised amount remaining" — falls when a term shortens, which
+// nominalRemaining (totalBalance − totalPaid) does not.
+check('amortisedRemaining is the real cash left, below the nominal figure', after.progress.amortisedRemaining < after.progress.nominalRemaining, true)
+check('...and reaches zero at payoff', summarizeLoanProgress(withOverpayment, new Date(2030, 0, 1)).amortisedRemaining, 0)
+check('paid + amortisedRemaining == the amortised total, always', round2(after.progress.totalPaid + after.progress.amortisedRemaining), round2(after.progress.amortisedTotalPayable))
+
 console.log('\n── A lump larger than the balance ──')
 
 const overkill: Loan = { ...carFinance, overpayments: [{ id: 'HUGE', date: '2026-09-17', amount: 999_999, recastMode: 'reduce_term' }] }

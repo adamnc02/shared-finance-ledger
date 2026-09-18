@@ -3297,15 +3297,15 @@ function LoanProgressRingsSection({
   // genuinely be."
   const summary = summarizeLoansProgress(loans, showProjection ? horizonEndDate : undefined)
   const loanProgress = loans.map((loan) => summarizeLoanProgress(loan))
-  const totalLoansBalance = summary.totalBalance
+  const totalLoansBalance = summary.totalAmortisedPayable
   const totalLoansPaid = summary.totalPaid
-  const totalLoansNominalRemaining = summary.totalNominalRemaining
+  const totalLoansAmortisedRemaining = summary.totalAmortisedRemaining
   const totalLoansCapitalRemaining = summary.totalCapitalRemaining
   const totalLoansPercentPaid = summary.percentPaid
 
   const projectedLoanProgress = showProjection ? loans.map((loan) => summarizeLoanProgress(loan, horizonEndDate)) : null
   const totalLoansProjectedPercent = summary.projectedPercentPaid ?? totalLoansPercentPaid
-  const totalLoansProjectedNominalRemaining = summary.projectedNominalRemaining ?? totalLoansNominalRemaining
+  const totalLoansProjectedAmortisedRemaining = summary.projectedAmortisedRemaining ?? totalLoansAmortisedRemaining
   const totalLoansProjectedCapitalRemaining = summary.projectedCapitalRemaining ?? totalLoansCapitalRemaining
 
   return (
@@ -3339,7 +3339,7 @@ function LoanProgressRingsSection({
                     icon={<CategoryIcon category={category} size={22} />}
                   />
                   <p className="text-[11px] text-[var(--color-ink-faint)]">
-                    of £{formatCurrency(progress.totalBalance)} · {progress.percentPaid.toFixed(0)}
+                    of £{formatCurrency(progress.amortisedTotalPayable)} · {progress.percentPaid.toFixed(0)}
                     {showProjection && projected ? `→${projected.percentPaid.toFixed(0)}` : ''}% paid
                   </p>
                   {/* Next 3 cycles: every figure shown alongside its
@@ -3348,9 +3348,9 @@ function LoanProgressRingsSection({
                       This Cycle view is untouched, showing only today's
                       real numbers, same as before. */}
                   <p className="text-[11px] text-[var(--color-ink-muted)]">
-                    £{formatCurrency(progress.nominalRemaining)}
+                    £{formatCurrency(progress.amortisedRemaining)}
                     {showProjection && projected && (
-                      <span style={{ color: 'var(--color-coral)' }}> → £{formatCurrency(projected.nominalRemaining)}</span>
+                      <span style={{ color: 'var(--color-coral)' }}> → £{formatCurrency(projected.amortisedRemaining)}</span>
                     )}{' '}
                     remaining
                   </p>
@@ -3394,8 +3394,8 @@ function LoanProgressRingsSection({
                   {showProjection ? `→${totalLoansProjectedPercent.toFixed(0)}` : ''}% paid
                 </p>
                 <p className="text-[11px] text-[var(--color-ink-muted)]">
-                  £{formatCurrency(totalLoansNominalRemaining)}
-                  {showProjection && <span style={{ color: 'var(--color-coral)' }}> → £{formatCurrency(totalLoansProjectedNominalRemaining)}</span>} remaining
+                  £{formatCurrency(totalLoansAmortisedRemaining)}
+                  {showProjection && <span style={{ color: 'var(--color-coral)' }}> → £{formatCurrency(totalLoansProjectedAmortisedRemaining)}</span>} remaining
                 </p>
                 <p className="text-[10px] text-[var(--color-ink-faint)]">
                   £{formatCurrency(totalLoansCapitalRemaining)}
