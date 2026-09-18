@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { formatCurrency } from '../lib/format'
 import { toLocalIsoDate, todayIso, parseLocalDate } from '../lib/date'
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, CreditCard as CreditCardIcon, Layers, PiggyBank, Wallet, SlidersHorizontal, X, TrendingUp, RotateCcw } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, CreditCard as CreditCardIcon, Layers, PieChart, PiggyBank, Wallet, SlidersHorizontal, X, TrendingUp, RotateCcw } from 'lucide-react'
 import { useLedgerData } from '../context/LedgerContext'
 import { computeProjection, horizonCycles, inCycleWindow, horizonRangeEnd, THREE_CYCLES_AHEAD, buildPersonalTrendSeries, type ProjectionHorizon } from '../lib/projection'
 import { averageAdHocSpendForCycle, daysOfSpendHistory, forecastSpendForCycle, hasAnyMatchingSpend, hasSpendHistory, MIN_SPEND_HISTORY_DAYS, type SpendScope } from '../lib/averageSpendForecast'
@@ -31,6 +31,8 @@ import { computeCycleSummary, compareByDateSalaryFirst } from '../lib/cycleSumma
 import { WalletStack } from '../components/WalletStack'
 import { BankCard } from '../components/BankCard'
 import { ProgressRing } from '../components/ProgressRing'
+import { ProgressBar } from '../components/ProgressBar'
+import { progressSectionTitle, isCreditCardProgressVisible, summarizeLoansProgress } from '../lib/progressSection'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { BalanceSpendChart, SavingsPotPillChart, shortDayLabel, type BalanceSpendView } from '../components/TrendChart'
 import { SAVINGS_CATEGORY_ID, CREDIT_CARD_CATEGORY_ID } from '../types/ledger'
@@ -520,8 +522,16 @@ function SavingsPotDetail({
           doc's own GENERAL rule (relocate whatever already renders today)
           rather than its specific enumeration, which appears to have
           missed this one. */}
+      {/* PROMPT-08b (Adam, 2026-09-18): "If savings has a target, then we
+          can show progress — this is the same restriction already in place
+          to show the pie chart." So the `target > 0` guard already here is
+          exactly the right guard for the bar too, and the section keeps
+          disappearing wholesale on a pot with no target. */}
       {target > 0 && (
-        <CollapsiblePieSection>
+        <ProgressPreview
+          title={progressSectionTitle('savings_pot', pot.name)}
+          bars={[{ key: 'pot', percent, projectedPercent: showProjection ? projectedPercent : undefined, color: pot.color }]}
+        >
           <div className="flex flex-col items-center gap-1" style={{ borderColor: 'var(--color-track)' }}>
             <ProgressRing
               percent={percent}
@@ -538,7 +548,7 @@ function SavingsPotDetail({
               </p>
             )}
           </div>
-        </CollapsiblePieSection>
+        </ProgressPreview>
       )}
     </div>
   )
@@ -3012,15 +3022,18 @@ function PersonalDetail({
           the loans they show belong to other people and so have no card of
           their own to move to. */}
       {data.loans.some((l) => l.location === 'personal' && l.ownerId === data.primaryPersonId && l.active) && (
-        <CollapsiblePieSection>
-          <LoanProgressRingsSection
-            data={data}
-            horizon={horizon}
-            loans={data.loans.filter((l) => l.location === 'personal' && l.ownerId === data.primaryPersonId && l.active)}
-            horizonEndDate={parseLocalDate(projection.horizonEnd)}
-            individualRings={false}
-          />
-        </CollapsiblePieSection>
+        // PROMPT-08b: one bar, the combined total — "Personal only shows
+        // the total combined loan debt" (Adam, 2026-09-18), the same
+        // reasoning as `individualRings={false}` above.
+        <LoanProgressSection
+          data={data}
+          horizon={horizon}
+          loans={data.loans.filter((l) => l.location === 'personal' && l.ownerId === data.primaryPersonId && l.active)}
+          horizonEndDate={parseLocalDate(projection.horizonEnd)}
+          title={progressSectionTitle('combined_loans')}
+          color="var(--color-coral)"
+          individualRings={false}
+        />
       )}
     </div>
   )
@@ -3043,33 +3056,178 @@ function HomeSection({ children, className = '' }: { children: ReactNode; classN
 }
 
 /**
- * Every hero card's Pie Charts section, collapsible and COLLAPSED BY
- * DEFAULT — PROMPT-08a Part C, and deliberately a global change across all
- * of them (Personal, Joint, Household, Savings Pot, Credit Card and the
- * per-loan cards), not just the loan ones: "Every pie chart on every hero
- * card becomes collapsible, collapsed by default."
+ * The pie chart(s), in their own modal — PROMPT-08b Part 1, replacing
+ * PROMPT-08a's collapsible "Progress chart" section (Adam, 2026-09-18: "to
+ * keep the UI really clean we should actually move the pie charts (exactly
+ * as they currently are) into a modal with the same makeup as the trends
+ * modal. This means we no longer need the expand/collapse pie chart
+ * section").
  *
- * The collapsed state is per-instance and starts closed on every render of
- * a card, which is the intent — "collapsed by default" is the default
- * every time you arrive at a card, not a preference to remember. That also
- * keeps it consistent with CategoryGroupedList's own collapse state, which
- * is likewise per-instance and not persisted.
+ * Structurally this is TrendsModal with its chart machinery removed and
+ * `children` in its place, deliberately so: Adam asked for it to be
+ * recycled because of the bug where the bottom nav rendered above a modal
+ * that wasn't portalled to `document.body`. The portal, the z-index, the
+ * backdrop, the click-through stop, the grabber, the header row and the
+ * `--nav-h`/`--safe-bottom` padding below are all carried over unchanged
+ * rather than rewritten, so that fix cannot be lost twice.
+ *
+ * NOTE (PROMPT-08c): the This cycle / Next 3 cycles control is on the home
+ * page behind this modal and can't be reached from inside it. The rings
+ * here honour whatever horizon was active when the modal was opened, which
+ * is the same horizon the preview bar outside is drawn from — so the two
+ * always agree. Making it reachable, and the per-cycle tooltip, is 08c.
  */
-function CollapsiblePieSection({ title = 'Progress chart', children }: { title?: string; children: ReactNode }) {
+function ProgressModal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+  return createPortal(
+    <div className="fixed inset-0 z-[500] flex items-end justify-center" style={{ background: 'rgba(5,7,13,0.72)' }} onClick={onClose}>
+      <div
+        className="w-full max-w-md max-h-[80vh] overflow-y-auto"
+        style={{
+          background: 'var(--color-bg-elevated)',
+          borderTop: '1px solid var(--color-track)',
+          borderRadius: '24px 24px 0 0',
+          padding: '20px',
+          paddingBottom: 'calc(var(--nav-h) + var(--safe-bottom) + 20px)',
+          boxShadow: '0 -12px 32px rgba(0,0,0,0.4)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex flex-col items-center gap-3.5">
+          <div style={{ width: 36, height: 4, borderRadius: 999, background: 'var(--color-track)' }} />
+          <div className="w-full flex items-center justify-between">
+            <span className="font-display text-base font-semibold text-[var(--color-ink)]">{title}</span>
+            <button onClick={onClose} aria-label="Close" className="p-1">
+              <X size={20} className="text-[var(--color-ink-muted)]" />
+            </button>
+          </div>
+          <div className="w-full pt-1">{children}</div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+export interface ProgressBarSpec {
+  key: string
+  percent: number
+  projectedPercent?: number
+  color?: string
+  /** A per-loan bar's label; the headline bar has none. */
+  name?: string
+  small?: boolean
+}
+
+/**
+ * The progress section itself: title, progress bar(s), and a "View
+ * progress" pill that opens the rings in ProgressModal. Mirrors
+ * TrendPreview exactly — same heading style, same full-section tap target
+ * ("the card is the button"), same pill treatment — because Adam asked for
+ * the button to have "the same design as the view trends button", and two
+ * near-identical sections that drift apart would be worse than one shared
+ * pattern.
+ *
+ * Callers are responsible for not rendering this at all when there is
+ * nothing to show (Adam, 2026-09-18: "the section is hidden if there is
+ * nothing to show"), which is why there is no empty state below.
+ */
+function ProgressPreview({ title, bars, children }: { title: string; bars: ProgressBarSpec[]; children: ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
     <HomeSection>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between text-left"
-        aria-expanded={open}
-        aria-label={open ? `Hide ${title.toLowerCase()}` : `Show ${title.toLowerCase()}`}
-      >
-        <span className="font-body text-sm font-semibold text-[var(--color-ink)]">{title}</span>
-        {open ? <ChevronUp size={16} className="text-[var(--color-ink-muted)]" /> : <ChevronDown size={16} className="text-[var(--color-ink-muted)]" />}
+      <button onClick={() => setOpen(true)} className="w-full text-left">
+        <h3 className="font-body text-sm font-semibold text-[var(--color-ink)] mb-3">{title}</h3>
+        <div className="pointer-events-none flex flex-col gap-3">
+          {bars.map((bar) => (
+            <ProgressBar
+              key={bar.key}
+              percent={bar.percent}
+              projectedPercent={bar.projectedPercent}
+              color={bar.color}
+              name={bar.name}
+              height={bar.small ? 8 : 12}
+              showAxis={!bar.small}
+            />
+          ))}
+        </div>
+        <div
+          className="w-full mt-3 flex items-center justify-center gap-1.5 text-xs font-semibold uppercase tracking-wide"
+          style={{ background: 'var(--color-bg-elevated)', color: 'var(--color-ink)', borderRadius: 12, padding: '9px 0' }}
+        >
+          <PieChart size={13} />
+          View progress
+        </div>
       </button>
-      {open && <div className="mt-4">{children}</div>}
+      {open && (
+        <ProgressModal title={title} onClose={() => setOpen(false)}>
+          {children}
+        </ProgressModal>
+      )}
     </HomeSection>
+  )
+}
+
+/**
+ * The loan flavour of ProgressPreview, used by Personal, Joint, Household
+ * and each loan's own hero card, so the four cannot disagree about what a
+ * combined percentage means. Which bars appear (Adam, 2026-09-18):
+ *
+ *  - always a headline bar for the COMBINED figure;
+ *  - Joint and Household add "a smaller/different colour bar for each
+ *    loan", each labelled with that loan's name and drawn in that loan's
+ *    own palette colour (`individualBars`);
+ *  - Personal shows "a single bar" only — its loans each have their own
+ *    hero card carrying their own bar, the same reason `individualRings`
+ *    is false there;
+ *  - a loan's own hero card is one loan, so its combined bar IS that
+ *    loan's bar and no second identical bar is drawn.
+ */
+function LoanProgressSection({
+  data,
+  horizon,
+  loans,
+  horizonEndDate,
+  title,
+  color,
+  individualRings = true,
+  individualBars = false,
+}: {
+  data: AppDataV2
+  horizon: ProjectionHorizon
+  loans: Loan[]
+  horizonEndDate: Date
+  title: string
+  color: string
+  individualRings?: boolean
+  individualBars?: boolean
+}) {
+  // Callers already guard on this, but the section must never render an
+  // empty titled card if one ever stops doing so.
+  if (loans.length === 0) return null
+
+  const showProjection = horizon === 'three_cycles'
+  const summary = summarizeLoansProgress(loans, showProjection ? horizonEndDate : undefined)
+
+  const bars: ProgressBarSpec[] = [
+    { key: 'combined', percent: summary.percentPaid, projectedPercent: summary.projectedPercentPaid, color },
+  ]
+  if (individualBars && loans.length > 1) {
+    for (const entry of summary.perLoan) {
+      bars.push({
+        key: entry.loan.id,
+        percent: entry.percentPaid,
+        projectedPercent: entry.projectedPercentPaid,
+        color: entry.loan.color,
+        name: entry.loan.name,
+        small: true,
+      })
+    }
+  }
+
+  return (
+    <ProgressPreview title={title} bars={bars}>
+      <LoanProgressRingsSection data={data} horizon={horizon} loans={loans} horizonEndDate={horizonEndDate} individualRings={individualRings} />
+    </ProgressPreview>
   )
 }
 
@@ -3126,33 +3284,37 @@ function LoanProgressRingsSection({
   // neither figure is lost or silently conflated with the other. The
   // ring itself fills by CASH progress (percentPaid), matching whichever
   // number is headlined, not by principal progress.
-  const loanProgress = loans.map((loan) => summarizeLoanProgress(loan))
-  const totalLoansBalance = loanProgress.reduce((sum, p) => sum + p.totalBalance, 0)
-  const totalLoansPaid = loanProgress.reduce((sum, p) => sum + p.totalPaid, 0)
-  const totalLoansNominalRemaining = loanProgress.reduce((sum, p) => sum + p.nominalRemaining, 0)
-  const totalLoansCapitalRemaining = loanProgress.reduce((sum, p) => sum + p.capitalRemaining, 0)
-  const totalLoansPercentPaid = totalLoansBalance > 0 ? Math.min(100, (totalLoansPaid / totalLoansBalance) * 100) : 0
-
-  // Projected progress as of the horizon's end date — reusing
-  // summarizeLoanProgress with a future asOfDate rather than re-deriving
-  // anything from the projection's generated transactions:
+  //
+  // PROMPT-08b: these sums used to be computed inline here. They now come
+  // from `summarizeLoansProgress`, which is the SAME call the progress bar
+  // outside this modal makes — the ring and the bar are two renderings of
+  // one figure, and cannot drift apart. Projected progress is still
+  // `summarizeLoanProgress` with a future asOfDate rather than anything
+  // re-derived from the projection's generated transactions:
   // buildLoanSchedule already bakes in every scheduled payment, one-off
-  // overpayment, AND standing recurring overpayment between now and
-  // then, regardless of "today", so this is exactly "where the loan will
+  // overpayment AND standing recurring overpayment between now and then,
+  // regardless of "today", so it is exactly "where the loan will
   // genuinely be."
+  const summary = summarizeLoansProgress(loans, showProjection ? horizonEndDate : undefined)
+  const loanProgress = loans.map((loan) => summarizeLoanProgress(loan))
+  const totalLoansBalance = summary.totalBalance
+  const totalLoansPaid = summary.totalPaid
+  const totalLoansNominalRemaining = summary.totalNominalRemaining
+  const totalLoansCapitalRemaining = summary.totalCapitalRemaining
+  const totalLoansPercentPaid = summary.percentPaid
+
   const projectedLoanProgress = showProjection ? loans.map((loan) => summarizeLoanProgress(loan, horizonEndDate)) : null
-  const totalLoansProjectedPaid = projectedLoanProgress?.reduce((sum, p) => sum + p.totalPaid, 0) ?? totalLoansPaid
-  const totalLoansProjectedPercent = totalLoansBalance > 0 ? Math.min(100, (totalLoansProjectedPaid / totalLoansBalance) * 100) : 0
-  const totalLoansProjectedNominalRemaining = projectedLoanProgress?.reduce((sum, p) => sum + p.nominalRemaining, 0) ?? totalLoansNominalRemaining
-  const totalLoansProjectedCapitalRemaining = projectedLoanProgress?.reduce((sum, p) => sum + p.capitalRemaining, 0) ?? totalLoansCapitalRemaining
+  const totalLoansProjectedPercent = summary.projectedPercentPaid ?? totalLoansPercentPaid
+  const totalLoansProjectedNominalRemaining = summary.projectedNominalRemaining ?? totalLoansNominalRemaining
+  const totalLoansProjectedCapitalRemaining = summary.projectedCapitalRemaining ?? totalLoansCapitalRemaining
 
   return (
     // Trends feature (2026-09-15 build) — this used to open with `mt-5
     // pt-5 border-t`, a separator from whatever ledger content sat above
     // it in the same combined card. Now it's always the sole content of
-    // its own collapsible "Progress chart" section (CollapsiblePieSection,
-    // see every *Detail caller), so that top border/margin would just
-    // leave a stray line at the top of an otherwise-empty card — dropped.
+    // its own section (PROMPT-08a's CollapsiblePieSection, and since
+    // PROMPT-08b the body of ProgressModal), so that top border/margin
+    // would just leave a stray line at the top of the panel — dropped.
     <div className="flex flex-col gap-5">
       {loans.length > 0 && (
         <div>
@@ -3385,9 +3547,19 @@ function JointDetail({
           rule ("only render where a ring already renders today") says so,
           even though its specific enumeration list omitted Joint. */}
       {jointProjection && jointLoans.length > 0 && (
-        <CollapsiblePieSection>
-          <LoanProgressRingsSection data={data} horizon={horizon} loans={jointLoans} horizonEndDate={parseLocalDate(jointProjection.horizonEnd)} />
-        </CollapsiblePieSection>
+        // PROMPT-08b: the combined bar plus a smaller per-loan bar in each
+        // loan's own palette colour — Joint's loans can belong to other
+        // household members, who have no hero card of their own here for
+        // a per-loan bar to live on instead.
+        <LoanProgressSection
+          data={data}
+          horizon={horizon}
+          loans={jointLoans}
+          horizonEndDate={parseLocalDate(jointProjection.horizonEnd)}
+          title={progressSectionTitle('combined_loans')}
+          color="var(--color-positive)"
+          individualBars
+        />
       )}
     </div>
   )
@@ -3607,9 +3779,15 @@ function HouseholdDetail({
       </HomeSection>
 
       {householdLoans.length > 0 && (
-        <CollapsiblePieSection>
-          <LoanProgressRingsSection data={data} horizon={horizon} loans={householdLoans} horizonEndDate={householdHorizonEnd} />
-        </CollapsiblePieSection>
+        <LoanProgressSection
+          data={data}
+          horizon={horizon}
+          loans={householdLoans}
+          horizonEndDate={householdHorizonEnd}
+          title={progressSectionTitle('combined_loans')}
+          color="var(--color-coral)"
+          individualBars
+        />
       )}
     </div>
   )
@@ -3951,9 +4129,14 @@ function LoanDetail({
           the ring, its projection and its caption cannot drift from the
           Joint/Household ones. `loans={[loan]}` means the combined "Total
           Loans" ring never appears here — that belongs to Personal. */}
-      <CollapsiblePieSection>
-        <LoanProgressRingsSection data={data} horizon={horizon} loans={[loan]} horizonEndDate={horizonRangeEnd(data, data.primaryPersonId, horizon, asOf)} />
-      </CollapsiblePieSection>
+      <LoanProgressSection
+        data={data}
+        horizon={horizon}
+        loans={[loan]}
+        horizonEndDate={horizonRangeEnd(data, data.primaryPersonId, horizon, asOf)}
+        title={progressSectionTitle('loan', loan.name)}
+        color={color}
+      />
     </div>
   )
 }
@@ -4102,20 +4285,28 @@ function CreditCardDetail({
         />
       </HomeSection>
 
-      <CollapsiblePieSection>
-        <div className="flex justify-center my-4">
-          <ProgressRing
-            percent={percentPaid}
-            value={`£${formatCurrency(card.currentBalance)}`}
-            label="Outstanding"
-            size={160}
-            strokeWidth={14}
-            color={card.color}
-            icon={<CategoryIcon category={category ? { ...category, iconColor: card.color } : undefined} size={26} />}
-          />
-        </div>
-        <p className="text-xs text-[var(--color-ink-muted)] text-center">£{formatCurrency(paid)} paid to date</p>
-      </CollapsiblePieSection>
+      {/* PROMPT-08b (Adam, 2026-09-18): a credit card is treated like a
+          loan, "unless the balance on the card is zero and there is no due
+          balance on the card, in which case we completely hide the
+          progress chart section, it's only visible when there is balance
+          on the card." Both figures are passed because this card genuinely
+          has two and they can disagree — see isCreditCardProgressVisible. */}
+      {isCreditCardProgressVisible(nowOwed, card.currentBalance) && (
+        <ProgressPreview title={progressSectionTitle('credit_card', card.name)} bars={[{ key: 'card', percent: percentPaid, color: card.color }]}>
+          <div className="flex justify-center my-4">
+            <ProgressRing
+              percent={percentPaid}
+              value={`£${formatCurrency(card.currentBalance)}`}
+              label="Outstanding"
+              size={160}
+              strokeWidth={14}
+              color={card.color}
+              icon={<CategoryIcon category={category ? { ...category, iconColor: card.color } : undefined} size={26} />}
+            />
+          </div>
+          <p className="text-xs text-[var(--color-ink-muted)] text-center">£{formatCurrency(paid)} paid to date</p>
+        </ProgressPreview>
+      )}
     </div>
   )
 }
