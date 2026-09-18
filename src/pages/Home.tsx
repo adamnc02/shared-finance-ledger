@@ -2877,6 +2877,23 @@ function PersonalDetail({
 
   const projection = computeProjection(data, data.primaryPersonId, payCycle, horizon)
   const ledgerTxns = projection.transactions.filter(isLedgerTransaction)
+  // 2026-09-18 (Adam-reported) — the trend tooltip's category icons read
+  // from a projection of their own, ALWAYS over the widest range the chart
+  // can show (three cycles), never the page's horizon pill.
+  //
+  // The bug: the chart's This cycle / Next 3 cycles switch is the modal's
+  // own, independent of the pill. With the pill on "This cycle" (the
+  // default) and the chart on "Next 3 cycles", the line ran three cycles
+  // out while the icons came from a one-cycle projection — so every day
+  // past the current cycle's end had no icons at all. Adam saw them stop
+  // dead around 4 Oct.
+  //
+  // A three-cycle projection is a strict superset of the one-cycle one
+  // (same generators, wider range), so it serves both chart states, and
+  // `dayDetailsForDay` filters to the exact date anyway. Reuses the
+  // existing projection when the pill already says three cycles, so the
+  // common case costs nothing extra.
+  const trendIconTxns = horizon === 'three_cycles' ? projection.transactions : computeProjection(data, data.primaryPersonId, payCycle, 'three_cycles').transactions
   // Same helper computeProjection's own horizon end comes from, so the
   // sections tile the window exactly — no gap at either edge, and the
   // final section's closing balance is the projected balance by
@@ -2933,7 +2950,7 @@ function PersonalDetail({
           caption="Today's balance"
           balanceSpend={{
             buildSeries: (g) => buildPersonalTrendSeries(data, data.primaryPersonId, payCycle, g, new Date()),
-            dayDetails: (d) => dayDetailsForDay(projection.transactions, data.categories, d),
+            dayDetails: (d) => dayDetailsForDay(trendIconTxns, data.categories, d),
           }}
         />
       </HomeSection>
@@ -3213,6 +3230,8 @@ function JointDetail({
   // own detail card (title, straight into the list — no extra summary
   // line or "Real ledger" heading in between).
   const jointProjection = computeJointAccountProjection(data, horizon)
+  // Same fix as PersonalDetail's `trendIconTxns` — see its comment there.
+  const trendIconTxns = (horizon === 'three_cycles' ? jointProjection : computeJointAccountProjection(data, 'three_cycles'))?.transactions ?? []
   const cycles = horizonCycles(data, data.primaryPersonId, horizon, new Date())
   // Cycle boundaries borrow the primary person's own pay cycle — there's
   // no independent "joint pay cycle" concept in this app, same anchor
@@ -3299,7 +3318,7 @@ function JointDetail({
             caption="Today's balance"
             balanceSpend={{
               buildSeries: (g) => buildJointTrendSeries(data, g, new Date()),
-              dayDetails: (d) => dayDetailsForDay(jointProjection.transactions, data.categories, d),
+              dayDetails: (d) => dayDetailsForDay(trendIconTxns, data.categories, d),
             }}
           />
         </HomeSection>
@@ -3357,6 +3376,8 @@ function PotDetail({
   groupByDirection?: boolean
 }) {
   const projection = computePotProjection(data, pot, horizon, new Date())
+  // Same fix as PersonalDetail's `trendIconTxns` — see its comment there.
+  const trendIconTxns = horizon === 'three_cycles' ? projection.transactions : computePotProjection(data, pot, 'three_cycles', new Date()).transactions
   const cycles = horizonCycles(data, pot.personId, horizon, new Date())
 
   return (
@@ -3402,7 +3423,7 @@ function PotDetail({
           caption="Today's balance"
           balanceSpend={{
             buildSeries: (g) => buildPotTrendSeries(data, pot, g, new Date()),
-            dayDetails: (d) => dayDetailsForDay(projection.transactions, data.categories, d),
+            dayDetails: (d) => dayDetailsForDay(trendIconTxns, data.categories, d),
           }}
         />
       </HomeSection>
@@ -3444,6 +3465,8 @@ function HouseholdDetail({
   const missingCount = data.people.length - personProjections.length
 
   const combinedTransactions = personProjections.flatMap((pp) => pp.transactions)
+  // Same fix as PersonalDetail's `trendIconTxns` — see its comment there.
+  const trendIconTxns = horizon === 'three_cycles' ? combinedTransactions : computeHouseholdProjections(data, 'three_cycles').flatMap((pp) => pp.transactions)
   const combinedOpeningBalance = personProjections.reduce((sum, pp) => sum + pp.openingBalance, 0)
   const combinedClearedBalance = personProjections.reduce((sum, pp) => sum + pp.clearedBalance, 0)
   const combinedProjectedBalance = personProjections.reduce((sum, pp) => sum + pp.projectedBalance, 0)
@@ -3526,7 +3549,7 @@ function HouseholdDetail({
           caption="Combined balance today"
           balanceSpend={{
             buildSeries: (g) => buildHouseholdTrendSeries(data, g, new Date()),
-            dayDetails: (d) => dayDetailsForDay(combinedTransactions, data.categories, d),
+            dayDetails: (d) => dayDetailsForDay(trendIconTxns, data.categories, d),
           }}
         />
       </HomeSection>
