@@ -155,10 +155,12 @@ function savingsPotGroupCategoryId(savingsPotId: string): string {
 function groupingCategoryId(t: Transaction): string {
   if (t.type === 'loan_payment') return LOANS_GROUP_CATEGORY_ID
   if (t.type === 'credit_card_payment' || t.type === 'credit_card_spend') return CREDIT_CARD_CATEGORY_ID
-  // Anything else paid by card — a bill on a "Card" payment method, an
-  // ad-hoc expense, etc. — folds into the same Credit Card bucket even
-  // though it isn't tied to a specific CreditCard entity at all.
-  if (t.paymentMethod === 'card') return CREDIT_CARD_CATEGORY_ID
+  // 2026-09-18 (Adam-reported) — a `paymentMethod === 'card'` transaction
+  // with no `creditCardId` is a DEBIT card payment, not a credit card one.
+  // This used to fold it into the Credit Card bucket regardless of its own
+  // categoryId; it now falls through to that categoryId below, same as
+  // Cash. A genuine credit-card entity transaction is still caught above by
+  // `type`, which is what actually identifies it.
   // 2026-09-14 — a Pot/SavingsPot's own deposit/withdrawal/interest
   // transaction groups under THAT pot's own name, never the shared
   // "Savings" category. Deliberately scoped to just these types — a

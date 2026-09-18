@@ -1,10 +1,21 @@
 // Sanity checks for the "group by category" bucketing rule added to the
-// Home page: loan payments and everything credit-card-related always
+// Home page: loan payments and genuine credit-card ENTITY transactions
+// (credit_card_payment/credit_card_spend, identified by `type`) always
 // fold into their own fixed group in the summary view, regardless of
-// what real category the underlying loan/card/bill is actually tagged
-// with — that real category is untouched and still what shows on the
+// what real category the underlying loan/card is actually tagged with —
+// that real category is untouched and still what shows on the
 // transaction's own row. No DOM here, so this exercises the plain
 // function directly rather than the rendered list.
+//
+// 2026-09-18 (Adam-reported) — a bare `paymentMethod === 'card'` used to
+// ALSO fold into Credit Card, which conflated an ordinary debit-card
+// expense/bill (no creditCardId, real cash out of the ledger) with an
+// actual credit-card entity transaction. Removed: a card-paid row now
+// groups under its own categoryId, exactly like Cash. This file's two
+// "groups under Credit Card" checks below for paymentMethod === 'card'
+// FAIL against the pre-fix code (which returned CREDIT_CARD_CATEGORY_ID
+// for both) — see `verify-card-payment-category-fix.ts` for the real-data
+// proof against both backups.
 
 import { CREDIT_CARD_CATEGORY_ID, SAVINGS_CATEGORY_ID, type Transaction } from '../src/types/ledger'
 import { seededCategoryIdForIcon } from '../src/lib/categories'
@@ -23,7 +34,6 @@ function savingsPotGroupCategoryId(savingsPotId: string): string {
 function groupingCategoryId(t: Pick<Transaction, 'type' | 'paymentMethod' | 'categoryId' | 'potId' | 'savingsPotId'>): string {
   if (t.type === 'loan_payment') return LOANS_GROUP_CATEGORY_ID
   if (t.type === 'credit_card_payment' || t.type === 'credit_card_spend') return CREDIT_CARD_CATEGORY_ID
-  if (t.paymentMethod === 'card') return CREDIT_CARD_CATEGORY_ID
   if (t.potId && (t.type === 'pot_deposit' || t.type === 'pot_withdrawal' || t.type === 'transfer')) return potGroupCategoryId(t.potId)
   if (t.savingsPotId && (t.type === 'savings_deposit' || t.type === 'savings_withdrawal' || t.type === 'savings_interest' || t.type === 'transfer')) {
     return savingsPotGroupCategoryId(t.savingsPotId)
@@ -58,21 +68,22 @@ check(
   CREDIT_CARD_CATEGORY_ID,
 )
 
-// A plain bill, paid by "Card" payment method but not linked to any
-// specific CreditCard entity, still buckets under Credit Card even
-// though its type is just 'bill_payment' and its real category is
-// something else entirely (e.g. Subscriptions).
+// A plain bill paid by "Card" payment method but not linked to any
+// specific CreditCard entity (a debit card, in effect) groups under its
+// OWN real category — it is not a credit-card entity transaction, only
+// `type` decides that (2026-09-18 fix).
 check(
-  'A bill_payment with paymentMethod "card" groups under Credit Card even though its type is ordinary',
+  'A bill_payment with paymentMethod "card" (no creditCardId) groups under its own real category, not Credit Card',
   groupingCategoryId({ type: 'bill_payment', paymentMethod: 'card', categoryId: 'category-seed-streaming' }),
-  CREDIT_CARD_CATEGORY_ID,
+  'category-seed-streaming',
 )
 
-// An ordinary expense paid by card, same idea.
+// An ordinary expense paid by card, same idea — this is the exact shape
+// of Adam's reported "Tesco - Petrol" row (see verify-card-payment-category-fix.ts).
 check(
-  'An ad-hoc expense with paymentMethod "card" groups under Credit Card',
+  'An ad-hoc expense with paymentMethod "card" (no creditCardId) groups under its own real category',
   groupingCategoryId({ type: 'expense', paymentMethod: 'card', categoryId: 'category-seed-food' }),
-  CREDIT_CARD_CATEGORY_ID,
+  'category-seed-food',
 )
 
 // Everything else groups by its real category exactly as before —

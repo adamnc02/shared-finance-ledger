@@ -221,8 +221,12 @@ export type TransactionLocation = BillLocation | 'savings'
 // categoryId, NOT this one directly — this id exists so there's always a
 // sensible default to assign a new card to, and so the "group by
 // category" summary view (Home.tsx's groupingCategoryId) has a fixed,
-// stable bucket to fold every credit-card-related transaction into
+// stable bucket to fold every credit-card-ENTITY transaction into
+// (identified by `type`: credit_card_payment/credit_card_spend)
 // regardless of what real category any individual card carries.
+// 2026-09-18 — this does NOT extend to an ordinary expense/bill paid by
+// `paymentMethod: 'card'` with no `creditCardId` (a debit card payment).
+// That falls through to its own categoryId, same as Cash.
 export const CREDIT_CARD_CATEGORY_ID = 'category-credit-card'
 
 // Reserved built-in category id for generated 'salary' transactions
