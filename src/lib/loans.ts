@@ -29,6 +29,11 @@ export function toSyntheticLedgerLoan(loan: Loan): LedgerLoan {
     termMonths: 600,
     startDate: loan.firstPaymentDate,
     categoryId: '',
+    // Synthetic: this is a finance agreement reshaped into a Loan purely so
+    // the amortisation engine can be run over it. It is never added to
+    // `data.loans` and never rendered as a hero card, so it holds no
+    // palette colour — and pickNextSharedCardColor ignores empty ones.
+    color: '',
     location: loan.location,
     ownerId: loan.ownerId,
     payee: loan.payee,

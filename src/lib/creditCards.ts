@@ -983,11 +983,21 @@ export function simulateCardPayoffMonths(card: CreditCard, extraPerMonth = 0, ma
  * genuinely taken (more of these entities exist than the palette has
  * colours) — collisions at that point are unavoidable, not a bug.
  */
-export function pickNextSharedCardColor(data: Pick<AppDataV2, 'creditCards' | 'pots' | 'savingsPots'>): string {
-  const usedColors = new Set([...data.creditCards.map((c) => c.color), ...data.pots.map((p) => p.color), ...data.savingsPots.map((p) => p.color)])
+export function pickNextSharedCardColor(data: Pick<AppDataV2, 'creditCards' | 'pots' | 'savingsPots' | 'loans'>): string {
+  // Loans joined this pool on 2026-09-18 when they gained their own hero
+  // card (PROMPT-08a Part C). They must be in BOTH the used-colour scan and
+  // the fallback count, or a new card could be handed a colour a loan card
+  // is already showing — the same class of collision the 2026-09-16 bugfix
+  // above was written for.
+  const usedColors = new Set([
+    ...data.creditCards.map((c) => c.color),
+    ...data.pots.map((p) => p.color),
+    ...data.savingsPots.map((p) => p.color),
+    ...(data.loans ?? []).map((l) => l.color).filter((c): c is string => !!c),
+  ])
   const firstUnused = SHARED_CARD_COLORS.find((color) => !usedColors.has(color))
   if (firstUnused) return firstUnused
-  const existingCount = data.creditCards.length + data.pots.length + data.savingsPots.length
+  const existingCount = data.creditCards.length + data.pots.length + data.savingsPots.length + (data.loans?.length ?? 0)
   return SHARED_CARD_COLORS[existingCount % SHARED_CARD_COLORS.length]
 }
 

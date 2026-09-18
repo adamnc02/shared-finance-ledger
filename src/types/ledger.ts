@@ -623,6 +623,15 @@ export interface Loan {
   // load-bearing display value (doc Section 3.2). Computed by lib code,
   // not part of the persisted shape.
   categoryId: string
+  // 2026-09-18 (Adam-reported, PROMPT-08a Part C) — a loan now has its own
+  // hero card, so it joins the SHARED_CARD_COLORS pool alongside credit
+  // cards, pots and savings pots: no two of those ever share a colour, and
+  // none of them uses Personal/Joint/Household's own preset palette.
+  // Without this every loan card rendered in its CATEGORY's colour, and
+  // loans overwhelmingly share the one seeded "Loan" category — so every
+  // loan card came out identical. Backfilled in ledgerStorage.ts for any
+  // loan stored before this field existed, exactly as pots were.
+  color: string
   location: BillLocation
   ownerId: string
   payee: string

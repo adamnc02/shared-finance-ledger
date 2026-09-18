@@ -92,11 +92,22 @@ export function migrateLedgerData(data: AppDataV2): AppDataV2 {
     // flat model's numbers exactly (0% effective rate) until the person
     // corrects it with the real amount borrowed via the loan's edit view,
     // rather than guessing a non-zero rate from nothing.
-    loans: (data.loans ?? []).map((loan) => ({
-      ...loan,
-      active: loan.active ?? true,
-      principal: loan.principal ?? round2(loan.monthlyPayment * loan.termMonths),
-    })),
+    // `color` is backfilled here for the same reason, and by the same
+    // mechanism, as savingsPots/pots below: loans gained their own hero
+    // card on 2026-09-18 (PROMPT-08a Part C) and so joined the shared
+    // palette. Before it, every loan card fell back to its CATEGORY's
+    // colour, and loans overwhelmingly share the one seeded "Loan"
+    // category — so they all rendered identically. The round-robin
+    // continues from after the credit cards, savings pots and pots, so a
+    // backfilled loan never lands on a colour one of those already holds.
+    loans: backfillSharedCardColors(
+      (data.loans ?? []).map((loan) => ({
+        ...loan,
+        active: loan.active ?? true,
+        principal: loan.principal ?? round2(loan.monthlyPayment * loan.termMonths),
+      })),
+      (data.creditCards?.length ?? 0) + (data.savingsPots?.length ?? 0) + (data.pots?.length ?? 0),
+    ),
     // `balanceAsOfDate` is a NEW REQUIRED field (see the comment on
     // CreditCard in types/ledger.ts). It's backfilled to TODAY, and that
     // choice is load-bearing rather than arbitrary: under the old model

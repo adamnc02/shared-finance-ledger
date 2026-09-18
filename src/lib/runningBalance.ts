@@ -158,9 +158,34 @@ export interface DailySpendPoint {
   spendToDate: number // cumulative from the start of `days` — the Spend chart's own "cycle always starts at 0" convention, not a running-since-forever total
 }
 
-/** Same day-walk shape as buildDailyBalanceSeries, but for a cumulative total that resets to 0 at the start of `days` rather than folding against an opening balance. `matchesFn` decides which transactions count as "spend" for this chart (a card-type-specific definition — see each build<Type>TrendSeries' own comment). */
+/**
+ * Same day-walk shape as buildDailyBalanceSeries, but for a cumulative total that resets to 0 at the start of `days` rather than folding against an opening balance. `matchesFn` decides which transactions count as "spend" for this chart (a card-type-specific definition — see each build<Type>TrendSeries' own comment).
+ *
+ * 2026-09-18 (Adam-reported, mum's backup) — `days[0]` is a real LOWER
+ * BOUND, and it always should have been. The walk below adds every
+ * matching transaction dated on or before each day, so without this filter
+ * the very first point swept in the person's ENTIRE spending history
+ * before the window even opened: mum's Spend chart opened at £2,204.84 on
+ * day one, in both "This cycle" and "Next 3 cycles", rather than at zero.
+ * That contradicted this function's own documented contract ("resets to 0
+ * at the start of `days`") and the DailySpendPoint comment right above it
+ * ("cumulative from the start of `days`... not a running-since-forever
+ * total"), so the intent was never in doubt — only the implementation.
+ *
+ * Spend dated exactly ON `days[0]` still counts, so a window that genuinely
+ * opens with a payment still shows it (Adam: "the start of each window
+ * needs to be zero, unless there was genuine spend on the first day").
+ *
+ * This fixes every Spend chart at once — Personal, Joint, Household, Pot,
+ * Savings Pot and Credit Card all build their series through here — and it
+ * also lowers the comparison line's own baseline, since that is built by
+ * this same function over the previous period's days.
+ */
 export function buildDailySpendSeries(transactions: Transaction[], days: string[], matchesFn: (t: Transaction) => boolean): DailySpendPoint[] {
-  const sorted = transactions.filter(matchesFn).sort((a, b) => a.date.localeCompare(b.date))
+  const windowStart = days[0]
+  const sorted = transactions
+    .filter((t) => matchesFn(t) && (windowStart === undefined || t.date >= windowStart))
+    .sort((a, b) => a.date.localeCompare(b.date))
   let idx = 0
   let sum = 0
   const out: DailySpendPoint[] = []
