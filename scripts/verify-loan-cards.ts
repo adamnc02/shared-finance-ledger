@@ -251,5 +251,61 @@ const tescoScheduleDates = new Set(buildLoanSchedule(tesco).map((e) => e.date))
 const offScheduleDates = tescoTrend.points.slice(1).filter((p) => !tescoScheduleDates.has(p.dateIso))
 check('its recurring overpayment contributes x points on its OWN real dates, off the loan\'s schedule', offScheduleDates.length > 0, true)
 
+// ── One-off overpayments reach the loan's OWN ledger ──────────────────
+//
+// BUGFIX (Adam-reported, 2026-09-18): "one off overpayments aren't
+// included in the loans ledger, it comes out of my personal card ledger
+// fine, but I don't see the same mirrored +amount in the loans ledger.
+// Recurring payments are fine, just missing one off overpayments."
+//
+// Mum's backup carries the real fixture: a £40 overpayment on Home
+// Improvements, dated 2025-02-22, stored with sourceType
+// 'loan_overpayment' and sourceId 'diX5btfJ' — the OVERPAYMENT's id, not
+// the loan's. Every check below fails against the pre-fix code, which
+// filtered on `t.sourceId === loan.id` alone.
+console.log('\n── One-off overpayments reach the loan\'s own ledger (2026-09-18 bugfix) ──')
+
+const overpayment = homeImprovements.overpayments![0]
+check('the fixture is real: a £40 one-off overpayment on Home Improvements', { date: overpayment.date, amount: overpayment.amount }, { date: '2025-02-22', amount: 40 })
+const storedOverpaymentTx = mum.transactions.find((t) => t.sourceType === 'loan_overpayment' && t.sourceId === overpayment.id)!
+check('...stored with the OVERPAYMENT\'s id as sourceId, not the loan\'s — the whole cause', { sourceId: storedOverpaymentTx.sourceId, loanId: homeImprovements.id }, { sourceId: 'diX5btfJ', loanId: 'jbgh-CKK' })
+
+// A window wide enough to contain 2025-02-22.
+const opStart = new Date(2025, 1, 1)
+const opEnd = new Date(2025, 2, 31)
+const opRows = loanPaymentTransactions(homeImprovements, mum.transactions, opStart, opEnd)
+check('the overpayment now appears on the loan\'s own ledger', opRows.some((t) => t.sourceId === overpayment.id), true)
+check('...exactly once, not duplicated by a generated counterpart', opRows.filter((t) => t.sourceId === overpayment.id).length, 1)
+// Guarded rather than `!`-asserted: against the pre-fix code the row is
+// absent, and a regression should report a failure here, not crash the
+// sweep on an undefined.
+const opRow = opRows.find((t) => t.sourceId === overpayment.id)
+check('...reading POSITIVE, the mirrored +amount Adam expected', opRow ? loanSignedAmount(opRow) : 'row missing', 40)
+
+// The other half of the fix: one loan must never absorb another's
+// overpayment. Car Finance has none of its own, and its ledger must stay
+// empty of Home Improvements'.
+const carRows = loanPaymentTransactions(carFinance, mum.transactions, opStart, opEnd)
+check('Car Finance has no overpayments of its own', (carFinance.overpayments ?? []).length, 0)
+check('...and does NOT absorb Home Improvements\' one', carRows.some((t) => t.sourceId === overpayment.id), false)
+
+// It must also reach the CYCLE SECTIONS, which is where the ledger's
+// totals come from — appearing in the rows but not the total would be the
+// same bug one layer up.
+// 2025-02-25 sits inside the loan's own 2025-02-07..2025-03-14 period,
+// which is the one containing the overpayment — the loan's due day is the
+// 14th, so an "as of mid-March" window would already be the NEXT period.
+const opSections = buildLoanCycleSections(homeImprovements, mum.transactions, loanCyclePeriods(homeImprovements, new Date(2025, 1, 25), 2))
+const opSection = opSections.find((s) => s.rows.some((t) => t.sourceId === overpayment.id))
+check('it lands in a cycle section too', !!opSection, true)
+check('...inside that section\'s own window', !!opSection && opSection.startIso <= '2025-02-22' && opSection.endIso >= '2025-02-22', true)
+check('...and is counted in that section\'s total', !!opSection && opSection.total >= 40, true)
+
+// The reason it was invisible for so long: every OTHER surface reads
+// loan.overpayments through buildLoanSchedule, so the loan looked right
+// everywhere except the one place the payment should have been listed.
+const opInTrend = buildLoanTrendEvents(homeImprovements).filter((e) => e.kind === 'one_off_overpayment')
+check('the trend chart always had it (which is why only the ledger looked wrong)', opInTrend.length, 1)
+
 console.log(failures ? `\n${failures} check(s) FAILED.` : '\nAll loan-card checks passed.')
 process.exitCode = failures ? 1 : 0

@@ -125,12 +125,35 @@ export function loanPaymentTransactions(loan: Loan, transactions: Transaction[],
   const startIso = toLocalIsoDate(rangeStart)
   const endIso = toLocalIsoDate(rangeEnd)
 
-  // Stored: anything logged against this loan. Every one of them is a
-  // `loan_payment` — the regular payment, an ad-hoc overpayment
-  // (`loan_overpayment`), a recurring one, or a settlement — so matching
-  // on `sourceId` + type covers all four without naming each sourceType
-  // and silently missing one added later.
-  const stored = transactions.filter((t) => t.sourceId === loan.id && t.type === 'loan_payment' && t.date >= startIso && t.date <= endIso)
+  // Stored: anything logged against this loan.
+  //
+  // BUGFIX (Adam-reported, 2026-09-18, PROMPT-08b): this used to be
+  // `t.sourceId === loan.id` alone, on the stated assumption that matching
+  // sourceId + type "covers all four without naming each sourceType and
+  // silently missing one added later". That assumption is false, and it
+  // silently missed exactly one: of the four `loan_payment` source types,
+  //
+  //   loan                        → sourceId = loan.id
+  //   loan_recurring_overpayment  → sourceId = loan.id
+  //   loan_settlement             → sourceId = loan.id
+  //   loan_overpayment            → sourceId = the OVERPAYMENT's own id
+  //
+  // `applyLoanOverpayment` writes `sourceId: overpayment.id` (ledgerLoans.ts),
+  // so a one-off overpayment never matched. It left the funding account's
+  // ledger correctly — that side filters by type and category, not by loan —
+  // but never appeared as the mirrored +amount on the loan's own ledger,
+  // and was missing from its cycle-section totals. The pie chart and the
+  // balance trend were unaffected, since both read `loan.overpayments`
+  // through `buildLoanSchedule` rather than the transaction list, which is
+  // why the loan looked correct everywhere except the one place the
+  // payment should have been listed.
+  //
+  // Matched by this loan's OWN overpayment ids rather than by sourceType
+  // alone, so one loan's ledger can never absorb another loan's
+  // overpayment.
+  const overpaymentIds = new Set((loan.overpayments ?? []).map((o) => o.id))
+  const belongsToLoan = (t: Transaction) => t.sourceId === loan.id || (t.sourceType === 'loan_overpayment' && !!t.sourceId && overpaymentIds.has(t.sourceId))
+  const stored = transactions.filter((t) => belongsToLoan(t) && t.type === 'loan_payment' && t.date >= startIso && t.date <= endIso)
   const storedKeys = new Set(stored.map(dedupeKey).filter((k): k is string => k !== null))
 
   const generated = generateLoanPaymentTransactions(loan, rangeStart, rangeEnd)

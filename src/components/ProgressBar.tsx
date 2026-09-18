@@ -37,6 +37,10 @@ interface ProgressBarProps {
 const TOOLTIP_H = 22
 const ARROW_H = 6
 const ARROW_HALF_W = 5
+/** Breathing room between the arrow's tip and the bar (Adam, 2026-09-18) — the tip pointed at the bar from hard against it. */
+const ARROW_GAP = 5
+/** The arrow is drawn twice: a slightly larger triangle in the card's own colour behind a `--color-bg` one, leaving a thin tinted rim along the slanted edges and the tip (Adam: "a slight tint to the edge of the arrows using the cards colour, just to highlight the tip"). A CSS border-triangle cannot carry a border of its own, so two stacked triangles is the mechanism. */
+const ARROW_RIM = 1.5
 /**
  * How far each arrow sits from its nearest end of the box. Adam: "The
  * arrows always need to be the same distance from the end of the tooltip
@@ -101,7 +105,7 @@ export function ProgressBar({ percent, projectedPercent, color = 'var(--color-co
 
       {/* Same width as the bar below — this is the whole anti-drift
           mechanism, so these two must stay siblings in one w-full parent. */}
-      <div className="relative w-full" style={{ height: TOOLTIP_H + ARROW_H }}>
+      <div className="relative w-full" style={{ height: TOOLTIP_H + ARROW_H + ARROW_GAP }}>
         <div
           className="absolute flex items-center justify-center whitespace-nowrap"
           style={{
@@ -118,21 +122,38 @@ export function ProgressBar({ percent, projectedPercent, color = 'var(--color-co
           <span className="text-[11px] font-semibold tabular-nums">{label}</span>
         </div>
         {tooltip.arrowPercents.map((p, i) => (
-          <span
-            key={i}
-            aria-hidden
-            className="absolute"
-            style={{
-              top: TOOLTIP_H,
-              left: `${p}%`,
-              transform: 'translateX(-50%)',
-              width: 0,
-              height: 0,
-              borderLeft: `${ARROW_HALF_W}px solid transparent`,
-              borderRight: `${ARROW_HALF_W}px solid transparent`,
-              borderTop: `${ARROW_H}px solid var(--color-bg)`,
-            }}
-          />
+          // Both triangles share the same `left`, so the tinted rim stays
+          // concentric with the arrow it outlines and the TIP — the part
+          // that has to land on the end of the fill — is still at `p%`.
+          <span key={i} aria-hidden>
+            <span
+              className="absolute"
+              style={{
+                top: TOOLTIP_H - 1,
+                left: `${p}%`,
+                transform: 'translateX(-50%)',
+                width: 0,
+                height: 0,
+                borderLeft: `${ARROW_HALF_W + ARROW_RIM}px solid transparent`,
+                borderRight: `${ARROW_HALF_W + ARROW_RIM}px solid transparent`,
+                borderTop: `${ARROW_H + ARROW_RIM * 2}px solid ${color}`,
+                opacity: 0.6,
+              }}
+            />
+            <span
+              className="absolute"
+              style={{
+                top: TOOLTIP_H,
+                left: `${p}%`,
+                transform: 'translateX(-50%)',
+                width: 0,
+                height: 0,
+                borderLeft: `${ARROW_HALF_W}px solid transparent`,
+                borderRight: `${ARROW_HALF_W}px solid transparent`,
+                borderTop: `${ARROW_H}px solid var(--color-bg)`,
+              }}
+            />
+          </span>
         ))}
       </div>
 
