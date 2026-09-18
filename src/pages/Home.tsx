@@ -3079,7 +3079,6 @@ function LoanProgressRingsSection({
   loans,
   horizonEndDate,
   individualRings = true,
-  heading = true,
 }: {
   data: AppDataV2
   horizon: ProjectionHorizon
@@ -3090,8 +3089,6 @@ function LoanProgressRingsSection({
    * can belong to other household members, who have no card in this deck.
    */
   individualRings?: boolean
-  /** False on a loan's own hero card, where a "Loans" heading above a single ring says nothing the card doesn't. */
-  heading?: boolean
   // Which loans this instance covers — Personal: this person's own
   // personal-location loans; Household: EVERY household member's
   // personal-location loans (Adam-specified, 2026-09-03: "Household pie
@@ -3153,17 +3150,16 @@ function LoanProgressRingsSection({
     // Trends feature (2026-09-15 build) — this used to open with `mt-5
     // pt-5 border-t`, a separator from whatever ledger content sat above
     // it in the same combined card. Now it's always the sole content of
-    // its own Pie Charts HomeSection (see every *Detail caller), so that
-    // top border/margin would just leave a stray line at the top of an
-    // otherwise-empty card — dropped.
+    // its own collapsible "Progress chart" section (CollapsiblePieSection,
+    // see every *Detail caller), so that top border/margin would just
+    // leave a stray line at the top of an otherwise-empty card — dropped.
     <div className="flex flex-col gap-5">
       {loans.length > 0 && (
         <div>
-          {/* The "Loans" sub-heading is redundant on a loan's OWN card —
-              the card is already that loan (Adam, 2026-09-18). It still
-              labels the group on Personal/Joint/Household, where the rings
-              sit among other content. */}
-          {heading && <h3 className="font-body text-sm font-semibold text-[var(--color-ink)] mb-3">Loans</h3>}
+          {/* No "Loans" sub-heading on ANY card (Adam, 2026-09-18). The
+              collapsible section above is already titled "Progress chart",
+              so a second heading immediately inside it only repeats what
+              the person just tapped to open. */}
           <div className="flex flex-col items-center gap-5">
             {(individualRings ? loans : []).map((loan, i) => {
               const progress = loanProgress[i]
@@ -3956,7 +3952,7 @@ function LoanDetail({
           Joint/Household ones. `loans={[loan]}` means the combined "Total
           Loans" ring never appears here — that belongs to Personal. */}
       <CollapsiblePieSection>
-        <LoanProgressRingsSection data={data} horizon={horizon} loans={[loan]} horizonEndDate={horizonRangeEnd(data, data.primaryPersonId, horizon, asOf)} heading={false} />
+        <LoanProgressRingsSection data={data} horizon={horizon} loans={[loan]} horizonEndDate={horizonRangeEnd(data, data.primaryPersonId, horizon, asOf)} />
       </CollapsiblePieSection>
     </div>
   )
