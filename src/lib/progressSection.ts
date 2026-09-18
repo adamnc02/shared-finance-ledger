@@ -93,6 +93,40 @@ export function progressBarGeometry(percent: number, projectedPercent?: number):
   }
 }
 
+/**
+ * Where the mini-tooltip above a progress bar sits, in the bar's OWN
+ * percentage coordinate space (Adam, 2026-09-18: "the down arrow must
+ * exactly hit the end of the filled line, so make sure the arrow/tooltip
+ * box uses the same x axis spacing/dimensions as the progress bar to avoid
+ * the arrow drifting left/right and over/undershooting").
+ *
+ * Every figure here is a percentage of the bar's width, never a pixel, and
+ * ProgressBar renders the tooltip row inside a container that is exactly
+ * as wide as the bar — so "50%" means the same x for both, at any screen
+ * width, with no measuring and nothing to drift.
+ */
+export interface ProgressTooltipLayout {
+  /** One arrow per real end-point: [fill] under "This cycle", [fill, projected] under "Next 3 cycles". */
+  arrowPercents: number[]
+  /** The box's centre — the midpoint of the arrows, so it is "centred between the two arrows". */
+  centerPercent: number
+  /** The distance between the outermost arrows; the box must be at least this wide plus its inset, so both arrows sit the same distance from its ends. */
+  spanPercent: number
+}
+
+export function progressTooltipLayout(geo: ProgressBarGeometry): ProgressTooltipLayout {
+  const fillEnd = geo.fillPercent
+  const projectedEnd = geo.fillPercent + geo.projectedPercent
+  // A projected segment of zero width would put two arrows in exactly the
+  // same place — one arrow is the honest rendering of one end point, and
+  // it is also what "This cycle" shows, so the two views agree whenever
+  // there is nothing projected.
+  const arrowPercents = geo.projectedLabelPercent === undefined || geo.projectedPercent <= 0 ? [fillEnd] : [fillEnd, projectedEnd]
+  const first = arrowPercents[0]
+  const last = arrowPercents[arrowPercents.length - 1]
+  return { arrowPercents, centerPercent: (first + last) / 2, spanPercent: last - first }
+}
+
 export interface LoanProgressEntry {
   loan: Loan
   percentPaid: number

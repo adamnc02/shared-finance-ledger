@@ -1,4 +1,4 @@
-import { PROGRESS_BAR_MARKERS, progressBarGeometry } from '../lib/progressSection'
+import { PROGRESS_BAR_MARKERS, progressBarGeometry, progressTooltipLayout } from '../lib/progressSection'
 
 interface ProgressBarProps {
   /** 0-100, how much of the bar is filled right now. */
@@ -17,11 +17,10 @@ interface ProgressBarProps {
   /** Bar thickness. The default is the "total" bar; the smaller per-loan bars on Joint/Household pass 8. */
   height?: number
   /**
-   * A per-loan bar's own label, shown left of the percentage above the
-   * bar in the app's standard faded-italic sub-label style (the one
-   * EffectiveDatedChangeFlow and RecurringChangeConfirmModal use). The
-   * combined/total bar has none — the section title above it already
-   * says what it is.
+   * A per-loan bar's own label, shown above the tooltip in the app's
+   * standard faded-italic sub-label style (the one EffectiveDatedChangeFlow
+   * and RecurringChangeConfirmModal use). The combined/total bar has none —
+   * the section title above it already says what it is.
    */
   name?: string
   /**
@@ -31,6 +30,29 @@ interface ProgressBarProps {
    */
   showAxis?: boolean
 }
+
+// The mini-tooltip's own dimensions. Only these four are pixels; every
+// horizontal POSITION is a percentage of the bar's width (see
+// progressTooltipLayout), which is what stops the arrows drifting.
+const TOOLTIP_H = 22
+const ARROW_H = 6
+const ARROW_HALF_W = 5
+/**
+ * How far each arrow sits from its nearest end of the box. Adam: "The
+ * arrows always need to be the same distance from the end of the tooltip
+ * box, with the box stretching to cover." So the box's width is the
+ * arrow span plus twice this — unless the label needs more, in which case
+ * the arrows simply sit further in, still symmetrically.
+ */
+const ARROW_INSET = 13
+/**
+ * Enough for the widest label each variant can produce ("100% paid" and
+ * "100-100% paid" at 11px semibold). Fixed rather than measured so the
+ * box's width is known at render time, which is what lets it be centred
+ * and edge-clamped in pure CSS with no layout pass.
+ */
+const MIN_W_SINGLE = 80
+const MIN_W_DUAL = 106
 
 /**
  * PROMPT-08b Part 1 — the progress SECTION's preview, the direct analogue
@@ -45,21 +67,73 @@ interface ProgressBarProps {
  * it), overhanging it by 3px top and bottom so they stay visible where
  * the fill has already passed them. They're drawn ON TOP of both
  * segments for that reason, and are non-interactive.
+ *
+ * Above the bar sits a mini-tooltip carrying the "N% paid" figure, with a
+ * down arrow landing exactly on the end of the fill — and under "Next 3
+ * cycles", two arrows under one box: one on today's fill, one on the end
+ * of the projected extension, reading "25-32% paid". The tooltip row and
+ * the bar are siblings of identical width, so a "42%" in one is the same
+ * x as a "42%" in the other by construction.
  */
 export function ProgressBar({ percent, projectedPercent, color = 'var(--color-coral)', trackColor = 'var(--color-track)', height = 12, name, showAxis = true }: ProgressBarProps) {
   const geo = progressBarGeometry(percent, projectedPercent)
+  const tooltip = progressTooltipLayout(geo)
   const MARKER_OVERHANG = 3
+
+  const dual = tooltip.arrowPercents.length > 1
+  const label = dual ? `${geo.labelPercent}-${geo.projectedLabelPercent}% paid` : `${geo.labelPercent}% paid`
+
+  // The box stretches to cover the arrow span, or to fit its label,
+  // whichever is wider — `max()` of a percentage and a pixel length, which
+  // resolves against this container (the bar's width) exactly as the
+  // arrows' own percentages do.
+  const boxWidth = `max(${dual ? MIN_W_DUAL : MIN_W_SINGLE}px, calc(${tooltip.spanPercent}% + ${ARROW_INSET * 2}px))`
+  // Centred on the arrows' midpoint, then clamped so a bar filled to 0% or
+  // 100% cannot push the box off the side of the card. Clamping is the one
+  // case where an arrow stops being centred in the box — the alternative
+  // is a tooltip hanging over the card's edge, and the arrows themselves
+  // still land exactly on the fill either way.
+  const boxLeft = `clamp(calc(${boxWidth} / 2), ${tooltip.centerPercent}%, calc(100% - ${boxWidth} / 2))`
 
   return (
     <div className="w-full">
-      {/* The data label Adam asked for: whole percent, no decimals. On a
-          per-loan bar it shares the row with that loan's name. */}
-      <div className="flex items-baseline justify-between gap-2 mb-1.5">
-        {name ? <span className="text-xs italic text-[var(--color-ink-faint)] truncate">{name}</span> : <span />}
-        <span className="text-xs font-semibold text-[var(--color-ink)] tabular-nums shrink-0">
-          {geo.labelPercent}
-          {geo.projectedLabelPercent !== undefined && <span style={{ color: 'var(--color-coral)' }}>→{geo.projectedLabelPercent}</span>}% paid
-        </span>
+      {name && <p className="text-xs italic text-[var(--color-ink-faint)] truncate mb-1">{name}</p>}
+
+      {/* Same width as the bar below — this is the whole anti-drift
+          mechanism, so these two must stay siblings in one w-full parent. */}
+      <div className="relative w-full" style={{ height: TOOLTIP_H + ARROW_H }}>
+        <div
+          className="absolute flex items-center justify-center whitespace-nowrap"
+          style={{
+            top: 0,
+            left: boxLeft,
+            transform: 'translateX(-50%)',
+            width: boxWidth,
+            height: TOOLTIP_H,
+            borderRadius: 8,
+            background: 'var(--color-bg)',
+            color: 'var(--color-ink)',
+          }}
+        >
+          <span className="text-[11px] font-semibold tabular-nums">{label}</span>
+        </div>
+        {tooltip.arrowPercents.map((p, i) => (
+          <span
+            key={i}
+            aria-hidden
+            className="absolute"
+            style={{
+              top: TOOLTIP_H,
+              left: `${p}%`,
+              transform: 'translateX(-50%)',
+              width: 0,
+              height: 0,
+              borderLeft: `${ARROW_HALF_W}px solid transparent`,
+              borderRight: `${ARROW_HALF_W}px solid transparent`,
+              borderTop: `${ARROW_H}px solid var(--color-bg)`,
+            }}
+          />
+        ))}
       </div>
 
       <div className="relative w-full" style={{ height, background: trackColor, borderRadius: 999 }}>

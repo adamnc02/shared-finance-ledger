@@ -24,6 +24,7 @@ import {
   progressSectionTitle,
   isCreditCardProgressVisible,
   progressBarGeometry,
+  progressTooltipLayout,
   summarizeLoansProgress,
   PROGRESS_BAR_MARKERS,
 } from '../src/lib/progressSection'
@@ -103,6 +104,46 @@ check('a projection below the current figure collapses to zero width, never nega
 check('a projection that rounds to the same percent shows no arrow', progressBarGeometry(42.1, 42.4).projectedLabelPercent, undefined)
 check('over 100% is clamped', progressBarGeometry(140, 180), { fillPercent: 100, projectedPercent: 0, labelPercent: 100, projectedLabelPercent: undefined })
 check('below 0 is clamped', progressBarGeometry(-10).fillPercent, 0)
+
+console.log('\n── The mini-tooltip above the bar (Adam: "the down arrow must exactly hit the end of the filled line") ──')
+
+// THE anti-drift property, and the reason this layout is computed in
+// percentages rather than pixels: the arrow's x IS the fill's x. An
+// implementation that measured the box in pixels and offset from it would
+// fail this at some widths and pass at others.
+const single = progressTooltipLayout(progressBarGeometry(42.7))
+check('this cycle: one arrow', single.arrowPercents.length, 1)
+check('...and it sits exactly on the end of the fill', single.arrowPercents[0], progressBarGeometry(42.7).fillPercent)
+check('...with the box centred on it', single.centerPercent, single.arrowPercents[0])
+check('...and no span to stretch over', single.spanPercent, 0)
+
+const dual = progressTooltipLayout(progressBarGeometry(25, 32))
+check('next 3 cycles: two arrows', dual.arrowPercents.length, 2)
+check('...the first on today\'s fill, the second on the end of the projection', dual.arrowPercents, [25, 32])
+check('...the box centred BETWEEN them', dual.centerPercent, 28.5)
+check('...and stretched to cover the gap', dual.spanPercent, 7)
+// Equidistance is a consequence of those two, and is what Adam asked for
+// ("The arrows always need to be the same distance from the end of the
+// tooltip box"): centre − first must equal last − centre, at any values.
+check(
+  'each arrow is the same distance from the box centre, so the same distance from its end',
+  round2(dual.centerPercent - dual.arrowPercents[0]) === round2(dual.arrowPercents[1] - dual.centerPercent),
+  true,
+)
+
+// A projection too small to change the whole percent shows one arrow, not
+// two stacked in the same place — the same rule that suppresses the
+// "25-25% paid" label.
+check('a projection that rounds to the same percent collapses to one arrow', progressTooltipLayout(progressBarGeometry(42.1, 42.4)).arrowPercents.length, 1)
+check('a zero-width projection likewise', progressTooltipLayout(progressBarGeometry(60, 55)).arrowPercents.length, 1)
+
+// The edge cases Adam called out: at 0% and 100% the BOX is clamped inside
+// the bar's bounds, but the arrows never move off the fill's end — the
+// layout keeps reporting the true x and the clamping happens in CSS.
+check('at 0% the arrow is still at 0, not nudged inwards', progressTooltipLayout(progressBarGeometry(0)).arrowPercents, [0])
+check('at 100% the arrow is still at 100', progressTooltipLayout(progressBarGeometry(100)).arrowPercents, [100])
+check('a projection running to 100% still reports both true ends', progressTooltipLayout(progressBarGeometry(96, 100)).arrowPercents, [96, 100])
+check('no arrow can ever fall outside the bar', [0, 12.5, 42.7, 99.9, 100, 140].every((p) => progressTooltipLayout(progressBarGeometry(p, p + 20)).arrowPercents.every((a) => a >= 0 && a <= 100)), true)
 
 console.log('\n── Combined loan progress, against mum\'s real backup ──')
 
