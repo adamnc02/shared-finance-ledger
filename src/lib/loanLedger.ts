@@ -20,7 +20,7 @@
 
 import { addDays } from 'date-fns'
 import { toLocalIsoDate, parseLocalDate } from './date'
-import { buildLoanSchedule, buildLoanLedgerRows, generateLoanPaymentTransactions, summarizeLoan } from './ledgerLoans'
+import { buildLoanSchedule, recurringOverpaymentRealDates, generateLoanPaymentTransactions, summarizeLoan } from './ledgerLoans'
 import { dedupeKey } from './projection'
 import type { BalanceSpendTrendSeries } from './runningBalance'
 import type { AppDataV2, Loan, Transaction } from '../types/ledger'
@@ -229,8 +229,86 @@ export interface LoanTrendSeries {
  * `this_cycle`/`next_3_cycles` daily granularity, and this chart has
  * neither a cycle nor a daily point — its points ARE the payment events.
  */
+/** What kind of payment a trend point represents — Adam, 2026-09-18: the loan chart should say whether a point was the monthly repayment, a one-off overpayment or a recurring one, since a loan's category icon is the same for every point and says nothing. */
+export type LoanPaymentKind = 'monthly' | 'one_off_overpayment' | 'recurring_overpayment'
+
+export const LOAN_PAYMENT_KIND_LABELS: Record<LoanPaymentKind, string> = {
+  monthly: 'Monthly repayment',
+  one_off_overpayment: 'One-off overpayment',
+  recurring_overpayment: 'Recurring overpayment',
+}
+
+export interface LoanTrendEvent {
+  dateIso: string
+  kind: LoanPaymentKind
+  /** Cash handed over. */
+  amount: number
+  /** How much of it came off the principal — what moves the balance line. */
+  capital: number
+}
+
+/**
+ * Every dated payment event on the loan, each at its OWN real calendar
+ * date. This is the loan trend chart's x axis (Adam: "all monthly
+ * repayments, any one off overpayments and any recurring overpayments date
+ * form the x axis, not locked in on the monthly payment dates").
+ *
+ * Why this exists rather than reusing `buildLoanLedgerRows`: that function
+ * dates a one-off overpayment at the SCHEDULE ENTRY's date, not the
+ * overpayment's own. `buildLoanSchedule` aggregates an overpayment into
+ * whichever period shares its MONTH, so a £3,000 overpayment logged on
+ * 22 Oct is folded into the payment due on 14 Oct — and the chart drew the
+ * dip on the 14th, labelled £290 (the monthly payment), which is exactly
+ * what Adam reported on 2026-09-18. Recurring overpayments were already
+ * remapped to their real dates; one-off ones never were.
+ *
+ * The per-period aggregate `entry.overpaymentApplied` stays the source of
+ * truth for HOW MUCH the engine actually applied (it clamps at the
+ * remaining balance). Overpayments are consumed against it in date order,
+ * which is the same order `buildLoanSchedule` consumes them in — so this
+ * splits the aggregate back out to real dates without re-deriving the
+ * engine's own same-month matching rule, which would be a second copy of
+ * it to keep in step.
+ */
+export function buildLoanTrendEvents(loan: Loan): LoanTrendEvent[] {
+  const schedule = buildLoanSchedule(loan)
+  const recurringDates = recurringOverpaymentRealDates(loan, schedule)
+  const overpayments = [...(loan.overpayments ?? [])].sort((a, b) => a.date.localeCompare(b.date))
+  let overpaymentIndex = 0
+  const events: LoanTrendEvent[] = []
+
+  for (const entry of schedule) {
+    if (entry.scheduledPayment > 0) {
+      events.push({
+        dateIso: entry.date,
+        kind: 'monthly',
+        amount: round2(entry.scheduledPayment),
+        capital: round2(entry.scheduledPayment - entry.interestApplied),
+      })
+    }
+    let remaining = entry.overpaymentApplied
+    while (remaining > 0.005 && overpaymentIndex < overpayments.length) {
+      const op = overpayments[overpaymentIndex]
+      const applied = round2(Math.min(op.amount, remaining))
+      events.push({ dateIso: op.date, kind: 'one_off_overpayment', amount: applied, capital: applied })
+      remaining = round2(remaining - applied)
+      overpaymentIndex++
+    }
+    if (entry.recurringOverpaymentApplied > 0) {
+      events.push({
+        dateIso: recurringDates.get(entry.date) ?? entry.date,
+        kind: 'recurring_overpayment',
+        amount: round2(entry.recurringOverpaymentApplied),
+        capital: round2(entry.recurringOverpaymentApplied),
+      })
+    }
+  }
+
+  return events.sort((a, b) => a.dateIso.localeCompare(b.dateIso))
+}
+
 export function buildLoanTrendSeries(loan: Loan, asOfDate: Date = new Date()): LoanTrendSeries {
-  const rows = buildLoanLedgerRows(loan)
+  const rows = buildLoanTrendEvents(loan)
   // The opening point: the full principal, on the day the money was drawn.
   // Without it a loan whose first payment is still in the future has a
   // single-point chart that can't show a line at all.
@@ -270,8 +348,8 @@ export function buildLoanTrendSeries(loan: Loan, asOfDate: Date = new Date()): L
     // Two events on one date (a payment and its overpayment) collapse to
     // one point carrying the balance after BOTH — a chart x-axis can only
     // hold one value per date, and the later balance is the true one.
-    if (last && last.dateIso === row.date) last.balance = rounded
-    else points.push({ dateIso: row.date, balance: rounded })
+    if (last && last.dateIso === row.dateIso) last.balance = rounded
+    else points.push({ dateIso: row.dateIso, balance: rounded })
   }
 
   return { points, currentBalance: summarizeLoan(loan, asOfDate).remainingBalance }

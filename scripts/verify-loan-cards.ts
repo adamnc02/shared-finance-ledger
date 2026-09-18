@@ -20,7 +20,7 @@
 // ledger is fed `signedAmount` instead of `loanSignedAmount`.
 
 import { readFileSync } from 'node:fs'
-import { isLoanCardVisible, visibleLoanCards, loanCyclePeriods, loanPaymentTransactions, loanSignedAmount, buildLoanCycleSections, buildLoanTrendSeries } from '../src/lib/loanLedger'
+import { isLoanCardVisible, visibleLoanCards, loanCyclePeriods, loanPaymentTransactions, loanSignedAmount, buildLoanCycleSections, buildLoanTrendSeries, buildLoanTrendEvents, LOAN_PAYMENT_KIND_LABELS } from '../src/lib/loanLedger'
 import { buildLoanSchedule, summarizeLoan, settleLoan } from '../src/lib/ledgerLoans'
 import { pickNextSharedCardColor } from '../src/lib/creditCards'
 import { SHARED_CARD_COLORS } from '../src/types/ledger'
@@ -29,6 +29,7 @@ import { signedAmount } from '../src/lib/runningBalance'
 import { toLocalIsoDate } from '../src/lib/date'
 import type { AppDataV2, Loan } from '../src/types/ledger'
 
+const round2 = (n: number) => Math.round(n * 100) / 100
 let failures = 0
 function check(label: string, actual: unknown, expected: unknown) {
   const pass = JSON.stringify(actual) === JSON.stringify(expected)
@@ -195,6 +196,40 @@ const overpaymentDates = new Set((homeImprovements.overpayments ?? []).map((o) =
 const unexplained = hiTrend.points.slice(1).filter((p) => !hiScheduleDates.has(p.dateIso) && !overpaymentDates.has(p.dateIso))
 check('every x point is a scheduled payment date or an overpayment date', unexplained.map((p) => p.dateIso), [])
 check('this loan really does have an ad-hoc overpayment to prove that with', (homeImprovements.overpayments ?? []).length, 1)
+
+// ── The x axis is real dates, and every point knows its own kind ──────
+// Adam's exact 2026-09-18 report: a £3,000 one-off overpayment logged on
+// 22 Oct drew its dip on 14 OCT, labelled £290 — the monthly payment.
+// Cause: buildLoanSchedule aggregates an overpayment into whichever
+// period shares its MONTH, and buildLoanLedgerRows then dated the row at
+// the PERIOD's date. These checks fail against that.
+const withOverpayment: Loan = {
+  ...homeImprovements,
+  overpayments: [...homeImprovements.overpayments, { id: 'op-uat', date: '2026-10-22', amount: 3000, recastMode: 'reduce_term' }],
+}
+const opEvents = buildLoanTrendEvents(withOverpayment)
+const theOverpayment = opEvents.find((e) => e.kind === 'one_off_overpayment' && e.amount === 3000)
+check('a one-off overpayment is dated on the day it was actually made, not the loan payment date', theOverpayment?.dateIso, '2026-10-22')
+check('...and carries its own amount, not the monthly payment', theOverpayment?.amount, 3000)
+check('the monthly payment that shares its month is still its own separate event on the 14th',
+  opEvents.some((e) => e.kind === 'monthly' && e.dateIso === '2026-10-14'), true)
+const opPoints = buildLoanTrendSeries(withOverpayment, ASOF).points
+check('the balance dip lands on the overpayment\'s own date', opPoints.some((p) => p.dateIso === '2026-10-22'), true)
+const before = opPoints.find((p) => p.dateIso === '2026-10-14')!
+const after = opPoints.find((p) => p.dateIso === '2026-10-22')!
+check('...and is the size of the overpayment', round2(before.balance - after.balance), 3000)
+
+// Every event kind is represented and labelled — the chart's tooltip
+// names the kind because a loan's category icon is identical on every
+// point and so says nothing (Adam, 2026-09-18).
+check('every event kind has a label for the tooltip chip',
+  [...new Set(buildLoanTrendEvents(tesco).map((e) => e.kind))].every((k) => !!LOAN_PAYMENT_KIND_LABELS[k]), true)
+check("Ella's loan produces both monthly and recurring-overpayment events",
+  [...new Set(buildLoanTrendEvents(tesco).map((e) => e.kind))].sort(), ['monthly', 'recurring_overpayment'])
+// The tooltip reads IN, not OUT: every event is money arriving at the
+// loan, so the figure the tooltip sums must be positive.
+check('every trend event amount is positive (the tooltip reads IN, not OUT)',
+  buildLoanTrendEvents(withOverpayment).every((e) => e.amount > 0), true)
 
 // Ella's loan carries a RECURRING overpayment, whose real date can fall on
 // a different day of the month from the loan's own payment date — the

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { formatCurrency, formatFullDate } from '../lib/format'
+import { formatCurrency } from '../lib/format'
 import { toLocalIsoDate, todayIso, parseLocalDate } from '../lib/date'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, CreditCard as CreditCardIcon, Layers, PiggyBank, Wallet, SlidersHorizontal, X, TrendingUp, RotateCcw } from 'lucide-react'
 import { useLedgerData } from '../context/LedgerContext'
@@ -35,7 +35,7 @@ import { CategoryIcon } from '../components/CategoryIcon'
 import { BalanceSpendChart, SavingsPotPillChart, shortDayLabel, type BalanceSpendView } from '../components/TrendChart'
 import { SAVINGS_CATEGORY_ID, CREDIT_CARD_CATEGORY_ID } from '../types/ledger'
 import { seededCategoryIdForIcon, distinctByCategory, DEFAULT_POT_CATEGORY_ICON, DEFAULT_POT_CATEGORY_ICON_COLOR } from '../lib/categories'
-import { visibleLoanCards, loanCyclePeriods, buildLoanCycleSections, loanTrendAsBalanceSeries, loanSignedAmount, loanPaymentTransactions } from '../lib/loanLedger'
+import { visibleLoanCards, loanCyclePeriods, buildLoanCycleSections, loanTrendAsBalanceSeries, loanSignedAmount, buildLoanTrendEvents, LOAN_PAYMENT_KIND_LABELS } from '../lib/loanLedger'
 import type { AppDataV2, CreditCard, Loan, Pot, SavingsPot, Transaction } from '../types/ledger'
 
 // ── Deck construction — doc addendum on Summary card visibility ────────
@@ -1558,7 +1558,18 @@ function FiltersSheet({
   // groupByPerson mode), and AmountOrderedList doesn't either.
   // Credit Card/Savings Pot have no Group-by/Order-by of their own to
   // conflict with, so it's always applicable there.
-  const groupByDirectionApplicable = !showGroupOrder || (grouping === 'list' && order === 'date')
+  // A loan's ledger only ever moves one way — repayments toward the debt —
+  // so splitting it into Incoming/Outgoing says nothing (Adam, 2026-09-18).
+  // Greyed out rather than hidden, same as everything else here.
+  const groupByDirectionApplicable = entry.kind !== 'loan' && (!showGroupOrder || (grouping === 'list' && order === 'date'))
+  // Why Group by/Order by can't be tapped on this card, in the person's own
+  // terms rather than just a dimmed control.
+  const groupOrderUnavailableReason =
+    entry.kind === 'loan'
+      ? 'Every row here is this loan, so there is nothing to group or reorder'
+      : entry.kind === 'credit_card'
+        ? "This card's own activity is always listed by date"
+        : 'Not available for this card'
   // 2026-09-13 (average spend forecast) — Personal/Joint only (this part
   // STAYS a hide, not a grey-out — Household/Pot/Credit Card/Savings Pot
   // don't have this feature at all, that's not a "current selection"
@@ -1641,47 +1652,56 @@ function FiltersSheet({
         </div>
 
         <div className="flex flex-col gap-4 mt-4">
-          {showGroupOrder && (
-            <>
-              <div className="flex flex-col gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ink-muted)]">Group by</span>
-                <div className="flex gap-1.5">
-                  {groupingOptions.map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => setGrouping(opt.value)}
-                      className="flex-1 py-2 rounded-full text-sm font-medium"
-                      style={{ background: grouping === opt.value ? 'var(--color-coral)' : 'var(--color-surface)', color: grouping === opt.value ? '#fff' : 'var(--color-ink-muted)' }}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
+          {/* 2026-09-18 (Adam-reported, on the loan and credit card cards) —
+              Group by / Order by are now DISABLED rather than removed on the
+              card kinds that don't offer them, extending the exact rule Adam
+              already asked for on the three toggles below: "the unavailable
+              filter options should be visible but greyed out". Every control
+              the sheet can ever show is now always present, so the sheet's
+              shape doesn't change from card to card and it's obvious WHY
+              something can't be tapped. `showGroupOrder` still decides
+              applicability — only what happens when it's false changed. */}
+          <>
+            <div className="flex flex-col gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ink-muted)]">Group by</span>
+              <div className="flex gap-1.5">
+                {groupingOptions.map((opt) => (
+                  <button
+                    key={opt.value}
+                    disabled={!showGroupOrder}
+                    onClick={() => setGrouping(opt.value)}
+                    className="flex-1 py-2 rounded-full text-sm font-medium disabled:opacity-40"
+                    style={{ background: grouping === opt.value ? 'var(--color-coral)' : 'var(--color-surface)', color: grouping === opt.value ? '#fff' : 'var(--color-ink-muted)' }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
-              <div className="flex flex-col gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ink-muted)]">Order by</span>
-                <div className="flex gap-1.5">
-                  {(
-                    [
-                      { value: 'date', label: 'Date' },
-                      { value: 'amount', label: 'Amount' },
-                    ] as { value: Order; label: string }[]
-                  ).map((opt) => (
-                    <button
-                      key={opt.value}
-                      disabled={grouping === 'category'}
-                      onClick={() => setOrder(opt.value)}
-                      className="flex-1 py-2 rounded-full text-sm font-medium disabled:opacity-40"
-                      style={{ background: order === opt.value ? 'var(--color-coral)' : 'var(--color-surface)', color: order === opt.value ? '#fff' : 'var(--color-ink-muted)' }}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
+              {!showGroupOrder && <span className="text-[11px] text-[var(--color-ink-faint)]">{groupOrderUnavailableReason}</span>}
+            </div>
+            <div className="flex flex-col gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ink-muted)]">Order by</span>
+              <div className="flex gap-1.5">
+                {(
+                  [
+                    { value: 'date', label: 'Date' },
+                    { value: 'amount', label: 'Amount' },
+                  ] as { value: Order; label: string }[]
+                ).map((opt) => (
+                  <button
+                    key={opt.value}
+                    disabled={!showGroupOrder || grouping === 'category'}
+                    onClick={() => setOrder(opt.value)}
+                    className="flex-1 py-2 rounded-full text-sm font-medium disabled:opacity-40"
+                    style={{ background: order === opt.value ? 'var(--color-coral)' : 'var(--color-surface)', color: order === opt.value ? '#fff' : 'var(--color-ink-muted)' }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
-              <div style={{ height: 1, background: 'var(--color-surface-raised)' }} />
-            </>
-          )}
+            </div>
+            <div style={{ height: 1, background: 'var(--color-surface-raised)' }} />
+          </>
 
           {/* Unlike cycle-end totals below, this one applies to every
               grouping/order combination — list, category, and amount all
@@ -1700,7 +1720,7 @@ function FiltersSheet({
           <ToggleSwitch
             full
             label="Group by direction"
-            help={groupByDirectionApplicable ? 'Split into incoming / outgoing' : 'Only available for List + Date'}
+            help={groupByDirectionApplicable ? 'Split into incoming / outgoing' : entry.kind === 'loan' ? 'A loan only has repayments going one way' : 'Only available for List + Date'}
             checked={groupByDirection}
             onChange={setGroupByDirection}
             disabled={!groupByDirectionApplicable}
@@ -3035,7 +3055,7 @@ function HomeSection({ children, className = '' }: { children: ReactNode; classN
  * keeps it consistent with CategoryGroupedList's own collapse state, which
  * is likewise per-instance and not persisted.
  */
-function CollapsiblePieSection({ title = 'Pie charts', children }: { title?: string; children: ReactNode }) {
+function CollapsiblePieSection({ title = 'Progress chart', children }: { title?: string; children: ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
     <HomeSection>
@@ -3059,6 +3079,7 @@ function LoanProgressRingsSection({
   loans,
   horizonEndDate,
   individualRings = true,
+  heading = true,
 }: {
   data: AppDataV2
   horizon: ProjectionHorizon
@@ -3069,6 +3090,8 @@ function LoanProgressRingsSection({
    * can belong to other household members, who have no card in this deck.
    */
   individualRings?: boolean
+  /** False on a loan's own hero card, where a "Loans" heading above a single ring says nothing the card doesn't. */
+  heading?: boolean
   // Which loans this instance covers — Personal: this person's own
   // personal-location loans; Household: EVERY household member's
   // personal-location loans (Adam-specified, 2026-09-03: "Household pie
@@ -3136,7 +3159,11 @@ function LoanProgressRingsSection({
     <div className="flex flex-col gap-5">
       {loans.length > 0 && (
         <div>
-          <h3 className="font-body text-sm font-semibold text-[var(--color-ink)] mb-3">Loans</h3>
+          {/* The "Loans" sub-heading is redundant on a loan's OWN card —
+              the card is already that loan (Adam, 2026-09-18). It still
+              labels the group on Personal/Joint/Household, where the rings
+              sit among other content. */}
+          {heading && <h3 className="font-body text-sm font-semibold text-[var(--color-ink)] mb-3">Loans</h3>}
           <div className="flex flex-col items-center gap-5">
             {(individualRings ? loans : []).map((loan, i) => {
               const progress = loanProgress[i]
@@ -3800,13 +3827,16 @@ function LoanDetail({
   // (the 2026-09-17 bug this must not reintroduce).
   const visibleRows = sections.flatMap((s) => s.rows).filter((t) => showCleared || t.status !== 'cleared')
 
+  // Collapsed by default, same as every other card's cycle sections —
+  // tracks what's been explicitly EXPANDED so a newly-appearing cycle
+  // needs no seeding.
+  const [expandedCycles, setExpandedCycles] = useState<Set<string>>(() => new Set())
   const trendSeries = loanTrendAsBalanceSeries(loan, asOf)
-  // Tooltip rows for the WHOLE trend chart, which spans the loan's entire
-  // life — not just the cycles the ledger above is showing. Same lesson as
-  // the Personal card's `trendIconTxns` (2026-09-18): the tooltip must be
-  // fed from the chart's own range, or icons stop dead wherever the
-  // ledger's window happens to end.
-  const paymentRows = loanPaymentTransactions(loan, data.transactions, parseLocalDate(loan.advanceDate ?? loan.startDate), parseLocalDate(trendSeries.days[trendSeries.days.length - 1]))
+  // The chart's own events, spanning the loan's ENTIRE life — not the
+  // cycles the ledger above happens to be showing. Same lesson as the
+  // Personal card's `trendIconTxns` (2026-09-18): feed the tooltip from
+  // the chart's range, or it goes blank wherever the ledger's window ends.
+  const trendEvents = buildLoanTrendEvents(loan)
 
   return (
     <div className="flex flex-col gap-4">
@@ -3818,21 +3848,51 @@ function LoanDetail({
         </p>
 
         {cycleTotals ? (
-          <div className="flex flex-col gap-4">
+          /* Collapsed pills, exactly like every other card's cycle-end
+             totals view (Adam, 2026-09-18 — "doesn't show collapsed pills
+             like the other cards"). Same markup and same collapsed-by-
+             default behaviour as CycleGroupedList, but kept local rather
+             than reusing that component because it derives BOTH the row
+             amounts and the running figure from one `amountSign`: a loan
+             needs rows POSITIVE (money arriving at the debt) while the
+             pill's figure counts DOWN (what's still owed). One sign can't
+             be both. The figure comes from the amortisation schedule via
+             buildLoanCycleSections, not from folding the rows. */
+          <div className="flex flex-col gap-2">
             {sections.map((section) => {
               const rows = section.rows.filter((t) => showCleared || t.status !== 'cleared')
+              const expanded = expandedCycles.has(section.endIso)
               return (
-                <div key={section.endIso}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-semibold text-[var(--color-ink-muted)]">Due {formatFullDate(section.endIso)}</span>
-                    <span className="text-xs font-mono text-[var(--color-ink-faint)]">£{formatCurrency(section.balanceAfter)} owed after</span>
-                  </div>
-                  <div className="flex flex-col divide-y" style={{ borderColor: 'var(--color-track)' }}>
-                    {rows.map((t) => (
-                      <TransactionRow key={t.id} t={t} data={data} amountSign={loanSignedAmount} />
-                    ))}
-                    {rows.length === 0 && <p className="text-sm text-[var(--color-ink-muted)] text-center py-4">Nothing due this cycle.</p>}
-                  </div>
+                <div key={section.endIso} className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-bg)' }}>
+                  <button
+                    onClick={() => setExpandedCycles((prev) => { const next = new Set(prev); if (next.has(section.endIso)) next.delete(section.endIso); else next.add(section.endIso); return next })}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left"
+                    aria-expanded={expanded}
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      <span className="text-xs font-semibold text-[var(--color-ink)] truncate">Due {formatCycleDate(section.endIso)}</span>
+                    </span>
+                    {!expanded && (
+                      <span className="text-xs font-mono font-semibold tabular-nums shrink-0" style={{ color: 'var(--color-ink-muted)' }}>
+                        £{formatCurrency(section.balanceAfter)}
+                      </span>
+                    )}
+                  </button>
+                  {expanded && (
+                    <div className="px-3 pb-2">
+                      <div className="flex flex-col divide-y" style={{ borderColor: 'var(--color-track)' }}>
+                        {rows.map((t) => (
+                          <TransactionRow key={t.id} t={t} data={data} amountSign={loanSignedAmount} />
+                        ))}
+                        {rows.length === 0 && <p className="text-sm text-[var(--color-ink-muted)] text-center py-4">Nothing due this cycle.</p>}
+                      </div>
+                      <div className="flex items-center justify-between pt-2 text-xs">
+                        <span className="text-[var(--color-ink-muted)]">Owed after this payment</span>
+                        <span className="font-mono font-semibold tabular-nums text-[var(--color-ink)]">£{formatCurrency(section.balanceAfter)}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -3862,7 +3922,27 @@ function LoanDetail({
           caption={`£${formatCurrency(owedNow)} owed today`}
           balanceSpend={{
             buildSeries: () => trendSeries,
-            dayDetails: (d) => dayDetailsForDay(paymentRows, data.categories, d),
+            // A loan's own tooltip, not the shared `dayDetailsForDay`.
+            // Two reasons (both Adam, 2026-09-18): the amount reads IN,
+            // not OUT — a repayment ARRIVES at the loan, which is the same
+            // mirrored sign the ledger above uses — and the chip names
+            // WHICH kind of payment it was, because every point on a loan
+            // shares one category icon and so the icon says nothing.
+            dayDetails: (d) => {
+              const onDay = trendEvents.filter((e) => e.dateIso === d)
+              const kinds = [...new Set(onDay.map((e) => e.kind))]
+              return {
+                netAmount: round2(onDay.reduce((sum, e) => sum + e.amount, 0)),
+                icons: kinds.map((kind) => ({
+                  key: kind,
+                  node: (
+                    <span className="text-[11px] px-2 py-1 rounded-full whitespace-nowrap" style={{ background: 'var(--color-surface)', color: 'var(--color-ink)' }}>
+                      {LOAN_PAYMENT_KIND_LABELS[kind]}
+                    </span>
+                  ),
+                })),
+              }
+            },
             fixedRange: true,
           }}
         />
@@ -3876,7 +3956,7 @@ function LoanDetail({
           Joint/Household ones. `loans={[loan]}` means the combined "Total
           Loans" ring never appears here — that belongs to Personal. */}
       <CollapsiblePieSection>
-        <LoanProgressRingsSection data={data} horizon={horizon} loans={[loan]} horizonEndDate={horizonRangeEnd(data, data.primaryPersonId, horizon, asOf)} />
+        <LoanProgressRingsSection data={data} horizon={horizon} loans={[loan]} horizonEndDate={horizonRangeEnd(data, data.primaryPersonId, horizon, asOf)} heading={false} />
       </CollapsiblePieSection>
     </div>
   )
