@@ -20,7 +20,7 @@
 
 import { addDays } from 'date-fns'
 import { toLocalIsoDate, parseLocalDate } from './date'
-import { buildLoanSchedule, recurringOverpaymentRealDates, generateLoanPaymentTransactions, summarizeLoan } from './ledgerLoans'
+import { buildLoanSchedule, recurringOverpaymentRealDates, generateLoanPaymentTransactions, summarizeLoan, appliedOneOffOverpayments } from './ledgerLoans'
 import { dedupeKey } from './projection'
 import type { BalanceSpendTrendSeries } from './runningBalance'
 import type { AppDataV2, Loan, Transaction } from '../types/ledger'
@@ -125,12 +125,36 @@ export function loanPaymentTransactions(loan: Loan, transactions: Transaction[],
   const startIso = toLocalIsoDate(rangeStart)
   const endIso = toLocalIsoDate(rangeEnd)
 
-  // Stored: anything logged against this loan. Every one of them is a
-  // `loan_payment` — the regular payment, an ad-hoc overpayment
-  // (`loan_overpayment`), a recurring one, or a settlement — so matching
-  // on `sourceId` + type covers all four without naming each sourceType
-  // and silently missing one added later.
-  const stored = transactions.filter((t) => t.sourceId === loan.id && t.type === 'loan_payment' && t.date >= startIso && t.date <= endIso)
+  // Stored: anything logged against this loan.
+  //
+  // BUGFIX (Adam-reported, 2026-09-18, PROMPT-08b): this used to be
+  // `t.sourceId === loan.id` alone, on the stated assumption that matching
+  // sourceId + type "covers all four without naming each sourceType and
+  // silently missing one added later". That assumption is false, and it
+  // silently missed exactly one: of the four `loan_payment` source types,
+  //
+  //   loan                        → sourceId = loan.id
+  //   loan_recurring_overpayment  → sourceId = loan.id
+  //   loan_settlement             → sourceId = loan.id
+  //   loan_overpayment            → sourceId = the OVERPAYMENT's own id
+  //
+  // `applyLoanOverpayment` writes `sourceId: overpayment.id` (ledgerLoans.ts),
+  // so a one-off overpayment never matched. It left the funding account's
+  // ledger correctly — that side filters by type and category, not by loan —
+  // but never appeared as the mirrored +amount on the loan's own ledger,
+  // and was missing from its cycle-section totals. This was ONE of two
+  // independent defects Adam reported on the same overpayment: the other
+  // (see unrecognisedOneOffOverpayments in ledgerLoans.ts) kept it out of
+  // the owed figure, the progress bar and the pie chart. They share a
+  // cause only in the loose sense that both date from PROMPT-08a; fixing
+  // either one alone still leaves the overpayment half-invisible.
+  //
+  // Matched by this loan's OWN overpayment ids rather than by sourceType
+  // alone, so one loan's ledger can never absorb another loan's
+  // overpayment.
+  const overpaymentIds = new Set((loan.overpayments ?? []).map((o) => o.id))
+  const belongsToLoan = (t: Transaction) => t.sourceId === loan.id || (t.sourceType === 'loan_overpayment' && !!t.sourceId && overpaymentIds.has(t.sourceId))
+  const stored = transactions.filter((t) => belongsToLoan(t) && t.type === 'loan_payment' && t.date >= startIso && t.date <= endIso)
   const storedKeys = new Set(stored.map(dedupeKey).filter((k): k is string => k !== null))
 
   const generated = generateLoanPaymentTransactions(loan, rangeStart, rangeEnd)
@@ -273,9 +297,17 @@ export interface LoanTrendEvent {
 export function buildLoanTrendEvents(loan: Loan): LoanTrendEvent[] {
   const schedule = buildLoanSchedule(loan)
   const recurringDates = recurringOverpaymentRealDates(loan, schedule)
-  const overpayments = [...(loan.overpayments ?? [])].sort((a, b) => a.date.localeCompare(b.date))
-  let overpaymentIndex = 0
   const events: LoanTrendEvent[] = []
+
+  // The consumption loop that splits each period's aggregate back out to
+  // the overpayments' own dates now lives in `appliedOneOffOverpayments`
+  // (ledgerLoans.ts), because summarizeLoan and summarizeLoanProgress
+  // need exactly the same mapping — see the 2026-09-18 bugfix there. A
+  // second copy of it here is precisely what let those two reads fall out
+  // of step with this chart in the first place.
+  for (const a of appliedOneOffOverpayments(loan, schedule)) {
+    events.push({ dateIso: a.date, kind: 'one_off_overpayment', amount: a.amount, capital: a.amount })
+  }
 
   for (const entry of schedule) {
     if (entry.scheduledPayment > 0) {
@@ -285,14 +317,6 @@ export function buildLoanTrendEvents(loan: Loan): LoanTrendEvent[] {
         amount: round2(entry.scheduledPayment),
         capital: round2(entry.scheduledPayment - entry.interestApplied),
       })
-    }
-    let remaining = entry.overpaymentApplied
-    while (remaining > 0.005 && overpaymentIndex < overpayments.length) {
-      const op = overpayments[overpaymentIndex]
-      const applied = round2(Math.min(op.amount, remaining))
-      events.push({ dateIso: op.date, kind: 'one_off_overpayment', amount: applied, capital: applied })
-      remaining = round2(remaining - applied)
-      overpaymentIndex++
     }
     if (entry.recurringOverpaymentApplied > 0) {
       events.push({

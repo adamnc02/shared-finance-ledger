@@ -58,12 +58,115 @@ export function nominalTotalPayable(loan: Loan): number {
   return round2(schedule.reduce((sum, e) => sum + e.scheduledPayment, 0))
 }
 
+/**
+ * What the person will ACTUALLY hand over across this loan's whole life,
+ * given every overpayment already logged — the real schedule's own total,
+ * not the contractual one.
+ *
+ * Distinct from `nominalTotalPayable` above, which is deliberately frozen
+ * against overpayments (pinned by verify-loan-amortisation.ts: "a moving
+ * denominator would make percentRepaid misleading"). That remains exactly
+ * right for `summarizeLoan.totalPayable` and for settlement maths, which
+ * ask a contractual question.
+ *
+ * It is the wrong denominator for a PROGRESS figure, which is why this
+ * exists alongside it (Adam, 2026-09-18): "The progress bars and pie
+ * charts 100% needs to be the amortised value after all projected payments
+ * (including scheduled one off overpayments and recurring overpayments)."
+ *
+ * The decisive symptom: against a frozen denominator, a loan with
+ * overpayments can never reach 100%. Overpaying shortens the term and cuts
+ * the interest, so the real total falls below the contractual one — and
+ * the bar would top out short of full and then the loan would simply
+ * close. Against this total, `totalPaid` reaches it exactly at payoff,
+ * because both sum the same terms over the same schedule.
+ */
+export function amortisedTotalPayable(loan: Loan, schedule: LoanScheduleEntry[] = buildLoanSchedule(loan)): number {
+  return round2(schedule.reduce((sum, e) => sum + e.scheduledPayment + e.overpaymentApplied + e.recurringOverpaymentApplied, 0))
+}
+
+export interface AppliedOneOffOverpayment {
+  overpaymentId: string
+  /** The overpayment's OWN calendar date — when the money actually left the person's account. */
+  date: string
+  /** The schedule entry that absorbed it, which can be LATER than `date`. */
+  periodDate: string
+  /** How much of it the engine actually applied (it clamps at the remaining balance). */
+  amount: number
+}
+
+/**
+ * Each one-off overpayment matched to the schedule period that absorbed
+ * it, so a caller can tell when the money was PAID apart from when the
+ * amortisation engine recognises it.
+ *
+ * `buildLoanSchedule` aggregates an overpayment into whichever period
+ * shares its MONTH, and a loan's due day is usually not the day the
+ * overpayment was made — so a £7,000 overpayment paid on the 17th is
+ * folded into the payment due on the 28th. That is correct for INTEREST
+ * (the engine must not compound differently just because a lump landed
+ * mid-period), but wrong for every "as of today" question.
+ *
+ * The per-period aggregate `entry.overpaymentApplied` stays the source of
+ * truth for how much was applied. Overpayments are consumed against it in
+ * date order, which is the same order `buildLoanSchedule` consumes them
+ * in — so this splits the aggregate back out to real dates without
+ * re-deriving the engine's own same-month matching rule, which would be a
+ * second copy of it to keep in step.
+ */
+export function appliedOneOffOverpayments(loan: Loan, schedule: LoanScheduleEntry[] = buildLoanSchedule(loan)): AppliedOneOffOverpayment[] {
+  const overpayments = [...(loan.overpayments ?? [])].sort((a, b) => a.date.localeCompare(b.date))
+  const applied: AppliedOneOffOverpayment[] = []
+  let index = 0
+  for (const entry of schedule) {
+    let remaining = entry.overpaymentApplied
+    while (remaining > 0.005 && index < overpayments.length) {
+      const op = overpayments[index]
+      const amount = round2(Math.min(remaining, op.amount))
+      applied.push({ overpaymentId: op.id, date: op.date, periodDate: entry.date, amount })
+      remaining = round2(remaining - amount)
+      index++
+    }
+  }
+  return applied
+}
+
+/**
+ * Cash already handed over as a one-off overpayment on or before
+ * `asOfIso`, but absorbed by a schedule period that has not been reached
+ * yet — so no "as of" read derived from the schedule alone has counted it.
+ *
+ * BUGFIX (Adam-reported, 2026-09-18, PROMPT-08b). He logged a £7,000
+ * overpayment on Car Finance dated 2026-09-17; the loan's due day is the
+ * 28th, so the engine folded it into the 2026-09-28 period. Every
+ * schedule-derived "as of today" figure cut off at the 2026-08-28 entry
+ * and so reported the loan exactly as it was before the payment: owed
+ * £7,437 on the hero card and the Borrowing page, 13% paid on the
+ * progress bar, and the same untouched figure in the pie chart. Only the
+ * ledger and the balance trend were right, because PROMPT-08a had already
+ * re-dated overpayments to their own dates for the CHART — the same
+ * correction was never applied to these reads.
+ *
+ * A one-off overpayment is 100% principal with no interest component (see
+ * applyLoanOverpayment), so crediting the cash figure straight against
+ * capital is exact, not an approximation.
+ */
+export function unrecognisedOneOffOverpayments(loan: Loan, schedule: LoanScheduleEntry[], asOfIso: string): number {
+  return round2(
+    appliedOneOffOverpayments(loan, schedule)
+      .filter((a) => a.date <= asOfIso && a.periodDate > asOfIso)
+      .reduce((sum, a) => sum + a.amount, 0),
+  )
+}
+
 export interface LoanProgress {
   totalPaid: number // cumulative real cash paid to date (regular payments + any overpayments), principal+interest combined
   totalBalance: number // == nominalTotalPayable — the stable, no-overpayment contractual total (principal + real total interest)
   nominalRemaining: number // totalBalance - totalPaid — "how much more cash will I hand over if I keep paying as scheduled," INCLUDING interest not yet accrued. This is deliberately the same figure the old flat model produced (validated directly against the person's own worked example: 9846.96 - 820.58 = 9026.38 after 2 real payments) — it was never a wrong NUMBER, only a wrong choice of which figure to headline as "remaining balance" elsewhere in the app.
   capitalRemaining: number // == summarizeLoan(loan, asOfDate).remainingBalance — the true amortised principal still owed (what a real lender's "balance" figure shows). Kept here too so a caller wanting BOTH figures (Home page pie chart, scope-confirmed "show both, clearly labelled" resolution) doesn't need two separate calls that could drift out of sync from different asOfDate values.
-  percentPaid: number // totalPaid / totalBalance x 100, clamped 0-100 — cash-progress, not principal-progress (see capitalRemaining for that instead)
+  amortisedTotalPayable: number // == amortisedTotalPayable(loan) — the REAL total cash this loan will take, after every overpayment already logged. The progress denominator (Adam, 2026-09-18).
+  amortisedRemaining: number // amortisedTotalPayable - totalPaid — the real cash left to hand over on the current schedule. Unlike nominalRemaining this FALLS when an overpayment shortens the term, which is what Adam means by "the amortised amount remaining".
+  percentPaid: number // totalPaid / amortisedTotalPayable x 100, clamped 0-100 — cash-progress against the REAL total, so it reaches exactly 100% at payoff however much was overpaid. Not principal-progress (see capitalRemaining for that instead).
 }
 
 /**
@@ -79,13 +182,22 @@ export function summarizeLoanProgress(loan: Loan, asOfDate: Date = new Date()): 
   const totalBalance = nominalTotalPayable(loan)
   const schedule = buildLoanSchedule(loan)
   const asOfIso = toIso(asOfDate)
+  // `+ unrecognisedOneOffOverpayments` — a lump already paid, but folded
+  // into a period that has not arrived yet, is still cash the person has
+  // handed over today. See that function for the reported bug.
   const totalPaid = round2(
-    schedule.filter((e) => e.date <= asOfIso).reduce((sum, e) => sum + e.scheduledPayment + e.overpaymentApplied + e.recurringOverpaymentApplied, 0),
+    schedule.filter((e) => e.date <= asOfIso).reduce((sum, e) => sum + e.scheduledPayment + e.overpaymentApplied + e.recurringOverpaymentApplied, 0) +
+      unrecognisedOneOffOverpayments(loan, schedule, asOfIso),
   )
   const capitalRemaining = summarizeLoan(loan, asOfDate).remainingBalance
   const nominalRemaining = round2(Math.max(0, totalBalance - totalPaid))
-  const percentPaid = totalBalance > 0 ? Math.min(100, (totalPaid / totalBalance) * 100) : 0
-  return { totalPaid, totalBalance, nominalRemaining, capitalRemaining, percentPaid }
+  // The progress pair, against the REAL total rather than the contractual
+  // one — see amortisedTotalPayable for why the two denominators differ
+  // and why a progress bar needs this one.
+  const amortisedTotal = amortisedTotalPayable(loan, schedule)
+  const amortisedRemaining = round2(Math.max(0, amortisedTotal - totalPaid))
+  const percentPaid = amortisedTotal > 0 ? Math.min(100, (totalPaid / amortisedTotal) * 100) : 0
+  return { totalPaid, totalBalance, nominalRemaining, capitalRemaining, amortisedTotalPayable: amortisedTotal, amortisedRemaining, percentPaid }
 }
 
 
@@ -744,7 +856,14 @@ export function summarizeLoan(loan: Loan, asOfDate: Date = new Date()): LoanSumm
   // which equals principal + schedule[0]'s interest — correct only in the
   // old flat, interest-free model this formula predates, where that
   // extra term was always zero.)
-  const remainingBalance = lastPast ? lastPast.balanceAfter : loan.principal
+  // A one-off overpayment already PAID, but absorbed by a period that has
+  // not been reached yet, has genuinely reduced the capital owed today
+  // even though `lastPast.balanceAfter` predates it — and it is 100%
+  // principal, so it comes straight off. Clamped at zero: a lump big
+  // enough to clear the loan leaves nothing owed, never a negative
+  // balance. See unrecognisedOneOffOverpayments for the reported bug.
+  const unrecognised = unrecognisedOneOffOverpayments(loan, schedule, asOfIso)
+  const remainingBalance = Math.max(0, (lastPast ? lastPast.balanceAfter : loan.principal) - unrecognised)
   const monthsRemaining = schedule.filter((e) => e.date > asOfIso).length
 
   return {

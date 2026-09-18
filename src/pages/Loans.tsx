@@ -552,7 +552,7 @@ function LoanRow({
                     balance figure shows) stays visible on the line below,
                     clearly separate rather than silently swapped for it. */}
                 <p className="text-xs text-[var(--color-ink-muted)] mt-0.5">
-                  £{formatCurrency(progress.nominalRemaining)} remaining · {summary.monthsRemaining} payment
+                  £{formatCurrency(progress.amortisedRemaining)} remaining · {summary.monthsRemaining} payment
                   {summary.monthsRemaining === 1 ? '' : 's'} left
                 </p>
                 <p className="text-[11px] text-[var(--color-ink-faint)]">£{formatCurrency(progress.capitalRemaining)} capital owed</p>
