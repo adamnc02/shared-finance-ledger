@@ -20,7 +20,7 @@
 
 import { addDays } from 'date-fns'
 import { toLocalIsoDate, parseLocalDate } from './date'
-import { buildLoanSchedule, recurringOverpaymentRealDates, generateLoanPaymentTransactions, summarizeLoan } from './ledgerLoans'
+import { buildLoanSchedule, recurringOverpaymentRealDates, generateLoanPaymentTransactions, summarizeLoan, appliedOneOffOverpayments } from './ledgerLoans'
 import { dedupeKey } from './projection'
 import type { BalanceSpendTrendSeries } from './runningBalance'
 import type { AppDataV2, Loan, Transaction } from '../types/ledger'
@@ -142,11 +142,12 @@ export function loanPaymentTransactions(loan: Loan, transactions: Transaction[],
   // so a one-off overpayment never matched. It left the funding account's
   // ledger correctly — that side filters by type and category, not by loan —
   // but never appeared as the mirrored +amount on the loan's own ledger,
-  // and was missing from its cycle-section totals. The pie chart and the
-  // balance trend were unaffected, since both read `loan.overpayments`
-  // through `buildLoanSchedule` rather than the transaction list, which is
-  // why the loan looked correct everywhere except the one place the
-  // payment should have been listed.
+  // and was missing from its cycle-section totals. This was ONE of two
+  // independent defects Adam reported on the same overpayment: the other
+  // (see unrecognisedOneOffOverpayments in ledgerLoans.ts) kept it out of
+  // the owed figure, the progress bar and the pie chart. They share a
+  // cause only in the loose sense that both date from PROMPT-08a; fixing
+  // either one alone still leaves the overpayment half-invisible.
   //
   // Matched by this loan's OWN overpayment ids rather than by sourceType
   // alone, so one loan's ledger can never absorb another loan's
@@ -296,9 +297,17 @@ export interface LoanTrendEvent {
 export function buildLoanTrendEvents(loan: Loan): LoanTrendEvent[] {
   const schedule = buildLoanSchedule(loan)
   const recurringDates = recurringOverpaymentRealDates(loan, schedule)
-  const overpayments = [...(loan.overpayments ?? [])].sort((a, b) => a.date.localeCompare(b.date))
-  let overpaymentIndex = 0
   const events: LoanTrendEvent[] = []
+
+  // The consumption loop that splits each period's aggregate back out to
+  // the overpayments' own dates now lives in `appliedOneOffOverpayments`
+  // (ledgerLoans.ts), because summarizeLoan and summarizeLoanProgress
+  // need exactly the same mapping — see the 2026-09-18 bugfix there. A
+  // second copy of it here is precisely what let those two reads fall out
+  // of step with this chart in the first place.
+  for (const a of appliedOneOffOverpayments(loan, schedule)) {
+    events.push({ dateIso: a.date, kind: 'one_off_overpayment', amount: a.amount, capital: a.amount })
+  }
 
   for (const entry of schedule) {
     if (entry.scheduledPayment > 0) {
@@ -308,14 +317,6 @@ export function buildLoanTrendEvents(loan: Loan): LoanTrendEvent[] {
         amount: round2(entry.scheduledPayment),
         capital: round2(entry.scheduledPayment - entry.interestApplied),
       })
-    }
-    let remaining = entry.overpaymentApplied
-    while (remaining > 0.005 && overpaymentIndex < overpayments.length) {
-      const op = overpayments[overpaymentIndex]
-      const applied = round2(Math.min(op.amount, remaining))
-      events.push({ dateIso: op.date, kind: 'one_off_overpayment', amount: applied, capital: applied })
-      remaining = round2(remaining - applied)
-      overpaymentIndex++
     }
     if (entry.recurringOverpaymentApplied > 0) {
       events.push({
