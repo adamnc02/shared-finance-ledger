@@ -309,7 +309,11 @@ export function Loans() {
               if (loanPrefill) navigate('.', { replace: true, state: null })
             }}
             onSave={(loan) => {
-              const id = addLoan(loan)
+              // The loan's own hero-card colour, picked here rather than in
+              // the form (same convention as the credit card / pot / savings
+              // pot creation paths) because it needs the whole AppDataV2 to
+              // scan what's already taken. PROMPT-08a Part C.
+              const id = addLoan({ ...loan, color: pickNextSharedCardColor(data) })
               setJustCreatedLoanId(id)
               setAddingLoan(false)
               if (loanPrefill) navigate('.', { replace: true, state: null })
@@ -2191,7 +2195,11 @@ function LoanForm({
   canBeJoint: boolean
   existingLoans: Loan[]
   onAddCategory: (name: string) => { id: string }
-  onSave: (loan: Omit<Loan, 'id' | 'overpayments'>) => void
+  // `color` is excluded deliberately: the hero-card colour is picked by the
+  // CALLER, which has the whole AppDataV2 needed to scan what's already in
+  // use (pickNextSharedCardColor). Same split as the credit card / pot /
+  // savings pot creation paths.
+  onSave: (loan: Omit<Loan, 'id' | 'overpayments' | 'color'>) => void
   onCancel: () => void
 }) {
   const [name, setName] = useState(initial?.name ?? '')

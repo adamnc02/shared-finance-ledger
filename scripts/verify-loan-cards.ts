@@ -22,6 +22,8 @@
 import { readFileSync } from 'node:fs'
 import { isLoanCardVisible, visibleLoanCards, loanCyclePeriods, loanPaymentTransactions, loanSignedAmount, buildLoanCycleSections, buildLoanTrendSeries } from '../src/lib/loanLedger'
 import { buildLoanSchedule, summarizeLoan, settleLoan } from '../src/lib/ledgerLoans'
+import { pickNextSharedCardColor } from '../src/lib/creditCards'
+import { SHARED_CARD_COLORS } from '../src/types/ledger'
 import { migrateLedgerData } from '../src/lib/ledgerStorage'
 import { signedAmount } from '../src/lib/runningBalance'
 import { toLocalIsoDate } from '../src/lib/date'
@@ -74,6 +76,33 @@ check('a fully-repaid loan is still active: true (so `active` alone is not enoug
 check(`a fully-repaid loan has no balance left after its payoff (${finishedIso})`, summarizeLoan(homeImprovements, afterPayoff).remainingBalance, 0)
 check('...and is therefore hidden by the balance half of the rule', isLoanCardVisible(homeImprovements, mum.primaryPersonId, afterPayoff), false)
 check('...while it is still visible today', isLoanCardVisible(homeImprovements, mum.primaryPersonId, ASOF), true)
+
+console.log('\n── Hero-card colours never repeat ──')
+
+// 2026-09-18 (Adam-reported): every loan card rendered the same colour,
+// because the hero keyed off the loan's CATEGORY and loans overwhelmingly
+// share the one seeded "Loan" category. Loans now hold their own
+// SHARED_CARD_COLORS entry, backfilled by migrateLedgerData, and join the
+// same pool credit cards / pots / savings pots draw from — so no two hero
+// cards in the deck can collide. Personal/Joint/Household have their own
+// preset palette and are deliberately not in this pool.
+for (const [who, data] of [['mum', mum], ['adam', adam]] as const) {
+  const loanColors = data.loans.map((l) => l.color)
+  check(`${who}: every loan has a colour after migration`, loanColors.every((c) => !!c), true)
+  check(`${who}: no two loans share a colour`, loanColors.length, new Set(loanColors).size)
+  const poolColors = [
+    ...data.creditCards.map((c) => c.color),
+    ...data.savingsPots.map((p) => p.color),
+    ...(data.pots ?? []).map((p) => p.color),
+    ...loanColors,
+  ]
+  check(`${who}: no loan collides with a card, pot or savings pot (${poolColors.length} entities)`, poolColors.length, new Set(poolColors).size)
+  check(`${who}: every loan colour comes from the shared palette`, loanColors.every((c) => (SHARED_CARD_COLORS as readonly string[]).includes(c)), true)
+}
+// A NEW entity must not be handed a colour a loan is already showing —
+// loans have to be in the picker's used-set, not just the backfill.
+const nextForMum = pickNextSharedCardColor(mum)
+check('the next shared colour avoids every loan colour already in use', mum.loans.some((l) => l.color === nextForMum), false)
 
 console.log('\n── Cycle windows come from the LOAN\'s own due dates, not the pay cycle ──')
 

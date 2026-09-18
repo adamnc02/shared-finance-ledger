@@ -35,7 +35,7 @@ import { CategoryIcon } from '../components/CategoryIcon'
 import { BalanceSpendChart, SavingsPotPillChart, shortDayLabel, type BalanceSpendView } from '../components/TrendChart'
 import { SAVINGS_CATEGORY_ID, CREDIT_CARD_CATEGORY_ID } from '../types/ledger'
 import { seededCategoryIdForIcon, distinctByCategory, DEFAULT_POT_CATEGORY_ICON, DEFAULT_POT_CATEGORY_ICON_COLOR } from '../lib/categories'
-import { visibleLoanCards, loanCyclePeriods, buildLoanCycleSections, loanTrendAsBalanceSeries, loanSignedAmount } from '../lib/loanLedger'
+import { visibleLoanCards, loanCyclePeriods, buildLoanCycleSections, loanTrendAsBalanceSeries, loanSignedAmount, loanPaymentTransactions } from '../lib/loanLedger'
 import type { AppDataV2, CreditCard, Loan, Pot, SavingsPot, Transaction } from '../types/ledger'
 
 // ── Deck construction — doc addendum on Summary card visibility ────────
@@ -1090,9 +1090,12 @@ function DeckHero({ entry, data, horizon, averageSpendForecast }: { entry: DeckE
       const loanAsOf = horizon === 'three_cycles' ? horizonRangeEnd(data, data.primaryPersonId, horizon, new Date()) : new Date()
       const owedNow = summarizeLoan(loan, new Date()).remainingBalance
       const owedProjected = summarizeLoan(loan, loanAsOf).remainingBalance
-      const loanCategory = data.categories.find((c) => c.id === loan.categoryId)
+      // The loan's OWN shared-palette colour, never its category's — loans
+      // overwhelmingly share the one seeded "Loan" category, so keying off
+      // that made every loan card identical (Adam, 2026-09-18). See
+      // Loan.color and pickNextSharedCardColor.
       return (
-        <BankCard variant="custom" customColor={loanCategory?.iconColor ?? 'var(--color-coral)'} bankLabel={loan.name} accountLabel="Loan" icon={<Layers size={18} strokeWidth={1.5} color="#fff" />}>
+        <BankCard variant="custom" customColor={loan.color} bankLabel={loan.name} accountLabel="Loan" icon={<Layers size={18} strokeWidth={1.5} color="#fff" />}>
           <div className="mt-6 space-y-1.5">
             <CardRow label="Owed" value={owedNow} />
             <CardRow label="Projected" value={owedProjected} emphasized />
@@ -1784,7 +1787,19 @@ function TrendsModal({
   color: string
   onClose: () => void
   /** Present for personal/joint/household/credit_card/pot cards. `dayIcons` — icon-only (no amounts) category icons for whatever transactions occurred that day, per the spec's tooltip requirement. */
-  balanceSpend?: { buildSeries: (granularity: BalanceSpendGranularity) => BalanceSpendTrendSeries | null; dayDetails?: (dateIso: string) => { icons: { key: string; node: ReactNode }[]; netAmount: number } }
+  balanceSpend?: {
+    buildSeries: (granularity: BalanceSpendGranularity) => BalanceSpendTrendSeries | null
+    dayDetails?: (dateIso: string) => { icons: { key: string; node: ReactNode }[]; netAmount: number }
+    /**
+     * One range, balance only — a loan card (PROMPT-08a Part C: "balance
+     * view only... a single time range: all time"). Hides both the
+     * Balance/Spend toggle and the This cycle / Next 3 cycles control,
+     * since neither means anything for a series that always covers the
+     * loan's whole life. `buildSeries` is still called, and simply
+     * ignores the granularity it is handed.
+     */
+    fixedRange?: boolean
+  }
   /** Present for savings_pot cards only. */
   savingsPot?: { buildSeries: (granularity: SavingsPotPillGranularity) => SavingsPotTrendSeries }
 }) {
@@ -1822,7 +1837,7 @@ function TrendsModal({
 
           {balanceSpend && (
             <>
-              <div className="w-full flex items-center justify-between">
+              <div className="w-full flex items-center justify-between" style={balanceSpend.fixedRange ? { display: 'none' } : undefined}>
                 <SegmentedControl
                   options={[
                     { value: 'balance' as const, label: 'Balance' },
@@ -1888,9 +1903,11 @@ function TrendsModal({
                 )}
               </div>
 
-              <div className="w-full flex items-center justify-between gap-2">
-                <SegmentedControl fullWidth options={BALANCE_SPEND_GRANULARITY_OPTIONS} value={bsGranularity} onChange={(g) => { setBsGranularity(g); setActiveBsPoint(null) }} />
-              </div>
+              {!balanceSpend.fixedRange && (
+                <div className="w-full flex items-center justify-between gap-2">
+                  <SegmentedControl fullWidth options={BALANCE_SPEND_GRANULARITY_OPTIONS} value={bsGranularity} onChange={(g) => { setBsGranularity(g); setActiveBsPoint(null) }} />
+                </div>
+              )}
             </>
           )}
 
@@ -1988,7 +2005,19 @@ function TrendPreview({
   cardName: string
   color: string
   caption: string
-  balanceSpend?: { buildSeries: (granularity: BalanceSpendGranularity) => BalanceSpendTrendSeries | null; dayDetails?: (dateIso: string) => { icons: { key: string; node: ReactNode }[]; netAmount: number } }
+  balanceSpend?: {
+    buildSeries: (granularity: BalanceSpendGranularity) => BalanceSpendTrendSeries | null
+    dayDetails?: (dateIso: string) => { icons: { key: string; node: ReactNode }[]; netAmount: number }
+    /**
+     * One range, balance only — a loan card (PROMPT-08a Part C: "balance
+     * view only... a single time range: all time"). Hides both the
+     * Balance/Spend toggle and the This cycle / Next 3 cycles control,
+     * since neither means anything for a series that always covers the
+     * loan's whole life. `buildSeries` is still called, and simply
+     * ignores the granularity it is handed.
+     */
+    fixedRange?: boolean
+  }
   savingsPot?: { buildSeries: (granularity: SavingsPotPillGranularity) => SavingsPotTrendSeries }
 }) {
   const [open, setOpen] = useState(false)
@@ -3751,8 +3780,7 @@ function LoanDetail({
   const asOf = new Date()
   const owedNow = summarizeLoan(loan, asOf).remainingBalance
   const owedProjected = summarizeLoan(loan, horizon === 'three_cycles' ? horizonRangeEnd(data, data.primaryPersonId, horizon, asOf) : asOf).remainingBalance
-  const category = data.categories.find((c) => c.id === loan.categoryId)
-  const color = category?.iconColor ?? 'var(--color-coral)'
+  const color = loan.color
   // parseLocalDate, never `new Date(iso)` — the latter parses an ISO date
   // as UTC and can report the previous day under BST. That is the exact
   // class of bug the 2026-09-15 date-parsing sweep exists for.
@@ -3773,6 +3801,12 @@ function LoanDetail({
   const visibleRows = sections.flatMap((s) => s.rows).filter((t) => showCleared || t.status !== 'cleared')
 
   const trendSeries = loanTrendAsBalanceSeries(loan, asOf)
+  // Tooltip rows for the WHOLE trend chart, which spans the loan's entire
+  // life — not just the cycles the ledger above is showing. Same lesson as
+  // the Personal card's `trendIconTxns` (2026-09-18): the tooltip must be
+  // fed from the chart's own range, or icons stop dead wherever the
+  // ledger's window happens to end.
+  const paymentRows = loanPaymentTransactions(loan, data.transactions, parseLocalDate(loan.advanceDate ?? loan.startDate), parseLocalDate(trendSeries.days[trendSeries.days.length - 1]))
 
   return (
     <div className="flex flex-col gap-4">
@@ -3813,19 +3847,37 @@ function LoanDetail({
         )}
       </HomeSection>
 
-      {/* Balance view only, one range: all time (Adam's spec). No
-          granularity control, which is why this renders the chart directly
-          rather than going through TrendPreview/TrendsModal — those exist to
-          switch between This cycle and Next 3 cycles, and a loan has
-          neither. The x axis is the loan's payment dates plus any
-          overpayment, which is what buildLoanTrendSeries produces. */}
+      {/* Balance view only, one range: all time (Adam's spec) — `fixedRange`
+          hides the Balance/Spend toggle and the This cycle / Next 3 cycles
+          control, so `buildSeries` ignores the granularity it is handed and
+          always returns the loan's whole life. Everything else is the
+          standard Trends experience every other card has: preview, "View
+          trends", then the interactive modal with tap-and-hold tooltips.
+          The x axis is the loan's payment dates plus any overpayment, which
+          is what buildLoanTrendSeries produces. */}
       <HomeSection>
-        <div className="flex items-baseline justify-between mb-3">
-          <h3 className="font-body text-sm font-semibold text-[var(--color-ink)]">Balance</h3>
-          <span className="text-xs text-[var(--color-ink-faint)]">£{formatCurrency(owedNow)} owed today · all time</span>
-        </div>
-        <BalanceSpendChart series={trendSeries} view="balance" color={color} height={170} />
+        <TrendPreview
+          cardName={loan.name}
+          color={color}
+          caption={`£${formatCurrency(owedNow)} owed today`}
+          balanceSpend={{
+            buildSeries: () => trendSeries,
+            dayDetails: (d) => dayDetailsForDay(paymentRows, data.categories, d),
+            fixedRange: true,
+          }}
+        />
       </HomeSection>
+
+      {/* The loan's own pie chart — this is the per-loan ring that used to
+          sit on the Personal card (Adam: "individual loan pie charts move
+          off the personal card"). Collapsed by default like every other
+          card's, and rendered through the same LoanProgressRingsSection so
+          the ring, its projection and its caption cannot drift from the
+          Joint/Household ones. `loans={[loan]}` means the combined "Total
+          Loans" ring never appears here — that belongs to Personal. */}
+      <CollapsiblePieSection>
+        <LoanProgressRingsSection data={data} horizon={horizon} loans={[loan]} horizonEndDate={horizonRangeEnd(data, data.primaryPersonId, horizon, asOf)} />
+      </CollapsiblePieSection>
     </div>
   )
 }

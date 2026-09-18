@@ -4,6 +4,7 @@
 
 import { migrateLedgerData, defaultLedgerData } from '../src/lib/ledgerStorage'
 import { defaultCategories } from '../src/lib/categories'
+import { SHARED_CARD_COLORS } from '../src/types/ledger'
 import type { AppDataV2, Loan } from '../src/types/ledger'
 
 let failures = 0
@@ -76,7 +77,20 @@ const calibratedLoan: Loan = {
 }
 const rawDataWithCalibratedLoan: AppDataV2 = { ...rawData, loans: [calibratedLoan] }
 const migratedCalibrated = migrateLedgerData(rawDataWithCalibratedLoan)
-check('A fully-calibrated loan round-trips through migration with all fields intact', migratedCalibrated.loans[0], calibratedLoan)
+// 2026-09-18: `color` is the one field migration legitimately ADDS to a
+// pre-existing loan now (PROMPT-08a Part C — loans joined the shared hero
+// palette, and are backfilled exactly as pots were). This check caught
+// that addition, which is what it is for; the expectation is updated
+// rather than loosened, so it still fails on any OTHER field appearing,
+// disappearing or changing.
+check('A fully-calibrated loan round-trips through migration with all fields intact, plus its backfilled hero colour', migratedCalibrated.loans[0], {
+  ...calibratedLoan,
+  color: SHARED_CARD_COLORS[0],
+})
+// The backfill is idempotent: re-running migration must not reshuffle a
+// colour that has already been assigned.
+const migratedTwice = migrateLedgerData(migratedCalibrated)
+check('Re-running migration leaves an already-backfilled loan colour alone', migratedTwice.loans[0].color, migratedCalibrated.loans[0].color)
 
 // ---- 4. A brand-new loan from defaultLedgerData() has no loans at all (nothing to backfill) ----
 const fresh = defaultLedgerData()
