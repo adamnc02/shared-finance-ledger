@@ -37,6 +37,7 @@ import { ConfirmModal } from '../components/ConfirmModal'
 import { RecurringChangeConfirmModal } from '../components/RecurringChangeConfirmModal'
 import { EffectiveDatedChangeFlow, type RecurringChangeField, type ChangeScope } from '../components/EffectiveDatedChangeFlow'
 import { addYears, addDays, addMonths } from 'date-fns'
+import { CREDIT_CARD_CATEGORY_ID } from '../types/ledger'
 import type { PaymentMethod, RecurrenceFrequency, RecurringTemplate, SavingsPot, Pot, Transaction, TransferLocation, AppDataV2, Loan, CreditCard, LoanRecurringOverpayment, Category, PayCycleConfig } from '../types/ledger'
 import type { BillLocation } from '../types/models'
 import type { LoggedPayment } from './Loans'
@@ -1058,10 +1059,6 @@ function ExpenseForm({
   // otherwise ask the same question twice).
   const [creditCardId, setCreditCardId] = useState<string | undefined>(undefined)
   const [skipPaymentMethodStep, setSkipPaymentMethodStep] = useState(false)
-  // Which step "Which card" continues to once a card is tapped — Location
-  // (still early in the flow, continue to Date next) or Payment method
-  // (the pre-existing path, save immediately, unchanged).
-  const [cardStepOrigin, setCardStepOrigin] = useState<'location' | 'payment_method'>('payment_method')
   const creditCardLocationOffered = type === 'expense' && data.creditCards.length > 0
 
   const amountNumber = Number(amount)
@@ -1155,10 +1152,7 @@ function ExpenseForm({
           ))}
           {creditCardLocationOffered && (
             <button
-              onClick={() => {
-                setCardStepOrigin('location')
-                setStep('card')
-              }}
+              onClick={() => setStep('card')}
               className="w-full text-left px-3 py-2 rounded-xl text-sm text-[var(--color-ink)]"
               style={{ background: 'var(--color-surface)' }}
             >
@@ -1207,7 +1201,13 @@ function ExpenseForm({
           </button>
         </div>
         <CategoryPicker
-          categories={visibleCategoriesFor(data)}
+          // 2026-09-18 (Adam-reported) — the built-in Credit Card category is
+          // reserved for a genuine credit-card-entity transaction (Location:
+          // Credit Card, above); offering it here too, for an ordinary
+          // Personal/Joint/Pot entry, is exactly the confusion that produced
+          // PROMPT-08a Part B's bug in the first place. `skipPaymentMethodStep`
+          // is only ever true once a card's already been picked via Location.
+          categories={visibleCategoriesFor(data).filter((c) => skipPaymentMethodStep || c.id !== CREDIT_CARD_CATEGORY_ID)}
           value={categoryId}
           onChange={(id) => {
             setCategoryPickedByHand(true)
@@ -1244,18 +1244,14 @@ function ExpenseForm({
             <button
               key={c.id}
               onClick={() => {
-                // Reached from Location: the flow isn't done yet (Date/Name/Category
-                // still to come) — stash the card and continue, skipping the later
-                // Payment method step since it'd otherwise just ask the same thing
-                // again. Reached from Payment method (the pre-existing path): every
-                // other field is already answered, so save immediately, unchanged.
-                if (cardStepOrigin === 'location') {
-                  setCreditCardId(c.id)
-                  setSkipPaymentMethodStep(true)
-                  setStep('date')
-                } else {
-                  commitSave(type, 'card', c.id)
-                }
+                // Reached only from Location now (2026-09-18 — the payment_method
+                // step's own duplicate "Credit Card" entry point is removed, see
+                // its comment below): Date/Name/Category are still to come, so
+                // stash the card and continue, skipping the later Payment method
+                // step since it'd otherwise just ask the same thing again.
+                setCreditCardId(c.id)
+                setSkipPaymentMethodStep(true)
+                setStep('date')
               }}
               className="w-full text-left px-3 py-2 rounded-xl text-sm text-[var(--color-ink)]"
               style={{ background: 'var(--color-surface)' }}
@@ -1271,13 +1267,18 @@ function ExpenseForm({
     )
   }
 
-  // payment_method — the last step for cash/bank_transfer/plain-card
-  // (each commits and saves immediately); "Credit Card" instead advances
-  // to the "Which card" step above, only offered for an expense when at
-  // least one card exists. "Card" is highlighted as the default (Adam-
-  // specified) — still a single tap to commit, same as every other
-  // option here, just visually pre-picked rather than requiring an extra
-  // Continue step for the common case.
+  // payment_method — the last step, reached only once a genuine credit-card
+  // transaction has already been ruled out (Location wasn't Credit Card, so
+  // skipPaymentMethodStep is false). Only cash/bank_transfer/plain-card are
+  // offered here — no "Credit Card" option. 2026-09-18 (Adam-reported): a
+  // second, duplicate "Credit Card" entry point used to sit here alongside
+  // Location's, so a Personal/Joint/Pot-located entry could still end up
+  // with a creditCardId attached, the exact conflation PROMPT-08a Part B's
+  // bug came from. Location, above, is now the only way to attach one.
+  // "Card" is highlighted as the default (Adam-specified) — still a single
+  // tap to commit, same as every other option here, just visually
+  // pre-picked rather than requiring an extra Continue step for the common
+  // case.
   return (
     <div className="rounded-2xl p-4 mb-4" style={{ background: 'var(--color-bg-elevated)' }}>
       <div className="flex items-center justify-between mb-2">
@@ -1300,18 +1301,6 @@ function ExpenseForm({
             {PAYMENT_METHOD_LABELS[pm]}
           </button>
         ))}
-        {creditCardLocationOffered && (
-          <button
-            onClick={() => {
-              setCardStepOrigin('payment_method')
-              setStep('card')
-            }}
-            className="w-full text-left px-3 py-2 rounded-xl text-sm text-[var(--color-ink)]"
-            style={{ background: 'var(--color-surface)' }}
-          >
-            Credit Card
-          </button>
-        )}
       </div>
     </div>
   )
