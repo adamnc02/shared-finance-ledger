@@ -184,12 +184,16 @@ export function PausedOccurrencesControl({
           <ChevronDown size={14} />
         </button>
       ) : (
-        <div className="rounded-xl p-3" style={{ background: 'var(--color-bg-elevated)' }}>
+        // data-no-swipe (2026-09-19, Adam-reported): every call site sits
+        // inside a SwipeToDelete row, and a touch in this scrolling card was
+        // ambiguous between scrolling it and swiping the row to delete. Same
+        // guard as the pot's "What this pot pays" checklist.
+        <div data-no-swipe className="rounded-xl p-3" style={{ background: 'var(--color-bg-elevated)' }}>
           <button onClick={toggleExpanded} className="flex items-center gap-1 text-xs font-semibold text-white mb-2 text-left">
             Manage upcoming payments
             <ChevronUp size={14} />
           </button>
-          <div className="flex flex-col gap-2 max-h-72 overflow-y-auto mb-2">
+          <div className="flex flex-col gap-2 max-h-72 overflow-y-auto overscroll-contain mb-2">
             {sortedDates.map(({ originalDate, date }) => {
               const isPaused = currentlyPaused.has(originalDate)
               const isEditingAmount = editingDate === originalDate && editingKind === 'amount'
