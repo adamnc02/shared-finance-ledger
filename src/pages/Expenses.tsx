@@ -8,8 +8,8 @@ import { CategoryIcon } from '../components/CategoryIcon'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { SwipeToDelete } from '../components/SwipeToDelete'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
-import { schedulePreviewWindow, scheduledDepositDates, depositOccurrencePreviews, setPausedDeposits, resolveSavingsPotDepositOccurrenceAmount, applySavingsPotSingleDepositAmountChange, savingsPotDepositOccurrenceAdjusted } from '../lib/savingsPotLedger'
-import { schedulePotPreviewWindow, scheduledPotDepositDates, potDepositOccurrencePreviews, setPausedPotDeposits, resolvePotDepositOccurrenceAmount, applyPotSingleDepositAmountChange, potDepositOccurrenceAdjusted } from '../lib/potLedger'
+import { scheduledDepositDates, depositOccurrencePreviews, setPausedDeposits, resolveSavingsPotDepositOccurrenceAmount, applySavingsPotSingleDepositAmountChange, savingsPotDepositOccurrenceAdjusted } from '../lib/savingsPotLedger'
+import { scheduledPotDepositDates, potDepositOccurrencePreviews, setPausedPotDeposits, resolvePotDepositOccurrenceAmount, applyPotSingleDepositAmountChange, potDepositOccurrenceAdjusted } from '../lib/potLedger'
 import { FormButtonRow } from '../components/FormButtons'
 import { useSavedFlash, SavedFlashOverlay } from '../components/SavedFlash'
 import { visibleCategoriesFor, seededCategoryIdForIcon } from '../lib/categories'
@@ -36,7 +36,8 @@ import { findSalarySortConflicts } from '../lib/salarySortLedger'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { RecurringChangeConfirmModal } from '../components/RecurringChangeConfirmModal'
 import { EffectiveDatedChangeFlow, type RecurringChangeField, type ChangeScope } from '../components/EffectiveDatedChangeFlow'
-import { addYears, addDays, addMonths } from 'date-fns'
+import { addYears, addDays } from 'date-fns'
+import { manageUpcomingRange, trimToManageUpcoming } from '../lib/occurrenceOverrides'
 import { CREDIT_CARD_CATEGORY_ID } from '../types/ledger'
 import type { PaymentMethod, RecurrenceFrequency, RecurringTemplate, SavingsPot, Pot, Transaction, TransferLocation, AppDataV2, Loan, CreditCard, LoanRecurringOverpayment, Category, PayCycleConfig } from '../types/ledger'
 import type { BillLocation } from '../types/models'
@@ -2395,7 +2396,10 @@ function LoanRecurringOverpaymentEditForm({
   // the overpayment's own real dates while still comparing/writing
   // pausedDates using the period-date basis recurringOverpaymentForDate
   // actually checks against internally.
-  const windowEntries = scheduledLoanRecurringOverpaymentRealDates(loan, addMonths(new Date(), -2), addMonths(new Date(), 12))
+  // The last payment on or before today and the next 12, same as every
+  // other "Manage upcoming payments" list (occurrenceOverrides.ts).
+  const manageWindow = manageUpcomingRange(new Date())
+  const windowEntries = trimToManageUpcoming(scheduledLoanRecurringOverpaymentRealDates(loan, manageWindow.start, manageWindow.end), (e) => e.date, new Date())
   const windowDates = windowEntries.map((e) => e.date)
   const periodDateFor = (realDate: string) => windowEntries.find((e) => e.date === realDate)?.periodDate ?? realDate
   const realDateFor = (periodDate: string) => windowEntries.find((e) => e.periodDate === periodDate)?.date ?? periodDate
@@ -2792,7 +2796,10 @@ function TransferRecurringRow({
   // pausing or single-occurrence-amount-editing the next occurrence via
   // "Manage upcoming payments" silently never matched a real occurrence,
   // so it appeared to save but had no effect on the real schedule.
-  const windowDates = scheduledTemplateDates(template, addMonths(new Date(), -2), addMonths(new Date(), 12), payCycle)
+  // The last payment on or before today and the next 12, same as every
+  // other "Manage upcoming payments" list (occurrenceOverrides.ts).
+  const manageWindow = manageUpcomingRange(new Date())
+  const windowDates = trimToManageUpcoming(scheduledTemplateDates(template, manageWindow.start, manageWindow.end, payCycle), (d) => d.date, new Date())
   const windowOriginalDates = new Set(windowDates.map((w) => w.originalDate))
   const currentlyPaused = new Set((template.occurrenceOverrides ?? []).filter((o) => o.deleted && windowOriginalDates.has(o.originalDate)).map((o) => o.originalDate))
   const nextOccurrence = templateOccurrencePreviews(template, new Date(), 1, payCycle)[0]
@@ -3568,12 +3575,14 @@ function RecurringTransactionRow({
 
   // 2026-09-19 (PROMPT-08c Part A, Adam-specified) — "Manage upcoming
   // payments" here is now the same shared PausedOccurrencesControl, with
-  // the same -2/+12 month window, as recurring transfers. It used to be a
+  // the same window (last payment on or before today + the next 12), as
+  // recurring transfers. It used to be a
   // separate "Next 12 upcoming" list whose rows opened an Amount + Date
   // form and had a trash icon. The trash wrote the same `deleted` override
   // that Pause writes, so nothing is lost, and a pause can now be undone.
   // A recurring transaction has no payday resolution, so no payCycle.
-  const windowDates = open ? scheduledTemplateDates(template, addMonths(new Date(), -2), addMonths(new Date(), 12)) : []
+  const manageWindow = manageUpcomingRange(new Date())
+  const windowDates = open ? trimToManageUpcoming(scheduledTemplateDates(template, manageWindow.start, manageWindow.end), (d) => d.date, new Date()) : []
   const windowOriginalDates = new Set(windowDates.map((w) => w.originalDate))
   const currentlyPaused = new Set((template.occurrenceOverrides ?? []).filter((o) => o.deleted && windowOriginalDates.has(o.originalDate)).map((o) => o.originalDate))
 
@@ -3654,8 +3663,11 @@ function RecurringTransactionRow({
  */
 function SavingsRecurringDepositRow({ pot, onSave }: { pot: SavingsPot; onSave: (updates: Partial<Omit<SavingsPot, 'id' | 'personId'>>) => void }) {
   const [open, setOpen] = useState(false)
-  const { start, end } = schedulePreviewWindow(pot, new Date())
-  const windowDates = scheduledDepositDates(pot, start, end)
+  // The last deposit on or before today and the next 12, same as every
+  // other "Manage upcoming payments" list (occurrenceOverrides.ts).
+  // scheduledDepositDates already drops dates before the pot opened.
+  const { start, end } = manageUpcomingRange(new Date())
+  const windowDates = trimToManageUpcoming(scheduledDepositDates(pot, start, end), (d) => d, new Date())
   const currentlyPaused = new Set((pot.recurringDepositOverrides ?? []).filter((o) => o.deleted && windowDates.includes(o.originalDate)).map((o) => o.originalDate))
   const nextDeposit = depositOccurrencePreviews(pot, new Date(), 1)[0]
 
@@ -3723,8 +3735,9 @@ function ordinalSuffixLocal(day: number): string {
 /** Pots backlog item (2026-09 session) — identical shape to SavingsRecurringDepositRow above, against potLedger.ts's equivalents. */
 function PotRecurringDepositRow({ pot, onSave }: { pot: Pot; onSave: (updates: Partial<Omit<Pot, 'id' | 'personId'>>) => void }) {
   const [open, setOpen] = useState(false)
-  const { start, end } = schedulePotPreviewWindow(pot, new Date())
-  const windowDates = scheduledPotDepositDates(pot, start, end)
+  // Same window as SavingsRecurringDepositRow above.
+  const { start, end } = manageUpcomingRange(new Date())
+  const windowDates = trimToManageUpcoming(scheduledPotDepositDates(pot, start, end), (d) => d, new Date())
   const currentlyPaused = new Set((pot.recurringDepositOverrides ?? []).filter((o) => o.deleted && windowDates.includes(o.originalDate)).map((o) => o.originalDate))
   const nextDeposit = potDepositOccurrencePreviews(pot, new Date(), 1)[0]
 

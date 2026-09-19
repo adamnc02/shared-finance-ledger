@@ -90,7 +90,8 @@ const STUDENT_LOAN_LABELS: Record<StudentLoanPlan, string> = {
   postgrad: 'Postgraduate loan',
 }
 
-import { addDays, addMonths } from 'date-fns'
+import { addDays } from 'date-fns'
+import { manageUpcomingRange, trimToManageUpcoming } from '../lib/occurrenceOverrides'
 import { todayIso, toLocalIsoDate, parseLocalDate } from '../lib/date'
 import { payPeriodWeeks } from '../lib/payCycle'
 
@@ -392,12 +393,10 @@ function PensionRow({
   }, [])
   const previews = pensionOccurrencePreviews(pension, new Date(), 1)
   const next = previews[0]
-  // Same 2-months-back/12-months-forward window SavingsPot's own pause
-  // picker uses — pensions have no "opening date" ramp-up concept to
-  // clamp against, so this is simpler than schedulePreviewWindow.
-  const pauseWindowStart = addMonths(new Date(), -2)
-  const pauseWindowEnd = addMonths(new Date(), 12)
-  const pauseWindowDates = scheduledPensionDates(pension, pauseWindowStart, pauseWindowEnd)
+  // The last payment on or before today and the next 12, same as every
+  // other "Manage upcoming payments" list (occurrenceOverrides.ts).
+  const pauseWindow = manageUpcomingRange(new Date())
+  const pauseWindowDates = trimToManageUpcoming(scheduledPensionDates(pension, pauseWindow.start, pauseWindow.end), (d) => d, new Date())
   const currentlyPausedPensionDates = new Set((pension.occurrenceOverrides ?? []).filter((o) => o.deleted && pauseWindowDates.includes(o.originalDate)).map((o) => o.originalDate))
 
   return (

@@ -3,8 +3,8 @@
 // (schedule.ts), pensions (pensionLedger.ts), pots (potLedger.ts) and
 // savings pots (savingsPotLedger.ts).
 
-import { differenceInCalendarDays } from 'date-fns'
-import { parseLocalDate } from './date'
+import { addMonths, addYears, differenceInCalendarDays } from 'date-fns'
+import { parseLocalDate, toLocalIsoDate } from './date'
 import type { RecurringOccurrenceOverride } from '../types/ledger'
 
 /**
@@ -50,4 +50,34 @@ export function earlyMoveLookaheadDays(overrides: RecurringOccurrenceOverride[] 
  */
 export function isOccurrenceAdjusted(actual: { date: string; amount: number }, natural: { date: string; amount: number }): boolean {
   return actual.date !== natural.date || Math.round(actual.amount * 100) !== Math.round(natural.amount * 100)
+}
+
+/**
+ * 2026-09-19 (Adam-specified, after PROMPT-08c) — what every "Manage
+ * upcoming payments" list shows: the last payment on or before today, then
+ * the next 12 payments. One rule for all 7 call sites (bills, recurring
+ * transactions, transfers, loan recurring overpayments, pots, savings pots,
+ * pensions). Before this, every list showed 2 months back to 12 months
+ * ahead, so a monthly item showed up to 3 already-cleared payments once
+ * PROMPT-08c moved recurring transactions onto the shared control.
+ */
+export const MANAGE_UPCOMING_NEXT_COUNT = 12
+
+/**
+ * The range each call site generates candidates over, before
+ * `trimToManageUpcoming` cuts it down. Wide enough for an annual schedule:
+ * its last payment can be a year back (plus a month for a moved date or a
+ * working-day shift), and 12 more reach 12 years ahead.
+ */
+export function manageUpcomingRange(asOfDate: Date): { start: Date; end: Date } {
+  return { start: addMonths(asOfDate, -13), end: addYears(asOfDate, 13) }
+}
+
+/** Keeps the last row dated on or before `asOfDate` and the next 12 after it. Compares the DISPLAYED date (`dateOf`), so a payment moved earlier counts by its moved date. */
+export function trimToManageUpcoming<T>(rows: T[], dateOf: (row: T) => string, asOfDate: Date): T[] {
+  const today = toLocalIsoDate(asOfDate)
+  const sorted = [...rows].sort((a, b) => dateOf(a).localeCompare(dateOf(b)))
+  const past = sorted.filter((r) => dateOf(r) <= today)
+  const upcoming = sorted.filter((r) => dateOf(r) > today)
+  return [...past.slice(-1), ...upcoming.slice(0, MANAGE_UPCOMING_NEXT_COUNT)]
 }

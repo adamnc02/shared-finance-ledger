@@ -32,7 +32,7 @@ import {
   templateOccurrenceAdjusted,
   occurrenceSlotForDate,
 } from '../lib/schedule'
-import { addMonths } from 'date-fns'
+import { manageUpcomingRange, trimToManageUpcoming } from '../lib/occurrenceOverrides'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
 
 const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
@@ -575,11 +575,10 @@ function BillEditPanel({
   // does this apply from" flow, so the flow's buildChanges/onCommit know
   // what to diff/write without re-deriving it.
   const [changeKind, setChangeKind] = useState<'amount' | 'location' | 'date' | null>(null)
-  // Same 2-months-back/12-months-forward window Salary.tsx's pause
-  // pickers use — see PausedOccurrencesControl's own comment.
-  const pauseWindowStart = addMonths(new Date(), -2)
-  const pauseWindowEnd = addMonths(new Date(), 12)
-  const pauseWindowDates = scheduledTemplateDates(template, pauseWindowStart, pauseWindowEnd)
+  // The last payment on or before today and the next 12, same as every
+  // other "Manage upcoming payments" list (occurrenceOverrides.ts).
+  const pauseWindow = manageUpcomingRange(new Date())
+  const pauseWindowDates = trimToManageUpcoming(scheduledTemplateDates(template, pauseWindow.start, pauseWindow.end), (d) => d.date, new Date())
   // UAT 2026-09-11 (manage-upcoming-payments-override-key-bug) —
   // pauseWindowDates is now { originalDate, date } pairs, not a flat
   // string[]; membership/override matching must key off .originalDate.
