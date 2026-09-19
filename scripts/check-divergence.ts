@@ -102,7 +102,7 @@ function globToRegExp(glob: string): RegExp {
 
 interface DivergenceRules {
   allowed: { glob: string; re: RegExp }[]
-  forbidden: { glob: string; re: RegExp }[]
+  forbidden: { glob: string; re: RegExp; except: RegExp[] }[]
 }
 
 /**
@@ -136,16 +136,22 @@ function parseDivergenceDoc(text: string): DivergenceRules {
     if (path) allowed.push(path)
   }
 
-  const forbidden: string[] = []
+  // A bullet may carve exceptions out of its glob: every backticked path after
+  // the word "except" (PROMPT-09: `src/lib/**` except the sync layer). Before
+  // this, the prose exception was never enforced, only the first path.
+  const forbidden: { glob: string; except: string[] }[] = []
   for (const line of section('## Explicitly NOT allowed to diverge').split('\n')) {
     if (!line.trim().startsWith('-')) continue
     const path = backticked(line)
-    if (path) forbidden.push(path)
+    if (!path) continue
+    const at = line.search(/\bexcept\b/)
+    const except = at === -1 ? [] : [...line.slice(at).matchAll(/`([^`]+)`/g)].map((m) => m[1])
+    forbidden.push({ glob: path, except })
   }
 
   return {
     allowed: allowed.map((glob) => ({ glob, re: globToRegExp(glob) })),
-    forbidden: forbidden.map((glob) => ({ glob, re: globToRegExp(glob) })),
+    forbidden: forbidden.map(({ glob, except }) => ({ glob, re: globToRegExp(glob), except: except.map(globToRegExp) })),
   }
 }
 
@@ -187,7 +193,7 @@ function main(): void {
 
     // Forbidden wins over allowed: a file on that list differing is a bug even
     // if some broad row above happens to cover it.
-    const forbiddenBy = rules.forbidden.find((r) => r.re.test(rel))
+    const forbiddenBy = rules.forbidden.find((r) => r.re.test(rel) && !r.except.some((e) => e.test(rel)))
     if (forbiddenBy) {
       console.log(`✗ ${rel} — ${how}, and \`${forbiddenBy.glob}\` is on the NOT-allowed list`)
       failures.push(rel)
