@@ -39,6 +39,13 @@ export class FakeSyncDb implements SyncDatabase {
     this.fire()
   }
 
+  /** The server's whole view changed (e.g. the household was deleted on another device): replace every table, then notify. */
+  remoteReplace(rows: Rows) {
+    for (const t of this.tables.values()) t.clear()
+    this.seed(rows)
+    this.fire()
+  }
+
   async readAll(): Promise<Rows> {
     const out: Rows = {}
     for (const [table, rows] of this.tables) out[table] = [...rows.values()].map((r) => ({ ...r }))

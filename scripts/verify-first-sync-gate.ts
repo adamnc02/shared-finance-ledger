@@ -17,7 +17,10 @@
 //     is re-derived on read, not pushed);
 //  4. primaryPersonId: the row linked to me beats the first row, and is
 //     re-preferred when it arrives LATE (§23); a choice made on this device
-//     wins and survives a reload; a chosen person who's gone falls back.
+//     wins and survives a reload; a chosen person who's gone falls back;
+//  5. the household changing under a running session (deleted on another
+//     device, or moved) suspends the store: no stale ledger or new row is
+//     written into the old household (UAT 2026-09-19, 16 RLS rejections).
 
 import { readFileSync } from 'node:fs'
 import { autoClearDuePayments } from '../src/lib/autoClear'
@@ -131,6 +134,44 @@ console.log('\n4. primaryPersonId is per device, and re-preferred (§23)')
   storage.setItem('k', 'someone-deleted')
   const fallback = createPowerSyncLedgerStore({ db: db3, householdId: HH, userId: ME, firstSync: Promise.resolve(), storageKey: 'k', storage, log })
   check('a remembered person who no longer exists falls back to the linked row', (await fallback.load())!.primaryPersonId === ella.id)
+}
+
+console.log('\n5. The household changes under a running session (UAT 2026-09-19)')
+{
+  // A phone left open across "Delete my app data" on another device kept the old
+  // household id; sync removed the old rows, and stale app state went back up as
+  // fresh inserts into a household the user no longer belongs to (16 RLS rejections).
+  const H1 = HH
+  const H2 = '99999999-8888-7777-6666-555555555555'
+  const member = (household: string) => ({ id: `m-${household}`, household_id: household, user_id: ME, joined_at: '2026-09-19' })
+  const errorsBefore = errors
+  for (const scenario of ['deleted', 'moved'] as const) {
+    const db5 = new FakeSyncDb()
+    db5.seed({ ...toRows(backup, { householdId: H1 }), household_members: [member(H1)] })
+    let lost = ''
+    const s5 = createPowerSyncLedgerStore({ db: db5, householdId: H1, userId: ME, firstSync: Promise.resolve(), storageKey: 'k', storage: memoryStorage(), log, onHouseholdLost: (r) => (lost = r) })
+    const got: AppDataV2[] = []
+    s5.subscribe!((d) => got.push(d))
+    await tick(30)
+    const stale = got[0] // what the app still holds
+    // The server's view now: household H1 gone (deleted), or the user now in H2 (moved by a link code).
+    db5.remoteReplace(scenario === 'deleted' ? {} : { household_members: [member(H2)] })
+    await tick(30)
+    // The stale state comes back through save (autoClear, any edit, the new offline bill…).
+    s5.save({ ...stale, recurringTemplates: [...stale.recurringTemplates, { ...stale.recurringTemplates[0], id: 'new-offline-bill' }] }, stale)
+    await s5.flush()
+    check(`${scenario}: nothing is written — no stale ledger, no new bill into the old household`, db5.log.length === 0, db5.log.slice(0, 5))
+    check(`${scenario}: the boot sequence is told (${lost || 'not called'})`, lost !== '')
+    check(`${scenario}: the store is suspended and delivers nothing more`, s5.suspended && got.length === 1, { suspended: s5.suspended, deliveries: got.length })
+  }
+  errors = errorsBefore // the suspension is logged as an error on purpose
+  const db6 = new FakeSyncDb()
+  db6.seed({ ...toRows(backup, { householdId: H1 }) }) // membership row not synced yet (a brand-new household)
+  const s6 = createPowerSyncLedgerStore({ db: db6, householdId: H1, userId: ME, firstSync: Promise.resolve(), storageKey: 'k', storage: memoryStorage(), log, onHouseholdLost: () => {} })
+  const d6 = (await s6.load())!
+  s6.save({ ...d6, people: d6.people.map((p, i) => (i === 0 ? { ...p, name: 'X' } : p)) }, d6)
+  await s6.flush()
+  check('a household whose membership row has not synced yet is NOT treated as lost', !s6.suspended && db6.log.length === 1, { suspended: s6.suspended, log: db6.log })
 }
 
 check('no errors were logged anywhere in this script', errors === 0, errors)
