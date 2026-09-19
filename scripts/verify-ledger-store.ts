@@ -187,7 +187,15 @@ check('no direct localStorage use', !/\blocalStorage\b/.test(contextSource))
   const users = (readdirSync(srcRoot, { recursive: true }) as string[])
     .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
     .filter((f) => /\blocalStorage\s*[.)]/.test(readFileSync(srcRoot + f, 'utf8')))
-  check('src/ uses localStorage in lib/ledgerStorage.ts only', JSON.stringify(users) === JSON.stringify(['lib/ledgerStorage.ts']), users)
+  // PROMPT-09: sync-app-only files keep small per-device keys of their own
+  // (the person chosen on this device, which account last used the local
+  // database, rejected-write log). They exist only in shared-finance-ledger
+  // and the test app's /sync/ build, and must never touch the ledger's key.
+  const SYNC_ONLY = new Set(['components/SyncRoot.tsx', 'components/AccountModal.tsx', 'lib/powersync/connector.ts', 'lib/store/powerSyncLedgerStore.ts'])
+  check('src/ uses localStorage in lib/ledgerStorage.ts only (plus the listed sync-only files)',
+    JSON.stringify(users.filter((f) => !SYNC_ONLY.has(f))) === JSON.stringify(['lib/ledgerStorage.ts']), users)
+  const touchesLedgerKey = users.filter((f) => SYNC_ONLY.has(f)).filter((f) => /ledger:app-data-v2|STORAGE_KEY/.test(readFileSync(srcRoot + f, 'utf8')))
+  check("no sync-only file mentions the ledger's own key", touchesLedgerKey.length === 0, touchesLedgerKey)
 }
 
 // ── 6. Public API snapshot ────────────────────────────────────────────────
