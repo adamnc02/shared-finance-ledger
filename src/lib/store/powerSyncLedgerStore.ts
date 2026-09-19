@@ -36,6 +36,19 @@
 // A choice is recorded only when the app changes primaryPersonId away from
 // what the store resolved, so the store's own resolution is never mistaken
 // for a manual one.
+//
+// 🚨 THE HOUSEHOLD CAN CHANGE UNDER A RUNNING SESSION (UAT 2026-09-19).
+// "Delete my app data" on another device deletes the household; PROMPT-10's
+// redeem moves the user to another one. A device that stays open keeps the
+// old household id, sync removes the old rows, and stale app state was then
+// written back as fresh inserts into a household the user no longer belongs
+// to (16 writes rejected by RLS, 42501, and an offline bill lost). In a
+// household that still existed they would have RESURRECTED deleted data.
+// So every read checks the synced membership (sfl_household_members): once
+// this user has been seen as a member of the session's household, losing
+// that membership (or appearing in a different household) SUSPENDS the
+// store — nothing is written or delivered again — and onHouseholdLost()
+// tells the boot sequence to clear the local copy and start over.
 
 import type { AppDataV2 } from '../../types/ledger'
 import { migrateLedgerData } from '../ledgerStorage'
@@ -63,12 +76,16 @@ export interface PowerSyncLedgerStoreOptions {
   storage?: Pick<Storage, 'getItem' | 'setItem'>
   /** Keeps two apps (or two accounts) on one origin apart. */
   storageKey: string
+  /** Called once if this user stops being a member of `householdId` (see header). */
+  onHouseholdLost?: (reason: string) => void
   log?: Pick<Console, 'error' | 'warn' | 'info'>
 }
 
 export interface PowerSyncLedgerStore extends LedgerStore {
   /** True once first sync is complete (the gate is open). */
   readonly synced: boolean
+  /** True once the household was lost: nothing is written or delivered any more. */
+  readonly suspended: boolean
   /** Resolves when every write handed to save() so far has been applied locally. */
   flush(): Promise<void>
 }
@@ -90,6 +107,27 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
   const present = new Map<string, Set<string>>() // ids the local database actually holds
   let writeChain: Promise<void> = Promise.resolve()
   let writeVersion = 0
+  let seenMember = false
+  let suspended = false
+
+  /** False (and suspends the store) if the synced membership says this session's household is no longer ours. */
+  function checkMembership(rows: Rows): boolean {
+    if (suspended) return false
+    const mine = (rows.household_members ?? []).filter((r) => r.user_id === userId)
+    const inSession = mine.some((r) => r.household_id === householdId)
+    const elsewhere = mine.find((r) => r.household_id !== householdId)
+    if (inSession && !elsewhere) {
+      seenMember = true
+      return true
+    }
+    // Before the membership row has ever synced (a brand-new household), absence proves nothing.
+    if (!elsewhere && !seenMember) return true
+    suspended = true
+    const reason = elsewhere ? 'this account is now in a different household' : 'this household no longer exists for this account'
+    log.error(`[powersync] 🚨 household changed under this session (${reason}) — store suspended, nothing more is written`)
+    opts.onHouseholdLost?.(reason)
+    return false
+  }
 
   const readChoice = () => {
     try {
@@ -123,24 +161,34 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
     return migrateLedgerData({ ...base, primaryPersonId })
   }
 
-  async function read(): Promise<AppDataV2> {
+  /** null when the household was lost (see checkMembership). */
+  async function read(): Promise<AppDataV2 | null> {
     await writeChain // see every write already handed over
-    return assemble(await db.readAll())
+    const rows = await db.readAll()
+    if (!checkMembership(rows)) return null
+    return assemble(rows)
   }
 
   return {
     get synced() {
       return synced
     },
+    get suspended() {
+      return suspended
+    },
 
     async load() {
       await gate
       const data = await read()
-      shadow = data
+      if (data) shadow = data
       return data
     },
 
     save(next, _prev) {
+      if (suspended) {
+        log.error('[powersync] save() after the household changed — ignored')
+        return
+      }
       if (!synced) {
         // The gate. Deliberately silent in the UI and loud in the console: any
         // call here means something tried to write before first sync.
@@ -179,13 +227,14 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
       const deliver = async () => {
         await gate
         const version = writeVersion
-        let data: AppDataV2
+        let data: AppDataV2 | null
         try {
           data = await read()
         } catch (err) {
           log.error('[powersync] could not read the local database', err)
           return
         }
+        if (!data) return // household lost: deliver nothing more
         // A save landed while we read: this snapshot may predate it. The
         // change that save makes will call us again.
         if (cancelled || version !== writeVersion) return
