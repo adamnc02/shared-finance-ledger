@@ -17,8 +17,9 @@
 // Adam wants Pots to read as visually distinct from Savings Pots in the
 // category breakdown.
 
-import { addMonths } from 'date-fns'
+import { addDays, addMonths } from 'date-fns'
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
+import { earlyMoveLookaheadDays } from './occurrenceOverrides'
 import { generateTransactionsForTemplate } from './schedule'
 import { generateLoanPaymentTransactions } from './ledgerLoans'
 import { generateMinimumPaymentTransactions } from './creditCards'
@@ -86,13 +87,22 @@ function walkPotDepositOccurrences(pot: Pot, rangeStart: Date, rangeEnd: Date): 
     iterations++
   }
 
+  // PROMPT-08c Part B — slots past rangeEnd are walked only so a deposit
+  // moved EARLIER into the range is still found; see earlyMoveLookaheadDays.
+  const walkEnd = addDays(rangeEnd, earlyMoveLookaheadDays(pot.recurringDepositOverrides))
+  const rangeStartIso = toIso(rangeStart)
+  const rangeEndIso = toIso(rangeEnd)
+
   const results: RawPotDepositOccurrence[] = []
-  while (cursor <= rangeEnd && iterations < MAX_OCCURRENCES) {
+  while (cursor <= walkEnd && iterations < MAX_OCCURRENCES) {
     const originalDate = toIso(cursor)
     if (originalDate >= pot.openingDate) {
       const override = pot.recurringDepositOverrides?.find((o) => o.originalDate === originalDate)
       if (!override?.deleted) {
-        results.push({ originalDate, date: override?.date ?? originalDate, amount: override?.amount ?? pot.recurringDepositAmount })
+        const date = override?.date ?? originalDate
+        if (date >= rangeStartIso && (originalDate <= rangeEndIso || date <= rangeEndIso)) {
+          results.push({ originalDate, date, amount: override?.amount ?? pot.recurringDepositAmount })
+        }
       }
     }
     cursor = clampToAnchorDay(addMonths(cursor, 1), anchorDay)

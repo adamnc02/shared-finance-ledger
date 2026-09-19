@@ -9,6 +9,7 @@
 
 import { addDays, addMonths, addYears, startOfWeek } from 'date-fns'
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
+import { earlyMoveLookaheadDays } from './occurrenceOverrides'
 import { periodThresholdsFor, type PayFrequency } from './tax'
 import { aerCreditedInterest, dailyAccrualInterest, walkCreditingDates, walkMonthlyCreditingDates } from './savingsInterest'
 import { generateTransactionsForTemplate } from './schedule'
@@ -100,8 +101,14 @@ function walkDepositOccurrences(pot: SavingsPot, rangeStart: Date, rangeEnd: Dat
     iterations++
   }
 
+  // PROMPT-08c Part B — slots past rangeEnd are walked only so a deposit
+  // moved EARLIER into the range is still found; see earlyMoveLookaheadDays.
+  const walkEnd = addDays(rangeEnd, earlyMoveLookaheadDays(pot.recurringDepositOverrides))
+  const rangeStartIso = toIso(rangeStart)
+  const rangeEndIso = toIso(rangeEnd)
+
   const results: RawDepositOccurrence[] = []
-  while (cursor <= rangeEnd && iterations < MAX_OCCURRENCES) {
+  while (cursor <= walkEnd && iterations < MAX_OCCURRENCES) {
     const originalDate = toIso(cursor)
     if (originalDate >= pot.openingDate) {
       // Pause is just the ordinary deleted-override mechanism now (see
@@ -109,7 +116,10 @@ function walkDepositOccurrences(pot: SavingsPot, rangeStart: Date, rangeEnd: Dat
       // pause concept to check here at all.
       const override = pot.recurringDepositOverrides?.find((o) => o.originalDate === originalDate)
       if (!override?.deleted) {
-        results.push({ originalDate, date: override?.date ?? originalDate, amount: override?.amount ?? pot.recurringDepositAmount })
+        const date = override?.date ?? originalDate
+        if (date >= rangeStartIso && (originalDate <= rangeEndIso || date <= rangeEndIso)) {
+          results.push({ originalDate, date, amount: override?.amount ?? pot.recurringDepositAmount })
+        }
       }
     }
     cursor = clampToAnchorDay(addMonths(cursor, 1), anchorDay)

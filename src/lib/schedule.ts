@@ -14,6 +14,7 @@ import { upcomingPaydays } from './salaryLedger'
 import { nextCycleStartAfter } from './payCycle'
 import { categoryForTransfer } from './transferLedger'
 import { formatFullDate } from './format'
+import { earlyMoveLookaheadDays } from './occurrenceOverrides'
 
 function daysInMonth(year: number, monthIndex0: number): number {
   return new Date(year, monthIndex0 + 1, 0).getDate()
@@ -226,6 +227,9 @@ function walkOccurrences(template: RecurringTemplate, rangeStart: Date, rangeEnd
   const lookback = resolvedRangeLookback(template, rangeStart, payCycle)
   const rangeStartIso = toIso(rangeStart)
   const rangeEndIso = toIso(rangeEnd)
+  // Slots past rangeEnd are walked only so an override moving one earlier
+  // can bring it into the range — see earlyMoveLookaheadDays.
+  const walkEnd = addDays(rangeEnd, earlyMoveLookaheadDays(template.occurrenceOverrides))
 
   let cursor = anchor
   let iterations = 0
@@ -237,13 +241,21 @@ function walkOccurrences(template: RecurringTemplate, rangeStart: Date, rangeEnd
   }
 
   const results: RawOccurrence[] = []
-  while (cursor <= rangeEnd && iterations < MAX_OCCURRENCES) {
+  while (cursor <= walkEnd && iterations < MAX_OCCURRENCES) {
     const originalDate = toIso(cursor)
     const override = template.occurrenceOverrides?.find((o) => o.originalDate === originalDate)
     if (!override?.deleted) {
       const rawDate = override?.date ?? originalDate
       const date = resolveTemplateOccurrenceDate(rawDate, template, payCycle)
-      if (!lookback || (date >= rangeStartIso && date <= rangeEndIso)) {
+      // Without a lookback, a slot inside the range keeps its old rule (in,
+      // even if moved past rangeEnd — the next range's walk would never
+      // reach it). But one moved BEFORE rangeStart belongs to the previous
+      // range, which now finds it via earlyMoveLookaheadDays; emitting it
+      // here too would show it in both. Slots past rangeEnd are in only if
+      // moved into the range.
+      const slotPastRange = originalDate > rangeEndIso
+      const inRange = date >= rangeStartIso && date <= rangeEndIso
+      if (lookback || slotPastRange ? inRange : date >= rangeStartIso) {
         results.push({
           originalDate,
           date,
