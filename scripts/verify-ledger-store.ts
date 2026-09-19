@@ -16,7 +16,7 @@
 //  6. LedgerContextValue's member list matches the snapshot below, so any
 //     accidental public API change fails.
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { STORAGE_KEY, migrateLedgerData } from '../src/lib/ledgerStorage'
 import { createLocalStorageLedgerStore, localStorageLedgerStore } from '../src/lib/store/localStorageLedgerStore'
 import { isPromiseLike } from '../src/lib/store/LedgerStore'
@@ -191,11 +191,28 @@ check('no direct localStorage use', !/\blocalStorage\b/.test(contextSource))
   // (the person chosen on this device, which account last used the local
   // database, rejected-write log). They exist only in shared-finance-ledger
   // and the test app's /sync/ build, and must never touch the ledger's key.
-  const SYNC_ONLY = new Set(['components/SyncRoot.tsx', 'components/AccountModal.tsx', 'lib/powersync/connector.ts', 'lib/store/powerSyncLedgerStore.ts'])
+  const SYNC_ONLY = new Set([
+    'components/SyncRoot.tsx', 'components/AccountModal.tsx', 'components/LegacyDataMigration.tsx',
+    'components/DuplicatePersonBanner.tsx', 'lib/powersync/connector.ts', 'lib/store/powerSyncLedgerStore.ts',
+  ])
   check('src/ uses localStorage in lib/ledgerStorage.ts only (plus the listed sync-only files)',
     JSON.stringify(users.filter((f) => !SYNC_ONLY.has(f))) === JSON.stringify(['lib/ledgerStorage.ts']), users)
-  const touchesLedgerKey = users.filter((f) => SYNC_ONLY.has(f)).filter((f) => /ledger:app-data-v2|STORAGE_KEY/.test(readFileSync(srcRoot + f, 'utf8')))
-  check("no sync-only file mentions the ledger's own key", touchesLedgerKey.length === 0, touchesLedgerKey)
+  // PROMPT-10 widened this deliberately, and only this far: the sync app has to READ the ledger's
+  // own key to rescue data saved before sign-in existed (MIGRATION-LESSONS §24), and that key is
+  // shared with the offline app on this origin — Adam's mum's real data. So exactly one sync-only
+  // file may name it, it may only read it, and verify-legacy-migration.ts proves the rest.
+  const code = (f: string) => readFileSync(srcRoot + f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const READS_LEDGER_KEY = 'lib/powersync/legacyData.ts'
+  const namesLedgerKey = (readdirSync(srcRoot, { recursive: true }) as string[])
+    .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f) && SYNC_ONLY.has(f))
+    .filter((f) => /ledger:app-data-v2|STORAGE_KEY/.test(code(f)))
+  check("no sync-only component mentions the ledger's own key", namesLedgerKey.length === 0, namesLedgerKey)
+  // Only the sync app has that file; the offline app runs this same script (it is shared).
+  if (existsSync(srcRoot + READS_LEDGER_KEY)) {
+    check(`${READS_LEDGER_KEY} reads the ledger key and never writes or removes it`,
+      /STORAGE_KEY/.test(code(READS_LEDGER_KEY)) && !/removeItem/.test(code(READS_LEDGER_KEY)) &&
+        [...code(READS_LEDGER_KEY).matchAll(/setItem\(([^)]*)\)/g)].every((m) => m[1].includes('legacyOfferedKey')))
+  }
 }
 
 // ── 6. Public API snapshot ────────────────────────────────────────────────

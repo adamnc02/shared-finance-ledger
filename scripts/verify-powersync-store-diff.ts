@@ -23,6 +23,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { defaultCategories } from '../src/lib/categories'
 import { parseLedgerBackupJson } from '../src/lib/ledgerStorage'
 import { toRows } from '../src/lib/powersync/mapping'
+import { applyIdMap } from '../src/lib/powersync/importIds'
 import { createPowerSyncLedgerStore } from '../src/lib/store/powerSyncLedgerStore'
 import type { AppDataV2 } from '../src/types/ledger'
 import { FakeSyncDb, memoryStorage, tick } from './lib/fakeSyncDb'
@@ -209,7 +210,11 @@ console.log('\n7. Import into an empty household (35 categories seeded server-si
     !catWrites.some((s) => s.id === `category-credit-card@${HH}` && s.kind !== 'update'))
   const reread = (await createPowerSyncLedgerStore({ db, householdId: HH, userId: USER, firstSync: Promise.resolve(), storageKey: 'k', storage: memoryStorage(), log: quiet }).load())!
   const strip = (d: AppDataV2) => JSON.parse(JSON.stringify({ ...d, primaryPersonId: '' }, (k, v) => (k === 'payee' && v === '' ? undefined : Array.isArray(v) && v.length === 0 && ['occurrenceOverrides', 'recurringDepositOverrides', 'interestOverrides', 'minimumPaymentOverrides', 'statementCalibrationLines'].includes(k) ? undefined : v)))
-  check('reading it back gives the backup (people, bills, loans, cards, pots, transactions, categories)', isDeepStrictEqual(strip(reread), strip(backup)))
+  // PROMPT-10: an import gets fresh ids (verify-import-regenerates-ids.ts). Mapped back through the
+  // import's own id map, what was written is exactly the backup.
+  const back = new Map([...(store.importMap ?? new Map())].map(([o, n]) => [n, o]))
+  check('reading it back, ids mapped back, gives the backup (people, bills, loans, cards, pots, transactions, categories)',
+    store.importMap !== null && isDeepStrictEqual(strip(applyIdMap(reread, back)), strip(backup)))
   check('and the store picked a primary person', reread.people.some((p) => p.id === reread.primaryPersonId))
 }
 

@@ -41,6 +41,7 @@ import {
   pensionOccurrenceAdjusted,
 } from '../lib/pensionLedger'
 import { JointAccountSetupModal } from '../components/JointAccountSetupModal'
+import { HeaderAccessory } from '../components/HeaderAccessory'
 import { RebalanceAccountsModal, type RebalanceTarget } from '../components/RebalanceAccountsModal'
 import { formatFullDate } from '../lib/format'
 import {
@@ -2682,14 +2683,18 @@ export function Salary() {
     <div className="max-w-md mx-auto px-4 pt-6">
       <header className="mb-6 flex items-center justify-between">
         <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Wallet</h1>
-        <button
-          onClick={() => setPeopleModalOpen(true)}
-          className="w-9 h-9 rounded-full flex items-center justify-center transition-colors duration-300"
-          style={{ background: flashPeopleButton ? 'var(--color-coral)' : 'var(--color-surface)' }}
-          aria-label="Manage people"
-        >
-          <Users size={18} className={flashPeopleButton ? 'text-white' : 'text-[var(--color-ink)]'} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPeopleModalOpen(true)}
+            className="w-9 h-9 rounded-full flex items-center justify-center transition-colors duration-300"
+            style={{ background: flashPeopleButton ? 'var(--color-coral)' : 'var(--color-surface)' }}
+            aria-label="Manage people"
+          >
+            <Users size={18} className={flashPeopleButton ? 'text-white' : 'text-[var(--color-ink)]'} />
+          </button>
+          {/* Empty offline; the sync app's Account button (HeaderAccessory.tsx). */}
+          <HeaderAccessory />
+        </div>
       </header>
 
       <BackupSection data={data} onRestore={setData} />

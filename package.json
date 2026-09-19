@@ -9,7 +9,8 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "check:divergence": "tsx scripts/check-divergence.ts",
-    "deploy": "npm run build && gh-pages -d dist",
+    "check:sync-build": "npm run build && tsx scripts/check-sync-build.ts",
+    "deploy": "npm run build && tsx scripts/check-sync-build.ts && gh-pages -d dist",
     "verify": "tsx scripts/verify.ts",
     "test": "vitest run"
   },

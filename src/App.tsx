@@ -1,6 +1,14 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { LedgerProvider } from './context/LedgerContext'
+import type { LedgerStore } from './lib/store/LedgerStore'
+// SYNC APP ONLY (DIVERGENCE.md). This file is the ONE wiring file: sign-in,
+// the household and PowerSync all live behind SyncRoot, which hands back the
+// store the provider runs on, plus the pieces that need to sit inside it (the
+// duplicate-person banner, the daily cloud backup). Everything else in this
+// app is byte-identical to personal-ledger's. If this grows beyond wiring,
+// the store interface is leaking (BUILD-PLAN Phase 1).
+import SyncRoot from './components/SyncRoot'
 import { BottomNav } from './components/BottomNav'
 import { AppGuards } from './components/AppGuards'
 import { Home } from './pages/Home'
@@ -20,10 +28,15 @@ function ScrollToTop({ containerRef }: { containerRef: React.RefObject<HTMLDivEl
 }
 
 function App() {
+  return <SyncRoot>{(store, extras) => <LedgerApp store={store} extras={extras} />}</SyncRoot>
+}
+
+function LedgerApp({ store, extras }: { store: LedgerStore; extras?: ReactNode }) {
   const contentRef = useRef<HTMLDivElement>(null)
 
   return (
-    <LedgerProvider>
+    <LedgerProvider store={store}>
+      {extras}
       <AppGuards>
         <HashRouter>
           {/* The app shell is sized from --app-height (JS-measured in index.html,
