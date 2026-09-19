@@ -8,7 +8,9 @@
 // Both live on PayCycleConfig (types/ledger.ts) as separate fields for
 // exactly this reason — don't derive one from the other.
 
-import { addDays, startOfDay } from 'date-fns'
+import { addDays, differenceInCalendarDays, startOfDay } from 'date-fns'
+import type { PaySchedule } from '../types/ledger'
+import { fiscalPeriodEndingOn, fiscalPeriodsBetween } from './fiscalCalendar'
 
 // England & Wales bank holidays only — the app has no location setting,
 // and this is the most common calendar for the UK finance use case this
@@ -204,6 +206,103 @@ export interface CycleBoundarySpec {
   paydayDayOfMonth: number
   paydayAdjustForNonWorkingDay: boolean
   cycleStartFollowsPayday?: boolean
+  /** 2026-09-19 (PROMPT-08c) — when set, cycles run payday to payday on this schedule; see fourWeeklyCycleBounds. */
+  paySchedule?: PaySchedule
+}
+
+// ── 4-weekly pay schedules (2026-09-19, PROMPT-08c Parts C and D) ──────
+//
+// Before this, every payday came from paydayDayOfMonth: a 4-weekly salary
+// was paid 12 times a year on a day of the month, on 13-per-year tax
+// thresholds. These functions are the only place a 4-weekly payday is
+// generated. salaryLedger.paydaysForMonth reads them for every pay-date
+// list, and fourWeeklyCycleBounds for every budgeting cycle, so the two
+// can't drift. The monthly paths are untouched.
+
+/** One payday rule: the current one on a PayCycleConfig, or a paydayHistory entry. */
+export interface PaydayRule {
+  paydayDayOfMonth: number
+  paydayAdjustForNonWorkingDay: boolean
+  paySchedule?: PaySchedule
+}
+
+/** A 4-weekly schedule's UNADJUSTED paydays in [from, to]. */
+export function nominalPaydaysBetween(schedule: PaySchedule, from: Date, to: Date): Date[] {
+  const anchor = startOfDay(parseIsoLocal(schedule.anchorPayDate))
+  const start = startOfDay(from)
+  const end = startOfDay(to)
+  if (end < start) return []
+  if (schedule.kind === 'four_weekly_fiscal') return fiscalPeriodsBetween(start, end, anchor.getDay()).map((p) => p.end)
+  const out: Date[] = []
+  // First multiple of 28 days from the anchor on or after `from`, in either direction.
+  let cursor = addDays(anchor, 28 * Math.ceil(differenceInCalendarDays(start, anchor) / 28))
+  while (cursor <= end) {
+    out.push(cursor)
+    cursor = addDays(cursor, 28)
+  }
+  return out
+}
+
+/**
+ * A 4-weekly rule's paydays, as the money actually lands (weekend/bank
+ * holiday adjusted when the rule says so), whose landing date is in
+ * [from, to]. Adjustment only ever walks back, by at most 10 days
+ * (adjustToWorkingDay), so nominal dates up to 10 days past `to` are
+ * considered. The adjustment never moves the period grid: the next payday
+ * is still anchor + 28n.
+ */
+export function scheduledPaydaysBetween(rule: PaydayRule & { paySchedule: PaySchedule }, from: Date, to: Date): Date[] {
+  const start = startOfDay(from)
+  const end = startOfDay(to)
+  return nominalPaydaysBetween(rule.paySchedule, start, addDays(end, 10))
+    .map((d) => (rule.paydayAdjustForNonWorkingDay ? adjustToWorkingDay(d) : d))
+    .filter((d) => d >= start && d <= end)
+}
+
+/**
+ * Weeks in the pay period paid on `payDateIso` (a date as the money lands):
+ * 5 for P13 of a 53-week fiscal year, otherwise 4. Undefined for a monthly
+ * rule. The landing date may sit up to 10 days before the period's own end
+ * (weekend/bank-holiday adjustment), so the nominal end is searched for.
+ */
+export function payPeriodWeeks(rule: PaydayRule, payDateIso: string): number | undefined {
+  if (!rule.paySchedule) return undefined
+  if (rule.paySchedule.kind !== 'four_weekly_fiscal') return 4
+  const payWeekday = parseIsoLocal(rule.paySchedule.anchorPayDate).getDay()
+  const landed = parseIsoLocal(payDateIso)
+  for (let i = 0; i <= 10; i++) {
+    const period = fiscalPeriodEndingOn(addDays(landed, i), payWeekday)
+    if (period) return period.weeks
+  }
+  return 4
+}
+
+function parseIsoLocal(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+/**
+ * The budgeting cycle for a 4-weekly schedule: from a payday to the day
+ * before the next (28 days, or 35 across a 5-week P13) — Adam's call,
+ * 2026-09-19. With cycleStartFollowsPayday ticked the boundary is the day
+ * the money lands (weekend/bank-holiday adjusted), matching the monthly
+ * follows-payday behaviour; otherwise it is the period grid itself.
+ */
+function fourWeeklyCycleBounds(referenceDate: Date, spec: CycleBoundarySpec & { paySchedule: PaySchedule }): { start: Date; end: Date } {
+  const ref = startOfDay(referenceDate)
+  const from = addDays(ref, -45)
+  const to = addDays(ref, 45)
+  const paydays = spec.cycleStartFollowsPayday ? scheduledPaydaysBetween(spec, from, to) : nominalPaydaysBetween(spec.paySchedule, from, to)
+  let start = addDays(ref, -27)
+  let next = addDays(ref, 1)
+  for (let i = 0; i < paydays.length; i++) {
+    if (paydays[i] <= ref) {
+      start = paydays[i]
+      next = paydays[i + 1] ?? addDays(paydays[i], 28)
+    }
+  }
+  return { start, end: addDays(next, -1) }
 }
 
 /**
@@ -281,6 +380,7 @@ function clampedCycleStart(year: number, monthIndex0: number, cycleStartDayOfMon
  * whenever the cycle chain passed through September.
  */
 export function cycleBoundsForDate(referenceDate: Date, cycle: number | CycleBoundarySpec): { start: Date; end: Date } {
+  if (typeof cycle !== 'number' && cycle.paySchedule) return fourWeeklyCycleBounds(referenceDate, { ...cycle, paySchedule: cycle.paySchedule })
   if (typeof cycle !== 'number' && cycle.cycleStartFollowsPayday) return paydayCycleBounds(referenceDate, cycle)
 
   const cycleStartDayOfMonth = typeof cycle === 'number' ? cycle : cycle.cycleStartDayOfMonth

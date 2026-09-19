@@ -22,10 +22,12 @@
 // £X"; a logged Bonus is "extra, properly-taxed money came in, on top of
 // salary, without changing what salary itself shows as."
 
-import { calculateBonusOnTop, calculateNetSalary, type BonusBreakdown, type SalaryInput } from './tax'
-import { resolvePayday } from './payCycle'
+import { calculateBonusOnTop, calculateNetSalary, type BonusBreakdown, type PayFrequency, type SalaryInput } from './tax'
+import { payPeriodWeeks, resolvePayday, scheduledPaydaysBetween, type PaydayRule } from './payCycle'
 import { INCOME_CATEGORY_ID } from '../types/ledger'
-import type { Person, PayCycleConfig, SalarySnapshot, SalarySort, Transaction } from '../types/ledger'
+import type { Person, PayCycleConfig, PaySchedule, SalarySnapshot, SalarySort, Transaction } from '../types/ledger'
+import { fiscalPeriodEndingOn, fiscalPeriodsBetween } from './fiscalCalendar'
+import { addDays } from 'date-fns'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
@@ -136,12 +138,13 @@ export function nextRecordedSeq(salaryHistory: SalarySnapshot[]): number {
   return seqs.length === 0 ? 0 : Math.max(...seqs) + 1
 }
 
-function snapshotToSalaryInput(snapshot: SalarySnapshot): SalaryInput {
+function snapshotToSalaryInput(snapshot: SalarySnapshot, periodWeeks?: number): SalaryInput {
   return {
     grossAnnual: snapshot.grossAnnual,
     taxCode: snapshot.taxCode,
     studentLoanPlan: snapshot.studentLoanPlan,
     payFrequency: snapshot.payFrequency,
+    periodWeeks,
     deductions: snapshot.deductions,
     employerPensionPercent: snapshot.employerPensionPercent,
   }
@@ -158,15 +161,15 @@ function snapshotToSalaryInput(snapshot: SalarySnapshot): SalaryInput {
  * Returns null if there's no applicable snapshot for the period (same
  * "unanswerable, not zero" contract as computeNetPayForPeriod).
  */
-export function computeBonusBreakdownForPeriod(person: Person, payPeriodDate: string, grossBonusAmount: number): BonusBreakdown | null {
+export function computeBonusBreakdownForPeriod(person: Person, payPeriodDate: string, grossBonusAmount: number, payCycle?: PayCycleConfig): BonusBreakdown | null {
   const snapshot = findApplicableSnapshot(person, payPeriodDate)
   if (!snapshot) return null
-  return calculateBonusOnTop(snapshotToSalaryInput(snapshot), grossBonusAmount)
+  return calculateBonusOnTop(snapshotToSalaryInput(snapshot, periodWeeksFor(snapshot, payCycle, payPeriodDate)), grossBonusAmount)
 }
 
-export function computeNetBonusAmount(person: Person, payPeriodDate: string, grossBonusAmount: number): number | null {
+export function computeNetBonusAmount(person: Person, payPeriodDate: string, grossBonusAmount: number, payCycle?: PayCycleConfig): number | null {
   if (grossBonusAmount <= 0) return 0
-  const breakdown = computeBonusBreakdownForPeriod(person, payPeriodDate, grossBonusAmount)
+  const breakdown = computeBonusBreakdownForPeriod(person, payPeriodDate, grossBonusAmount, payCycle)
   return breakdown === null ? null : round2(breakdown.net)
 }
 
@@ -177,10 +180,72 @@ export function computeNetBonusAmount(person: Person, payPeriodDate: string, gro
  * reverts to when removed. Returns null when there's no applicable
  * snapshot at all.
  */
-export function computeSnapshotNetPayForPeriod(person: Person, payPeriodDate: string): number | null {
+export function computeSnapshotNetPayForPeriod(person: Person, payPeriodDate: string, payCycle?: PayCycleConfig): number | null {
   const snapshot = findApplicableSnapshot(person, payPeriodDate)
   if (!snapshot) return null
-  return round2(calculateNetSalary(snapshotToSalaryInput(snapshot)).netPerPeriod)
+  return round2(calculateNetSalary(snapshotToSalaryInput(snapshot, periodWeeksFor(snapshot, payCycle, payPeriodDate))).netPerPeriod)
+}
+
+/**
+ * 2026-09-19 (PROMPT-08c Part D) — the pay period's length, which only
+ * matters on the fiscal-calendar frequency: P13 of a 53-week year is 5
+ * weeks, paid and taxed as such. Needs the pay cycle, because the period
+ * grid comes from its pay schedule. Without it (or on any other frequency)
+ * the period is taken as a normal one.
+ */
+function periodWeeksFor(snapshot: SalarySnapshot, payCycle: PayCycleConfig | undefined, payPeriodDate: string): number | undefined {
+  if (snapshot.payFrequency !== 'four_weekly_fiscal' || !payCycle) return undefined
+  return payPeriodWeeks(payCycle, payPeriodDate)
+}
+
+/**
+ * 2026-09-19 (PROMPT-08c Part C, Adam's call: "ask in the app, don't
+ * guess") — a 4-weekly salary whose pay cycle has no matching pay schedule
+ * yet. Every 4-weekly salary saved before pay schedules existed is in this
+ * state (Ella's, in Adam's backup). Its paydays are not generated until a
+ * next pay date is set, and the Salary page asks for one. Nothing is
+ * written silently.
+ */
+export function salaryNeedsPayDate(person: Person, payCycle: PayCycleConfig | undefined): boolean {
+  const frequency = latestSalarySnapshot(person)?.payFrequency
+  if (!frequency) return false
+  // Monthly wants no schedule; a salary switched back to monthly while a
+  // 4-weekly schedule is still stored needs its day of the month set again.
+  const wanted = frequency === 'monthly' ? undefined : frequency
+  return payCycle?.paySchedule?.kind !== wanted
+}
+
+/** The three "Paid" options, in the order the forms show them. */
+export const PAY_FREQUENCY_OPTIONS: { value: PayFrequency; label: string }[] = [
+  { value: 'monthly', label: 'Monthly (12/yr)' },
+  { value: 'four_weekly', label: 'Every 4 weeks (13/yr)' },
+  { value: 'four_weekly_fiscal', label: 'Every 4 weeks, 5-week P13 in 53-week years' },
+]
+
+export function payFrequencyLabel(frequency: PayFrequency): string {
+  return PAY_FREQUENCY_OPTIONS.find((o) => o.value === frequency)?.label ?? 'Monthly (12/yr)'
+}
+
+/**
+ * 2026-09-19 (PROMPT-08c) — what's wrong with a "Next pay date", or null if
+ * nothing is. It must be today or later, and no more than one period away
+ * (35 days covers a 5-week P13). On the fiscal-calendar frequency it must
+ * also be the last day of a period, since that is when Ella is paid; a
+ * date that isn't is refused with the nearest period ends named, rather
+ * than being silently shifted.
+ */
+export function nextPayDateProblem(kind: PaySchedule['kind'], dateIso: string, todayIso: string): string | null {
+  if (!dateIso) return 'Pick the next pay date.'
+  if (dateIso < todayIso) return 'The next pay date can’t be in the past.'
+  const date = parseLocalDate(dateIso)
+  if (date > addDays(parseLocalDate(todayIso), 35)) return 'Pick the NEXT pay date — it should be within the next 5 weeks.'
+  if (kind === 'four_weekly_fiscal' && !fiscalPeriodEndingOn(date, date.getDay())) {
+    const nearby = fiscalPeriodsBetween(addDays(date, -35), addDays(date, 35), date.getDay()).map((p) => toIso(p.end))
+    const before = nearby.filter((d) => d < dateIso).pop()
+    const after = nearby.find((d) => d > dateIso)
+    return `That isn't the last day of a pay period on this calendar. The nearest are ${[before, after].filter(Boolean).join(' and ')}.`
+  }
+  return null
 }
 
 /**
@@ -188,7 +253,7 @@ export function computeSnapshotNetPayForPeriod(person: Person, payPeriodDate: st
  * no applicable snapshot at all (person has no salary history yet as of
  * that date) — a genuinely unanswerable case, not a zero.
  */
-export function computeNetPayForPeriod(person: Person, payPeriodDate: string): number | null {
+export function computeNetPayForPeriod(person: Person, payPeriodDate: string, payCycle?: PayCycleConfig): number | null {
   // Gate on the underlying snapshot FIRST, even for a manual override —
   // findApplicableSnapshot already returns null for a period past the
   // governing snapshot's endDate (see its own comment), and a manual
@@ -214,14 +279,14 @@ export function computeNetPayForPeriod(person: Person, payPeriodDate: string): n
   // written for backwards compatibility and for the plain manual
   // override case below, which has no formula to re-derive from.
   if (override?.bonusGrossAmount) {
-    const base = computeSnapshotNetPayForPeriod(person, payPeriodDate)
-    const netBonus = computeNetBonusAmount(person, payPeriodDate, override.bonusGrossAmount)
+    const base = computeSnapshotNetPayForPeriod(person, payPeriodDate, payCycle)
+    const netBonus = computeNetBonusAmount(person, payPeriodDate, override.bonusGrossAmount, payCycle)
     if (base !== null && netBonus !== null) return round2(base + netBonus)
   }
 
   if (override) return round2(override.netPayOverride)
 
-  return computeSnapshotNetPayForPeriod(person, payPeriodDate)
+  return computeSnapshotNetPayForPeriod(person, payPeriodDate, payCycle)
 }
 
 /**
@@ -247,13 +312,16 @@ export function convertClearedSalaryToStandaloneIncome(transactions: Transaction
 /** Generates pending 'salary' transactions for each resolved payday in the range. Skips any period with no applicable snapshot rather than emitting a zero-amount transaction. */
 export function generateSalaryTransactions(person: Person, payCycle: PayCycleConfig, rangeStart: Date, rangeEnd: Date): Omit<Transaction, 'id'>[] {
   const results: Omit<Transaction, 'id'>[] = []
+  // A 4-weekly salary waits for its next pay date rather than being paid on
+  // a guessed monthly day — see salaryNeedsPayDate.
+  if (salaryNeedsPayDate(person, payCycle)) return results
   let cursor = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1)
 
   while (cursor <= rangeEnd) {
     for (const payday of paydaysForMonth(payCycle, cursor.getFullYear(), cursor.getMonth())) {
       if (payday >= rangeStart && payday <= rangeEnd) {
         const dateIso = toIso(payday)
-        const netPay = computeNetPayForPeriod(person, dateIso)
+        const netPay = computeNetPayForPeriod(person, dateIso, payCycle)
         if (netPay !== null && netPay > 0) {
           results.push({
             date: dateIso,
@@ -333,16 +401,23 @@ export function closedPaydays(payCycle: PayCycleConfig, beforeDate: Date, count:
  * across a month boundary.
  */
 export function paydaysForMonth(payCycle: PayCycleConfig, year: number, monthIndex0: number): Date[] {
-  const rules = [
+  const rules: (PaydayRule & { until: string | null; nextRuleFrom: string | null })[] = [
     ...(payCycle.paydayHistory ?? []),
-    { paydayDayOfMonth: payCycle.paydayDayOfMonth, paydayAdjustForNonWorkingDay: payCycle.paydayAdjustForNonWorkingDay, until: null as string | null, nextRuleFrom: null as string | null },
+    { paydayDayOfMonth: payCycle.paydayDayOfMonth, paydayAdjustForNonWorkingDay: payCycle.paydayAdjustForNonWorkingDay, paySchedule: payCycle.paySchedule, until: null, nextRuleFrom: null },
   ]
   const out: Date[] = []
   let from: string | null = null
   for (const rule of rules) {
-    const payday = resolvePayday(year, monthIndex0, rule.paydayDayOfMonth, rule.paydayAdjustForNonWorkingDay)
-    const iso = toIso(payday)
-    if ((from === null || iso >= from) && (rule.until === null || iso < rule.until)) out.push(payday)
+    // 2026-09-19 (PROMPT-08c) — a 4-weekly rule contributes the paydays that
+    // LAND in this month: none, one or two. Months partition time, so every
+    // month-walking caller below sees each 4-weekly payday exactly once.
+    const candidates = rule.paySchedule
+      ? scheduledPaydaysBetween({ ...rule, paySchedule: rule.paySchedule }, new Date(year, monthIndex0, 1), new Date(year, monthIndex0 + 1, 0))
+      : [resolvePayday(year, monthIndex0, rule.paydayDayOfMonth, rule.paydayAdjustForNonWorkingDay)]
+    for (const payday of candidates) {
+      const iso = toIso(payday)
+      if ((from === null || iso >= from) && (rule.until === null || iso < rule.until)) out.push(payday)
+    }
     from = rule.nextRuleFrom
   }
   return out.sort((a, b) => a.getTime() - b.getTime())
@@ -371,6 +446,9 @@ export function recentAndUpcomingPaydayDates(payCycle: PayCycleConfig, asOfDate:
   return [...(past.length ? [{ date: past[past.length - 1], isPast: true }] : []), ...upcoming.slice(0, 3).map((date) => ({ date, isPast: false }))]
 }
 
+/** A new payday rule. No paySchedule = monthly on paydayDayOfMonth (2026-09-19: it can now switch to or from a 4-weekly schedule). */
+export type PaydayChange = Pick<PayCycleConfig, 'paydayDayOfMonth' | 'paydayAdjustForNonWorkingDay' | 'paySchedule'>
+
 /**
  * The payday changed, from a chosen payday. Salary payments from there on
  * are re-dated, and so is everything keyed on a payday: that person's
@@ -385,7 +463,7 @@ export function applyPaydayChange(
   person: Person,
   transactions: Transaction[],
   salarySorts: SalarySort[] | null,
-  next: Pick<PayCycleConfig, 'paydayDayOfMonth' | 'paydayAdjustForNonWorkingDay'>,
+  next: PaydayChange,
   pickedDate: string,
   asOfIso: string,
 ): { payCycle: PayCycleConfig; person: Person; transactions: Transaction[]; salarySorts: SalarySort[] | null } | null {
@@ -400,7 +478,8 @@ export function applyPaydayChange(
   const start = new Date(picked.getFullYear() - 3, picked.getMonth(), 1)
   const end = new Date(parseLocalDate(lastKeyed).getFullYear() + 2, 11, 31)
   const asOccurrences = (dates: string[]) => dates.map((d) => ({ key: d, date: d }))
-  const newRule: PayCycleConfig = { ...payCycle, ...next, paydayHistory: undefined }
+  // paySchedule is set explicitly: `next` without one means monthly, not "keep the current schedule".
+  const newRule: PayCycleConfig = { ...payCycle, ...next, paySchedule: next.paySchedule, paydayHistory: undefined }
   const plan = planReschedule(asOccurrences(paydayDates(payCycle, start, end)), asOccurrences(paydayDates(newRule, start, end)), pickedDate)
   if (!plan) return null
 
@@ -410,7 +489,11 @@ export function applyPaydayChange(
     payCycle: {
       ...payCycle,
       ...next,
-      paydayHistory: [...history, { paydayDayOfMonth: payCycle.paydayDayOfMonth, paydayAdjustForNonWorkingDay: payCycle.paydayAdjustForNonWorkingDay, until: plan.from.date, nextRuleFrom: plan.firstNew.date }],
+      paySchedule: next.paySchedule,
+      paydayHistory: [
+        ...history,
+        { paydayDayOfMonth: payCycle.paydayDayOfMonth, paydayAdjustForNonWorkingDay: payCycle.paydayAdjustForNonWorkingDay, ...(payCycle.paySchedule ? { paySchedule: payCycle.paySchedule } : {}), until: plan.from.date, nextRuleFrom: plan.firstNew.date },
+      ],
     },
     person: { ...person, salaryOverrides: person.salaryOverrides.map((o) => ({ ...o, payPeriodDate: plan.dateMap.get(o.payPeriodDate) ?? o.payPeriodDate })) },
     transactions: redateStoredPayments(transactions, belongs, plan, asOfIso),

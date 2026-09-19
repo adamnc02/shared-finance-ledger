@@ -62,7 +62,7 @@ function reconcileSalaryTransactions(data: AppDataV2): AppDataV2 {
     if (t.type !== 'salary' || !t.personId) return t
     const person = data.people.find((p) => p.id === t.personId)
     if (!person) return t
-    const netPay = computeNetPayForPeriod(person, t.date)
+    const netPay = computeNetPayForPeriod(person, t.date, data.payCycles.find((pc) => pc.personId === person.id))
     if (netPay === null || netPay <= 0 || netPay === t.amount) return t
     changed = true
     return { ...t, amount: netPay }

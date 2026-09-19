@@ -392,7 +392,7 @@ export function resolveCycleBounds(data: AppDataV2, personId: string, referenceD
         // so this is the same math as the salary case, just forced onto
         // the "fixed" branch regardless of what cycleStartFollowsPayday
         // says elsewhere on the person's own PayCycleConfig.
-        return cycleBoundsForDate(referenceDate, { ...fallbackSpec, cycleStartFollowsPayday: false })
+        return cycleBoundsForDate(referenceDate, { ...fallbackSpec, cycleStartFollowsPayday: false, paySchedule: undefined })
       }
       return pensionCycleBounds(referenceDate, pension)
     }

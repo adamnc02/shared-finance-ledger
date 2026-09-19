@@ -795,7 +795,7 @@ export function buildSavingsPotTrendSeries(
 
 // ── Goal helpers — two independent triggers, per Adam's spec ─────────
 
-const PAY_FREQUENCY_LABELS: Record<PayFrequency, string> = { monthly: 'month', four_weekly: '4 weeks' }
+const PAY_FREQUENCY_LABELS: Record<PayFrequency, string> = { monthly: 'month', four_weekly: '4 weeks', four_weekly_fiscal: '4 weeks' }
 
 /** Info-only label content for targetDate: how much to save per pay period (the pot owner's currently-active salary frequency) to hit targetAmount... or a plain remaining-balance figure if no targetAmount is set (targetDate can exist alone). */
 export function amountNeededPerPayPeriod(pot: SavingsPot, currentBalance: number, payFrequency: PayFrequency, asOfDate: Date = new Date()): { amountPerPeriod: number; periodLabel: string } | null {
