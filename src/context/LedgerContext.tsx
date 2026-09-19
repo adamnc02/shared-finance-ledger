@@ -35,7 +35,7 @@ import { applyTemplateScheduleChange, type TemplateSchedule } from '../lib/sched
 import { applyPensionScheduleChange, type PensionSchedule } from '../lib/pensionLedger'
 import { applyLoanStartDateChange, applyRecurringOverpaymentStartDateChange } from '../lib/ledgerLoans'
 import { applyCardPaymentDayChange } from '../lib/creditCards'
-import { applyPaydayChange } from '../lib/salaryLedger'
+import { applyPaydayChange, type PaydayChange } from '../lib/salaryLedger'
 import {
   dropSalarySortTarget,
   removeCreditCardFromData,
@@ -151,7 +151,7 @@ interface LedgerContextValue {
   changeLoanStartDate: (id: string, newStartDate: string, pickedDate: string) => void
   changeRecurringOverpaymentStartDate: (loanId: string, newStartDate: string, pickedDate: string) => void
   changeCardPaymentDay: (id: string, newDay: number, pickedDate: string) => void
-  changePayday: (personId: string, next: Pick<PayCycleConfig, 'paydayDayOfMonth' | 'paydayAdjustForNonWorkingDay'>, pickedDate: string) => void
+  changePayday: (personId: string, next: PaydayChange, pickedDate: string) => void
   removeRecurringTemplate: (id: string) => void
 
   // People, pay cycle, salary, savings — the piece that was previously

@@ -9,6 +9,7 @@
 
 import { addDays, addMonths, addYears, startOfWeek } from 'date-fns'
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
+import { earlyMoveLookaheadDays, isOccurrenceAdjusted } from './occurrenceOverrides'
 import { periodThresholdsFor, type PayFrequency } from './tax'
 import { aerCreditedInterest, dailyAccrualInterest, walkCreditingDates, walkMonthlyCreditingDates } from './savingsInterest'
 import { generateTransactionsForTemplate } from './schedule'
@@ -100,8 +101,14 @@ function walkDepositOccurrences(pot: SavingsPot, rangeStart: Date, rangeEnd: Dat
     iterations++
   }
 
+  // PROMPT-08c Part B — slots past rangeEnd are walked only so a deposit
+  // moved EARLIER into the range is still found; see earlyMoveLookaheadDays.
+  const walkEnd = addDays(rangeEnd, earlyMoveLookaheadDays(pot.recurringDepositOverrides))
+  const rangeStartIso = toIso(rangeStart)
+  const rangeEndIso = toIso(rangeEnd)
+
   const results: RawDepositOccurrence[] = []
-  while (cursor <= rangeEnd && iterations < MAX_OCCURRENCES) {
+  while (cursor <= walkEnd && iterations < MAX_OCCURRENCES) {
     const originalDate = toIso(cursor)
     if (originalDate >= pot.openingDate) {
       // Pause is just the ordinary deleted-override mechanism now (see
@@ -109,7 +116,10 @@ function walkDepositOccurrences(pot: SavingsPot, rangeStart: Date, rangeEnd: Dat
       // pause concept to check here at all.
       const override = pot.recurringDepositOverrides?.find((o) => o.originalDate === originalDate)
       if (!override?.deleted) {
-        results.push({ originalDate, date: override?.date ?? originalDate, amount: override?.amount ?? pot.recurringDepositAmount })
+        const date = override?.date ?? originalDate
+        if (date >= rangeStartIso && (originalDate <= rangeEndIso || date <= rangeEndIso)) {
+          results.push({ originalDate, date, amount: override?.amount ?? pot.recurringDepositAmount })
+        }
       }
     }
     cursor = clampToAnchorDay(addMonths(cursor, 1), anchorDay)
@@ -146,6 +156,14 @@ export function resolveSavingsPotDepositOccurrenceAmount(pot: SavingsPot, origin
   const override = pot.recurringDepositOverrides?.find((o) => o.originalDate === originalDate)
   if (override?.amount !== undefined) return override.amount
   return pot.recurringDepositAmount ?? 0
+}
+
+/** Whether this deposit shows the "Adjusted" badge — see isOccurrenceAdjusted. */
+export function savingsPotDepositOccurrenceAdjusted(pot: SavingsPot, originalDate: string): boolean {
+  const override = pot.recurringDepositOverrides?.find((o) => o.originalDate === originalDate)
+  if (!override || override.deleted) return false
+  const natural = { date: originalDate, amount: pot.recurringDepositAmount ?? 0 }
+  return isOccurrenceAdjusted({ date: override.date ?? originalDate, amount: override.amount ?? natural.amount }, natural)
 }
 
 /**
@@ -777,7 +795,7 @@ export function buildSavingsPotTrendSeries(
 
 // ── Goal helpers — two independent triggers, per Adam's spec ─────────
 
-const PAY_FREQUENCY_LABELS: Record<PayFrequency, string> = { monthly: 'month', four_weekly: '4 weeks' }
+const PAY_FREQUENCY_LABELS: Record<PayFrequency, string> = { monthly: 'month', four_weekly: '4 weeks', four_weekly_fiscal: '4 weeks' }
 
 /** Info-only label content for targetDate: how much to save per pay period (the pot owner's currently-active salary frequency) to hit targetAmount... or a plain remaining-balance figure if no targetAmount is set (targetDate can exist alone). */
 export function amountNeededPerPayPeriod(pot: SavingsPot, currentBalance: number, payFrequency: PayFrequency, asOfDate: Date = new Date()): { amountPerPeriod: number; periodLabel: string } | null {

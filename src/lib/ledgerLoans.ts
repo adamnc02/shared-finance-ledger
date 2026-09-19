@@ -24,6 +24,7 @@ import { backSolveMonthlyRate, calibrateRateAndConvention, flatMonthlyConvention
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 import { toLocalIsoDate as toIso, todayIso, parseLocalDate } from './date'
+import { isOccurrenceAdjusted } from './occurrenceOverrides'
 import { planReschedule, redateStoredPayments, type ReschedulePlan, type ScheduleOccurrence } from './scheduleChange'
 const sameMonth = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
 
@@ -279,6 +280,23 @@ export function applyRecurringOverpaymentSingleAmountOverride(
 ): Pick<LoanRecurringOverpayment, 'amountOverrides'> {
   const withoutExisting = (r.amountOverrides ?? []).filter((o) => o.date !== date)
   return { amountOverrides: [...withoutExisting, { date, amount }] }
+}
+
+/**
+ * Whether this recurring overpayment shows the "Adjusted" badge (PROMPT-08c
+ * Part A). Its overrides are amount-only and keyed on the period date, so
+ * it is adjusted when a single-payment override resolves to something other
+ * than the standing amount (amount history included) for that period. A
+ * percentage and a fixed figure are always different.
+ */
+export function recurringOverpaymentOccurrenceAdjusted(r: LoanRecurringOverpayment, periodDate: string): boolean {
+  if (!r.amountOverrides?.some((o) => o.date === periodDate)) return false
+  const actual = resolveRecurringOverpaymentAmount(r, periodDate)
+  const natural = resolveRecurringOverpaymentAmount({ ...r, amountOverrides: undefined }, periodDate)
+  if (actual.type !== natural.type) return true
+  return actual.type === 'fixed' && natural.type === 'fixed'
+    ? isOccurrenceAdjusted({ date: periodDate, amount: actual.amount }, { date: periodDate, amount: natural.amount })
+    : actual.type === 'percent_of_balance' && natural.type === 'percent_of_balance' && actual.percent !== natural.percent
 }
 
 /** The recurring overpayment amount for this exact payment date, given the balance remaining AFTER the scheduled payment and any one-off overpayment for that month — 0 if the loan has no recurring overpayment configured, this date falls outside its start/end window, or it's one of the individually paused dates (Phase 4). Percent-of-balance is deliberately computed fresh each period, never cached, same reasoning as a credit card's minimum payment: a fixed % of a shrinking balance shrinks in turn. */

@@ -14,6 +14,7 @@ import { upcomingPaydays } from './salaryLedger'
 import { nextCycleStartAfter } from './payCycle'
 import { categoryForTransfer } from './transferLedger'
 import { formatFullDate } from './format'
+import { earlyMoveLookaheadDays, isOccurrenceAdjusted } from './occurrenceOverrides'
 
 function daysInMonth(year: number, monthIndex0: number): number {
   return new Date(year, monthIndex0 + 1, 0).getDate()
@@ -118,6 +119,14 @@ export function resolveOccurrenceAmount(template: RecurringTemplate, originalDat
   const override = template.occurrenceOverrides?.find((o) => o.originalDate === originalDate)
   if (override?.amount !== undefined) return override.amount
   return resolveTemplateAmount(template, originalDate)
+}
+
+/** Whether this occurrence shows the "Adjusted" badge — see isOccurrenceAdjusted. Its natural date is payday-resolved for a follows-payday/cycle-start transfer, so a weekend payday drift is never "adjusted". */
+export function templateOccurrenceAdjusted(template: RecurringTemplate, originalDate: string, payCycle?: PayCycleConfig): boolean {
+  const override = template.occurrenceOverrides?.find((o) => o.originalDate === originalDate)
+  if (!override || override.deleted) return false
+  const natural = { date: resolveTemplateOccurrenceDate(originalDate, template, payCycle), amount: resolveTemplateAmount(template, originalDate) }
+  return isOccurrenceAdjusted({ date: resolveTemplateOccurrenceDate(override.date ?? originalDate, template, payCycle), amount: override.amount ?? natural.amount }, natural)
 }
 
 export interface RawOccurrence {
@@ -226,6 +235,9 @@ function walkOccurrences(template: RecurringTemplate, rangeStart: Date, rangeEnd
   const lookback = resolvedRangeLookback(template, rangeStart, payCycle)
   const rangeStartIso = toIso(rangeStart)
   const rangeEndIso = toIso(rangeEnd)
+  // Slots past rangeEnd are walked only so an override moving one earlier
+  // can bring it into the range — see earlyMoveLookaheadDays.
+  const walkEnd = addDays(rangeEnd, earlyMoveLookaheadDays(template.occurrenceOverrides))
 
   let cursor = anchor
   let iterations = 0
@@ -237,13 +249,21 @@ function walkOccurrences(template: RecurringTemplate, rangeStart: Date, rangeEnd
   }
 
   const results: RawOccurrence[] = []
-  while (cursor <= rangeEnd && iterations < MAX_OCCURRENCES) {
+  while (cursor <= walkEnd && iterations < MAX_OCCURRENCES) {
     const originalDate = toIso(cursor)
     const override = template.occurrenceOverrides?.find((o) => o.originalDate === originalDate)
     if (!override?.deleted) {
       const rawDate = override?.date ?? originalDate
       const date = resolveTemplateOccurrenceDate(rawDate, template, payCycle)
-      if (!lookback || (date >= rangeStartIso && date <= rangeEndIso)) {
+      // Without a lookback, a slot inside the range keeps its old rule (in,
+      // even if moved past rangeEnd — the next range's walk would never
+      // reach it). But one moved BEFORE rangeStart belongs to the previous
+      // range, which now finds it via earlyMoveLookaheadDays; emitting it
+      // here too would show it in both. Slots past rangeEnd are in only if
+      // moved into the range.
+      const slotPastRange = originalDate > rangeEndIso
+      const inRange = date >= rangeStartIso && date <= rangeEndIso
+      if (lookback || slotPastRange ? inRange : date >= rangeStartIso) {
         results.push({
           originalDate,
           date,

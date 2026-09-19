@@ -57,7 +57,8 @@ const asOf = parseLocalDate(TODAY)
 const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/'
 const load = (file: string) => autoClearDuePayments(parseLedgerBackupJson(readFileSync(DIR + file, 'utf8')), asOf)
 const mum = load('finance-ledger-backup-2026-09-15-mum.json')
-const adam = load('finance-ledger-backup-2026-09-15.json')
+const adamBackup = load('finance-ledger-backup-2026-09-15.json')
+const adam = adamBackup
 const shiftDay = (iso: string, by: number) => `${iso.slice(0, 8)}${String(Number(iso.slice(8)) + by).padStart(2, '0')}`
 
 /** Runs one surface through old vs new behaviour. `minGapDays`: two stream rows closer than this in the projected ledger are a duplicate. */
@@ -171,6 +172,16 @@ for (const card of mum.creditCards) {
 
 // ── Salary payday (Ella in Adam's backup, 10th → 12th) ──
 {
+  // 2026-09-19 (PROMPT-08c Part C): this surface is a MONTHLY payday change.
+  // Ella's real salary is 4-weekly, and it only used to be paid monthly on
+  // the 10th because a 4-weekly salary's dates were never generated (the bug
+  // 08c fixed). It now waits for a next pay date, so the fixture sets her
+  // salary to monthly to keep testing what this section is about.
+  const monthlyElla = (d: AppDataV2): AppDataV2 => ({
+    ...d,
+    people: d.people.map((p) => (p.name === 'Ella' ? { ...p, salaryHistory: p.salaryHistory.map((s) => ({ ...s, payFrequency: 'monthly' as const })) } : p)),
+  })
+  const adam = monthlyElla(adamBackup)
   const ella = adam.people.find((p) => p.name === 'Ella')!
   // The reverse direction across a month boundary: a new payday EARLIER
   // than the old one's month (2nd → 28th, from 2 Oct) must pay 2 Sep on the

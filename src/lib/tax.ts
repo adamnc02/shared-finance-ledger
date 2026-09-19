@@ -23,7 +23,10 @@
 // and higher-rate pension relief reclaimed via self-assessment.
 
 export type StudentLoanPlan = 'none' | 'plan1' | 'plan2' | 'plan4' | 'plan5' | 'postgrad'
-export type PayFrequency = 'monthly' | 'four_weekly'
+// 'four_weekly_fiscal' (2026-09-19, PROMPT-08c Part D) is taxed as 4-weekly,
+// except that a 5-week period (P13 of a 53-week fiscal year) scales the
+// thresholds by 5/4 — see SalaryInput.periodWeeks.
+export type PayFrequency = 'monthly' | 'four_weekly' | 'four_weekly_fiscal'
 
 // How a deduction affects the calculation, matching real payroll categories:
 //  - salary_sacrifice: comes off gross before BOTH tax and NI are calculated
@@ -160,10 +163,40 @@ export const PERIOD_THRESHOLDS_2026_27: Record<PayFrequency, PeriodThresholds> =
     qualifyingEarningsLower: 480,
     qualifyingEarningsUpper: 3867,
   },
+  four_weekly_fiscal: {
+    periodsPerYear: 13,
+    niPrimaryThreshold: 967,
+    niUpperEarningsLimit: 3867,
+    qualifyingEarningsLower: 480,
+    qualifyingEarningsUpper: 3867,
+  },
 }
 
-export function periodThresholdsFor(payFrequency: PayFrequency): PeriodThresholds {
-  return PERIOD_THRESHOLDS_2026_27[payFrequency] ?? PERIOD_THRESHOLDS_2026_27.monthly
+export function periodThresholdsFor(payFrequency: PayFrequency, periodWeeks?: number): PeriodThresholds {
+  const base = PERIOD_THRESHOLDS_2026_27[payFrequency] ?? PERIOD_THRESHOLDS_2026_27.monthly
+  return payFrequency !== 'monthly' && periodWeeks && periodWeeks !== 4 ? scaledPeriodThresholds(base, periodWeeks / 4) : base
+}
+
+/**
+ * 2026-09-19 (PROMPT-08c Part D, Adam's call) — a 5-week pay period (P13 of
+ * a 53-week fiscal year) is taxed on the 4-weekly thresholds pro-rated ×5/4.
+ * It approximates what payroll does, so it is shown as an estimate.
+ *
+ * Scaling periodsPerYear down by the same factor (13 → 10.4) is what makes
+ * everything else follow without special cases: gross per period
+ * (annual ÷ 10.4 = annual ÷ 52 × 5), the income tax allowance and bands,
+ * and the student loan threshold are all annual ÷ periodsPerYear. NI and
+ * qualifying-earnings bands are per-period figures, so they are scaled
+ * directly.
+ */
+function scaledPeriodThresholds(t: PeriodThresholds, factor: number): PeriodThresholds {
+  return {
+    periodsPerYear: t.periodsPerYear / factor,
+    niPrimaryThreshold: t.niPrimaryThreshold * factor,
+    niUpperEarningsLimit: t.niUpperEarningsLimit * factor,
+    qualifyingEarningsLower: t.qualifyingEarningsLower * factor,
+    qualifyingEarningsUpper: t.qualifyingEarningsUpper * factor,
+  }
 }
 
 // Unlike the NI and qualifying-earnings figures above, the per-period student
@@ -435,6 +468,8 @@ export interface SalaryInput {
   taxCode: string
   studentLoanPlan: StudentLoanPlan
   payFrequency: PayFrequency
+  /** Weeks in THIS pay period, for a 4-weekly frequency: 5 for a 5-week P13, else 4 (the default). Ignored for monthly. */
+  periodWeeks?: number
   deductions: SalaryDeduction[]
   employerPensionPercent?: number // informational only — doesn't affect your own take-home
 }
@@ -518,7 +553,7 @@ export function resolveDeductionAmount(deduction: SalaryDeduction, grossPerPerio
 
 /** Full net-salary calculation, walking through a person's own ordered list of deductions. */
 export function calculateNetSalary(input: SalaryInput, constants: TaxYearConstants = TAX_YEAR_2026_27): SalaryBreakdown {
-  const thresholds = periodThresholdsFor(input.payFrequency)
+  const thresholds = periodThresholdsFor(input.payFrequency, input.periodWeeks)
   const periodsPerYear = thresholds.periodsPerYear
   const grossPerPeriod = input.grossAnnual / periodsPerYear
 
@@ -674,7 +709,7 @@ export function calculateBonusOnTop(input: SalaryInput, grossBonus: number, cons
   // NI marginal against THIS PERIOD's niable pay and THIS PERIOD's own
   // thresholds — see the comment above for why this can't be annualised
   // the way income tax is.
-  const thresholds = periodThresholdsFor(input.payFrequency)
+  const thresholds = periodThresholdsFor(input.payFrequency, input.periodWeeks)
   const nationalInsurance =
     periodNationalInsurance(base.grossNiablePerPeriod + grossBonus, thresholds, constants).total -
     periodNationalInsurance(base.grossNiablePerPeriod, thresholds, constants).total

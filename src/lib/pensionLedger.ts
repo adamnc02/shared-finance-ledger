@@ -14,6 +14,7 @@
 import { addMonths, addQuarters, addWeeks, addYears, addDays, startOfDay } from 'date-fns'
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
 import { adjustToWorkingDay, cycleBoundsForDate } from './payCycle'
+import { earlyMoveLookaheadDays, isOccurrenceAdjusted } from './occurrenceOverrides'
 import { INCOME_CATEGORY_ID } from '../types/ledger'
 import type { AppDataV2, PayCycleConfig, Pension, RecurrenceFrequency, RecurringOccurrenceOverride, Transaction } from '../types/ledger'
 import { planReschedule, recentAndUpcomingFrom, redateStoredPayments, type ScheduleOccurrence } from './scheduleChange'
@@ -79,6 +80,15 @@ export function resolvePensionOccurrenceAmount(pension: Pension, originalDate: s
   return resolvePensionAmount(pension, originalDate)
 }
 
+/** Whether this payment shows the "Adjusted" badge — see isOccurrenceAdjusted. The natural date already carries the working-day adjustment, so a weekend shift is never "adjusted". */
+export function pensionOccurrenceAdjusted(pension: Pension, originalDate: string): boolean {
+  const override = pension.occurrenceOverrides?.find((o) => o.originalDate === originalDate)
+  if (!override || override.deleted) return false
+  const naturalDate = pension.adjustForNonWorkingDay ? toIso(adjustToWorkingDay(parseLocalDate(originalDate))) : originalDate
+  const natural = { date: naturalDate, amount: resolvePensionAmount(pension, originalDate) }
+  return isOccurrenceAdjusted({ date: override.date ?? naturalDate, amount: override.amount ?? natural.amount }, natural)
+}
+
 export interface RawPensionOccurrence {
   originalDate: string
   date: string
@@ -99,8 +109,18 @@ function walkPensionOccurrences(pension: Pension, rangeStart: Date, rangeEnd: Da
     iterations++
   }
 
+  // PROMPT-08c Part B — slots past rangeEnd are walked only so one that
+  // lands earlier than its slot is still found: a hand-moved date (see
+  // earlyMoveLookaheadDays), or the non-working-day adjustment, which walks
+  // back at most 10 days (adjustToWorkingDay's own guard). A pension due on
+  // Sunday the 1st is paid on Friday the 30th and must clear on the 30th.
+  const lookaheadDays = Math.max(earlyMoveLookaheadDays(pension.occurrenceOverrides), pension.adjustForNonWorkingDay ? 10 : 0)
+  const walkEnd = addDays(rangeEnd, lookaheadDays)
+  const rangeStartIso = toIso(rangeStart)
+  const rangeEndIso = toIso(rangeEnd)
+
   const results: RawPensionOccurrence[] = []
-  while (cursor <= rangeEnd && iterations < MAX_OCCURRENCES) {
+  while (cursor <= walkEnd && iterations < MAX_OCCURRENCES) {
     const originalDate = toIso(cursor)
     const override = pension.occurrenceOverrides?.find((o) => o.originalDate === originalDate)
     // Before scheduleFrom is stored history from an earlier schedule — see Pension.scheduleFrom.
@@ -114,11 +134,14 @@ function walkPensionOccurrences(pension: Pension, rangeStart: Date, rangeEnd: Da
       // payment, so applying adjustment on top of it would be
       // second-guessing something the person just typed in themselves.
       const defaultDate = pension.adjustForNonWorkingDay ? toIso(adjustToWorkingDay(cursor)) : originalDate
-      results.push({
-        originalDate,
-        date: override?.date ?? defaultDate,
-        amount: override?.amount ?? resolvePensionAmount(pension, originalDate),
-      })
+      const date = override?.date ?? defaultDate
+      if (date >= rangeStartIso && (originalDate <= rangeEndIso || date <= rangeEndIso)) {
+        results.push({
+          originalDate,
+          date,
+          amount: override?.amount ?? resolvePensionAmount(pension, originalDate),
+        })
+      }
     }
     cursor = nextOccurrence(cursor, pension.frequency, pension.intervalWeeks, anchorDay)
     iterations++
@@ -369,7 +392,7 @@ export function resolveCycleBounds(data: AppDataV2, personId: string, referenceD
         // so this is the same math as the salary case, just forced onto
         // the "fixed" branch regardless of what cycleStartFollowsPayday
         // says elsewhere on the person's own PayCycleConfig.
-        return cycleBoundsForDate(referenceDate, { ...fallbackSpec, cycleStartFollowsPayday: false })
+        return cycleBoundsForDate(referenceDate, { ...fallbackSpec, cycleStartFollowsPayday: false, paySchedule: undefined })
       }
       return pensionCycleBounds(referenceDate, pension)
     }

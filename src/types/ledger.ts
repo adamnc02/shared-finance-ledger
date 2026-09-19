@@ -785,6 +785,18 @@ export interface LoanOverpayment {
   recastMode?: 'reduce_term' | 'reduce_payment'
 }
 
+// ── Pay schedule (2026-09-19, PROMPT-08c) ────────────────────────────
+// 'four_weekly': every 28 days from anchorPayDate, forwards and backwards.
+// 'four_weekly_fiscal': 13 four-week periods a year, whose final period is
+// 5 weeks in a 53-week year. The year ends on the last pay weekday on or
+// before 31 March (lib/fiscalCalendar.ts), which reproduces Ella's
+// employer's calendar exactly. anchorPayDate is any one real (unadjusted)
+// payday: it fixes the pay weekday, and for 'four_weekly' the phase too.
+export interface PaySchedule {
+  kind: 'four_weekly' | 'four_weekly_fiscal'
+  anchorPayDate: string // ISO
+}
+
 // ── Pay cycle configuration ─────────────────────────────────────────────
 // Anchors the running balance. Payday and the budgeting-cycle boundary
 // are stored as two separate, deliberately-decoupled rules (doc Section
@@ -847,7 +859,21 @@ export interface PayCycleConfig {
   // paid-periods list then resolve each earlier month on the day it was
   // actually paid instead of re-creating it on the new day. Absent = the
   // payday has never been changed.
-  paydayHistory?: { paydayDayOfMonth: number; paydayAdjustForNonWorkingDay: boolean; until: string; nextRuleFrom: string }[]
+  // 2026-09-19 (PROMPT-08c) — an entry may also carry the pay schedule that
+  // was in force (absent = the monthly day-of-month rule, as every entry
+  // recorded before this field existed).
+  paydayHistory?: { paydayDayOfMonth: number; paydayAdjustForNonWorkingDay: boolean; paySchedule?: PaySchedule; until: string; nextRuleFrom: string }[]
+
+  // ── Pay schedule (2026-09-19, PROMPT-08c Parts C and D) ─────────────
+  // How the pay DATES repeat. Absent = monthly on paydayDayOfMonth, which
+  // is every config saved before this existed, so nothing migrates.
+  // Before this, a 4-weekly salary (SalarySnapshot.payFrequency) only
+  // changed the tax thresholds: its pay dates were still monthly. The
+  // snapshot's payFrequency stays the TAX frequency; this is the DATE
+  // schedule, and the two must agree (see salaryNeedsPayDate). When set,
+  // paydayDayOfMonth and cycleStartDayOfMonth are kept but unused, and the
+  // budgeting cycle runs payday to payday (payCycle.ts).
+  paySchedule?: PaySchedule
 
   // ── Salary Sorter (App_Dev.md "Salary Sorter & Transfer Pill", 2026-09
   // session) — which window "due this pay cycle" means when the sorter

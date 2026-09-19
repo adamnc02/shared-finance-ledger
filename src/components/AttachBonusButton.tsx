@@ -78,8 +78,9 @@ function AttachBonusForm({
   const grossNumber = Number(grossAmount)
 
   const person = data.people.find((p) => p.id === personId)
-  const baseNetPay = person ? computeSnapshotNetPayForPeriod(person, fixedDate) : null
-  const netBonusAmount = person && grossNumber > 0 ? computeNetBonusAmount(person, fixedDate, grossNumber) : null
+  const payCycle = data.payCycles.find((pc) => pc.personId === personId)
+  const baseNetPay = person ? computeSnapshotNetPayForPeriod(person, fixedDate, payCycle) : null
+  const netBonusAmount = person && grossNumber > 0 ? computeNetBonusAmount(person, fixedDate, grossNumber, payCycle) : null
 
   function save() {
     if (netBonusAmount === null || baseNetPay === null) return

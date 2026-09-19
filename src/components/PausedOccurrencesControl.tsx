@@ -56,6 +56,7 @@ export function PausedOccurrencesControl({
   itemLabel = 'payments',
   onSaveAmount,
   onSaveDate,
+  isAdjusted,
 }: {
   /**
    * UAT 2026-09-11 (manage-upcoming-payments-override-key-bug) —
@@ -99,6 +100,15 @@ export function PausedOccurrencesControl({
    * own comment in schedule.ts).
    */
   onSaveDate?: (originalDate: string, newDate: string) => void
+  /**
+   * 2026-09-19 (PROMPT-08c Part A, Adam-specified) — whether a row's date
+   * or amount differs from what its schedule alone would produce. Shows
+   * the coral "· Adjusted" badge after the date, which used to exist only
+   * on recurring transactions' own (now retired) list. Every call site
+   * passes its schedule's own lib helper (templateOccurrenceAdjusted,
+   * pensionOccurrenceAdjusted, …); the rule itself is isOccurrenceAdjusted.
+   */
+  isAdjusted?: (originalDate: string) => boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const [editingDate, setEditingDate] = useState<string | null>(null)
@@ -199,17 +209,21 @@ export function PausedOccurrencesControl({
                           autoFocus
                         />
                       ) : (
-                        <span
-                          role={onSaveDate ? 'button' : undefined}
-                          tabIndex={onSaveDate ? 0 : undefined}
-                          className={`text-sm text-[var(--color-ink)] ${onSaveDate ? 'cursor-pointer underline decoration-dotted underline-offset-2' : ''}`}
-                          onClick={(e) => {
-                            if (!onSaveDate) return
-                            e.stopPropagation()
-                            startEditingDate(originalDate, date)
-                          }}
-                        >
-                          {date}
+                        <span className="min-w-0">
+                          <span
+                            role={onSaveDate ? 'button' : undefined}
+                            tabIndex={onSaveDate ? 0 : undefined}
+                            className={`text-sm text-[var(--color-ink)] ${onSaveDate ? 'cursor-pointer underline decoration-dotted underline-offset-2' : ''}`}
+                            onClick={(e) => {
+                              if (!onSaveDate) return
+                              e.stopPropagation()
+                              startEditingDate(originalDate, date)
+                            }}
+                          >
+                            {date}
+                          </span>
+                          {/* Outside the date's own span: its dotted underline would otherwise run under the badge too. */}
+                          {isAdjusted?.(originalDate) && <span className="text-xs text-[var(--color-coral)]"> · Adjusted</span>}
                         </span>
                       )}
                       {isEditingAmount ? (

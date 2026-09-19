@@ -4,12 +4,12 @@ import { formatCurrency } from '../lib/format'
 import { useLedgerData } from '../context/LedgerContext'
 import { calculateNetSalary, type StudentLoanPlan, type PayFrequency, type SalaryDeduction, type DeductionType } from '../lib/tax'
 import { THREE_CYCLES_AHEAD } from '../lib/projection'
-import { findApplicableSnapshot, latestSalarySnapshot, computeNetPayForPeriod, upcomingPaydays, closedPaydays, firstPaydayOnOrAfter, recentAndUpcomingPaydayDates } from '../lib/salaryLedger'
+import { findApplicableSnapshot, PAY_FREQUENCY_OPTIONS, payFrequencyLabel, nextPayDateProblem, salaryNeedsPayDate, latestSalarySnapshot, computeNetPayForPeriod, upcomingPaydays, closedPaydays, firstPaydayOnOrAfter, recentAndUpcomingPaydayDates, applyPaydayChange, type PaydayChange } from '../lib/salaryLedger'
 import { calculateBonusOnTop } from '../lib/tax'
 import { AttachBonusButton } from '../components/AttachBonusButton'
 import { downloadLedgerBackup, parseLedgerBackupJson } from '../lib/ledgerStorage'
 import { Plus, Trash2, Download, Upload, ChevronDown, ChevronUp, Settings, X, Users, CalendarClock, Info, ArrowUpDown } from 'lucide-react'
-import type { AppDataV2, Category, Loan, PayCycleConfig, Pension, Person, Pot, RecurrenceFrequency, RecurringTemplate, SavingsInterestMethod, SavingsPot, Transaction } from '../types/ledger'
+import type { AppDataV2, Category, Loan, PayCycleConfig, PaySchedule, Pension, Person, Pot, RecurrenceFrequency, RecurringTemplate, SavingsInterestMethod, SavingsPot, Transaction } from '../types/ledger'
 import { nanoid } from 'nanoid'
 import { DeductionModal } from '../components/DeductionModal'
 import { SwipeToDelete } from '../components/SwipeToDelete'
@@ -38,6 +38,7 @@ import {
   pensionScheduleChanged,
   recentAndUpcomingPensionDates,
   type PensionSchedule,
+  pensionOccurrenceAdjusted,
 } from '../lib/pensionLedger'
 import { JointAccountSetupModal } from '../components/JointAccountSetupModal'
 import { RebalanceAccountsModal, type RebalanceTarget } from '../components/RebalanceAccountsModal'
@@ -91,6 +92,7 @@ const STUDENT_LOAN_LABELS: Record<StudentLoanPlan, string> = {
 
 import { addDays, addMonths } from 'date-fns'
 import { todayIso, toLocalIsoDate, parseLocalDate } from '../lib/date'
+import { payPeriodWeeks } from '../lib/payCycle'
 
 function emptySalaryFields() {
   return {
@@ -493,6 +495,7 @@ function PensionRow({
               }}
               onSave={(pausedDates) => onSave(setPausedPensionOccurrences(pension, pauseWindowDates, pausedDates))}
               onSaveAmount={(originalDate, newAmount) => onSave(applyPensionSingleOccurrenceAmountChange(pension, newAmount, originalDate))}
+              isAdjusted={(originalDate) => pensionOccurrenceAdjusted(pension, originalDate)}
             />
           </div>
         )}
@@ -2429,6 +2432,14 @@ function SalaryRowSummary({ person, payCycle, hasSalary }: { person: Person; pay
   if (!payCycle) {
     return <span className="text-sm text-[var(--color-ink-muted)]">Pay cycle not configured</span>
   }
+  // A 4-weekly salary waiting for its pay date has no real next payday yet (PROMPT-08c).
+  if (salaryNeedsPayDate(person, payCycle)) {
+    return (
+      <span className="text-sm" style={{ color: 'var(--color-coral)' }}>
+        {latestSalarySnapshot(person)?.payFrequency === 'monthly' ? 'Set payday' : 'Set next pay date'}
+      </span>
+    )
+  }
   const today = new Date()
   const [nextPayday] = upcomingPaydays(payCycle, today, 1)
   if (!nextPayday) {
@@ -2442,7 +2453,7 @@ function SalaryRowSummary({ person, payCycle, hasSalary }: { person: Person; pay
     )
   }
   const dateIso = toLocalIsoDate(nextPayday)
-  const netPay = computeNetPayForPeriod(person, dateIso)
+  const netPay = computeNetPayForPeriod(person, dateIso, payCycle)
   return (
     <span className="text-sm text-[var(--color-ink-muted)]">
       Next payday {dateIso}
@@ -2794,6 +2805,20 @@ export function Salary() {
                       />
                     ) : payCycle ? (
                       <>
+                        {salaryNeedsPayDate(person, payCycle) && (
+                          <PayScheduleNeededCard
+                            person={person}
+                            payCycle={payCycle}
+                            onSave={(next) => {
+                              // Hand over from the old rule at its next payday, so
+                              // anything already paid stays on the date it was paid.
+                              const picked = upcomingPaydays(payCycle, new Date(), 1)[0]
+                              const pickedIso = picked ? toLocalIsoDate(picked) : null
+                              if (pickedIso && applyPaydayChange(payCycle, person, data.transactions, null, next, pickedIso, todayIso())) changePayday(person.id, next, pickedIso)
+                              else updatePayCycle(person.id, next)
+                            }}
+                          />
+                        )}
                         <PayPeriodsSection
                           person={person}
                           payCycle={payCycle}
@@ -2802,7 +2827,8 @@ export function Salary() {
                           clearSalarySortTarget={clearSalarySortTarget}
                           clearSalarySort={clearSalarySort}
                           onSaveJustThis={(dateIso, fields) => {
-                            const netPay = calculateNetSalary(fields).netPerPeriod
+                            // A 5-week fiscal P13 is priced as 5 weeks here too (PROMPT-08c Part D).
+                            const netPay = calculateNetSalary({ ...fields, periodWeeks: fields.payFrequency === 'four_weekly_fiscal' ? payPeriodWeeks(payCycle, dateIso) : undefined }).netPerPeriod
                             const existing = person.salaryOverrides.find((o) => o.payPeriodDate === dateIso)
                             const reason = 'Salary amended (this payment only)'
                             if (existing) updateSalaryOverride(person.id, existing.id, { netPayOverride: netPay, reason })
@@ -2837,14 +2863,19 @@ export function Salary() {
                                   // A new job's payday takes effect from its own first
                                   // payday; the old job's paid salary stays on the old
                                   // day rather than being re-created on the new one.
-                                  if (payCycleFields.paydayDayOfMonth !== payCycle.paydayDayOfMonth || payCycleFields.paydayAdjustForNonWorkingDay !== payCycle.paydayAdjustForNonWorkingDay) {
+                                  // 2026-09-19 — a switch to or from 4-weekly (or a new 4-weekly pay date) is a payday change too.
+                                  if (
+                                    payCycleFields.paydayDayOfMonth !== payCycle.paydayDayOfMonth ||
+                                    payCycleFields.paydayAdjustForNonWorkingDay !== payCycle.paydayAdjustForNonWorkingDay ||
+                                    JSON.stringify(payCycleFields.paySchedule ?? null) !== JSON.stringify(payCycle.paySchedule ?? null)
+                                  ) {
                                     changePayday(
                                       person.id,
-                                      { paydayDayOfMonth: payCycleFields.paydayDayOfMonth, paydayAdjustForNonWorkingDay: payCycleFields.paydayAdjustForNonWorkingDay },
+                                      { paydayDayOfMonth: payCycleFields.paydayDayOfMonth, paydayAdjustForNonWorkingDay: payCycleFields.paydayAdjustForNonWorkingDay, paySchedule: payCycleFields.paySchedule },
                                       firstPaydayOnOrAfter(payCycle, effectiveFrom),
                                     )
                                   }
-                                  const { paydayDayOfMonth: _day, paydayAdjustForNonWorkingDay: _adjust, ...otherPayCycleFields } = payCycleFields
+                                  const { paydayDayOfMonth: _day, paydayAdjustForNonWorkingDay: _adjust, paySchedule: _schedule, ...otherPayCycleFields } = payCycleFields
                                   updatePayCycle(person.id, otherPayCycleFields)
                                   setStartingNewJobFor(null)
                                 }}
@@ -3269,6 +3300,8 @@ export function Salary() {
               openingBalanceDate={payCycle?.openingBalanceDate ?? todayIso()}
               onSave={(updates) => updatePayCycle(person.id, updates)}
               paydayOccurrences={payCycle && hasSalaryConfigured(person) ? recentAndUpcomingPaydayDates(payCycle, new Date()) : []}
+              paySchedule={payCycle && !salaryNeedsPayDate(person, payCycle) ? payCycle.paySchedule : undefined}
+              nextPayday={payCycle ? upcomingPaydays(payCycle, addDays(new Date(), -1), 1).map((d) => toLocalIsoDate(d))[0] : undefined}
               onChangePayday={(next, pickedDate) => changePayday(person.id, next, pickedDate)}
               onDeleteSalary={() => {
                 removeAllSalaryHistory(person.id)
@@ -3401,6 +3434,87 @@ function EditablePersonName({ name, onRename }: { name: string; onRename: (name:
   )
 }
 
+// ── 4-weekly pay (2026-09-19, PROMPT-08c Parts C and D) ──────────────
+
+const FOUR_WEEKLY_CYCLE_NOTE =
+  'Paid every 4 weeks, so each budgeting cycle runs from one payday to the day before the next. With the box above ticked it starts on the day the money lands.'
+
+/** The "Next pay date" picker a 4-weekly salary uses in place of a day of the month. */
+function NextPayDateField({ value, onChange, error }: { value: string; onChange: (v: string) => void; error: string | null }) {
+  return (
+    <Field label="Next pay date">
+      <input
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none"
+      />
+      {error && (
+        <p className="text-xs mt-1" style={{ color: 'var(--color-coral)' }}>
+          {error}
+        </p>
+      )}
+    </Field>
+  )
+}
+
+const PAID_PHRASE: Record<PayFrequency, string> = {
+  monthly: 'monthly',
+  four_weekly: 'every 4 weeks',
+  four_weekly_fiscal: 'every 4 weeks, with a 5-week P13 in 53-week years',
+}
+
+/**
+ * Shown when a salary's pay frequency and its pay schedule disagree — see
+ * salaryNeedsPayDate. Every 4-weekly salary saved before pay schedules
+ * existed starts here (Ella's in Adam's backup), and so does one whose
+ * frequency is changed later. Its salary isn't added to the ledger until
+ * this is answered: Adam's call was to ask, not guess.
+ */
+function PayScheduleNeededCard({ person, payCycle, onSave }: { person: Person; payCycle: PayCycleConfig; onSave: (next: PaydayChange) => void }) {
+  const frequency = latestSalarySnapshot(person)?.payFrequency ?? 'monthly'
+  const [nextPayDate, setNextPayDate] = useState('')
+  const [paydayDay, setPaydayDay] = useState(String(payCycle.paydayDayOfMonth))
+  const error = frequency === 'monthly' ? (Number(paydayDay) >= 1 && Number(paydayDay) <= 31 ? null : 'Pick a day from 1 to 31.') : nextPayDateProblem(frequency, nextPayDate, todayIso())
+  return (
+    <div className="rounded-xl p-3 mb-3" style={{ background: 'var(--color-bg-elevated)', border: '1px solid var(--color-coral)' }}>
+      <p className="text-sm font-semibold text-[var(--color-ink)]">{frequency === 'monthly' ? `Set ${person.name}'s payday` : `Set ${person.name}'s next pay date`}</p>
+      <p className="text-xs text-[var(--color-ink-muted)] mt-1 mb-2">
+        {person.name}'s salary is paid {PAID_PHRASE[frequency]}, but its pay dates haven't been set for that yet, so it isn't being added to the ledger.
+        {frequency === 'monthly' ? ' Pick the day of the month it arrives.' : ' Pick the next date it arrives; every payday after it follows from there. Salary already paid stays where it is.'}
+      </p>
+      {frequency === 'monthly' ? (
+        <Field label="Payday (day of month)">
+          <NumberInput
+            inputMode="numeric"
+            min={1}
+            max={31}
+            value={paydayDay}
+            onChange={setPaydayDay}
+            className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono"
+          />
+        </Field>
+      ) : (
+        <NextPayDateField value={nextPayDate} onChange={setNextPayDate} error={nextPayDate ? error : null} />
+      )}
+      <button
+        disabled={error !== null}
+        onClick={() =>
+          onSave({
+            paydayDayOfMonth: frequency === 'monthly' ? Number(paydayDay) : payCycle.paydayDayOfMonth,
+            paydayAdjustForNonWorkingDay: payCycle.paydayAdjustForNonWorkingDay,
+            paySchedule: frequency === 'monthly' ? undefined : { kind: frequency, anchorPayDate: nextPayDate },
+          })
+        }
+        className="w-full mt-3 py-2 rounded-full text-xs font-semibold text-white disabled:opacity-40"
+        style={{ background: 'var(--color-coral)' }}
+      >
+        Save
+      </button>
+    </div>
+  )
+}
+
 // ── One-time salary setup — disappears for good once saved, replaced by Pay Periods ──
 
 function SalarySetupForm({
@@ -3426,6 +3540,12 @@ function SalarySetupForm({
   // automatically alongside the person) so there's always a sensible
   // starting point — but all of them are required before saving.
   const [paydayDayOfMonth, setPaydayDayOfMonth] = useState(String(payCycle?.paydayDayOfMonth ?? 28))
+  // 2026-09-19 (PROMPT-08c) — a 4-weekly salary is set up from its next pay
+  // date, not a day of the month (Adam: "this should be a date picker
+  // asking for next pay date").
+  const [nextPayDate, setNextPayDate] = useState('')
+  const isFourWeekly = payFrequency !== 'monthly'
+  const nextPayDateError = isFourWeekly ? nextPayDateProblem(payFrequency, nextPayDate, todayIso()) : null
   const [paydayAdjustForNonWorkingDay, setPaydayAdjustForNonWorkingDay] = useState(payCycle?.paydayAdjustForNonWorkingDay ?? true)
   const [cycleStartDayOfMonth, setCycleStartDayOfMonth] = useState(String(payCycle?.cycleStartDayOfMonth ?? 1))
   const [cycleStartFollowsPayday, setCycleStartFollowsPayday] = useState(payCycle?.cycleStartFollowsPayday ?? false)
@@ -3460,10 +3580,7 @@ function SalarySetupForm({
   const canSave =
     Number(grossAnnual) > 0 &&
     taxCode.trim() &&
-    Number(paydayDayOfMonth) >= 1 &&
-    Number(paydayDayOfMonth) <= 31 &&
-    Number(cycleStartDayOfMonth) >= 1 &&
-    Number(cycleStartDayOfMonth) <= 31 &&
+    (isFourWeekly ? nextPayDateError === null : Number(paydayDayOfMonth) >= 1 && Number(paydayDayOfMonth) <= 31 && Number(cycleStartDayOfMonth) >= 1 && Number(cycleStartDayOfMonth) <= 31) &&
     openingBalance.trim() !== '' &&
     !Number.isNaN(Number(openingBalance)) &&
     openingBalanceDate
@@ -3507,8 +3624,11 @@ function SalarySetupForm({
             onChange={(e) => setPayFrequency(e.target.value as PayFrequency)}
             className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none"
           >
-            <option value="monthly">Monthly (12/yr)</option>
-            <option value="four_weekly">Every 4 weeks (13/yr)</option>
+            {PAY_FREQUENCY_OPTIONS.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Employer pension %">
@@ -3595,29 +3715,37 @@ function SalarySetupForm({
       <div className="mb-4">
         <h3 className="font-body text-sm font-semibold text-[var(--color-ink)] mb-2">Pay cycle</h3>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Payday (day of month)">
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={31}
-              value={paydayDayOfMonth}
-              onChange={(e) => setPaydayDayOfMonth(e.target.value)}
-              className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono"
-            />
-          </Field>
-          <Field label={cycleStartFollowsPayday ? 'Budgeting cycle starts on (following payday)' : 'Budgeting cycle starts on'}>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={31}
-              value={cycleStartDayOfMonth}
-              disabled={cycleStartFollowsPayday}
-              onChange={(e) => setCycleStartDayOfMonth(e.target.value)}
-              className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono disabled:opacity-40"
-            />
-          </Field>
+          {isFourWeekly ? (
+            <div className="col-span-2">
+              <NextPayDateField value={nextPayDate} onChange={setNextPayDate} error={nextPayDate ? nextPayDateError : null} />
+            </div>
+          ) : (
+            <>
+              <Field label="Payday (day of month)">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={31}
+                  value={paydayDayOfMonth}
+                  onChange={(e) => setPaydayDayOfMonth(e.target.value)}
+                  className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono"
+                />
+              </Field>
+              <Field label={cycleStartFollowsPayday ? 'Budgeting cycle starts on (following payday)' : 'Budgeting cycle starts on'}>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={31}
+                  value={cycleStartDayOfMonth}
+                  disabled={cycleStartFollowsPayday}
+                  onChange={(e) => setCycleStartDayOfMonth(e.target.value)}
+                  className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono disabled:opacity-40"
+                />
+              </Field>
+            </>
+          )}
           <Field label="Opening balance (£)">
             <input
               type="number"
@@ -3646,6 +3774,7 @@ function SalarySetupForm({
             Start the budgeting cycle on payday itself, weekend/bank-holiday adjustment included
           </span>
         </label>
+        {isFourWeekly && <p className="text-xs text-[var(--color-ink-faint)] mt-2">{FOUR_WEEKLY_CYCLE_NOTE}</p>}
       </div>
 
       <button
@@ -3663,6 +3792,7 @@ function SalarySetupForm({
             {
               paydayDayOfMonth: Number(paydayDayOfMonth),
               paydayAdjustForNonWorkingDay,
+              paySchedule: isFourWeekly ? { kind: payFrequency, anchorPayDate: nextPayDate } : undefined,
               cycleStartDayOfMonth: Number(cycleStartDayOfMonth),
               cycleStartFollowsPayday,
               openingBalance: Number(openingBalance),
@@ -3696,10 +3826,16 @@ function PayCycleSettingsModal({
   onClose,
   paydayOccurrences,
   onChangePayday,
+  paySchedule,
+  nextPayday,
 }: {
   personName: string
   isPrimary: boolean
   payday: number
+  /** 2026-09-19 (PROMPT-08c) — set for a 4-weekly salary: the modal asks for the next pay date instead of a day of the month. */
+  paySchedule?: PaySchedule
+  /** The current next payday (ISO), shown in the Next pay date picker for a 4-weekly salary. */
+  nextPayday?: string
   adjustForNonWorkingDay: boolean
   cycleStartDay: number
   cycleStartFollowsPayday: boolean
@@ -3709,6 +3845,7 @@ function PayCycleSettingsModal({
   onSave: (updates: {
     paydayDayOfMonth: number
     paydayAdjustForNonWorkingDay: boolean
+    paySchedule?: PaySchedule
     cycleStartDayOfMonth: number
     cycleStartFollowsPayday: boolean
     salarySortBasis: 'payday' | 'budget_cycle'
@@ -3720,7 +3857,7 @@ function PayCycleSettingsModal({
   /** The payday "which payment" picker (recentAndUpcomingPaydayDates). Empty = no salary paid yet, so nothing to move. */
   paydayOccurrences: { date: string; isPast: boolean }[]
   /** A payday change, from a chosen payday — re-dates stored salary rather than duplicating it (lib/scheduleChange.ts). */
-  onChangePayday: (next: { paydayDayOfMonth: number; paydayAdjustForNonWorkingDay: boolean }, pickedDate: string) => void
+  onChangePayday: (next: PaydayChange, pickedDate: string) => void
 }) {
   // 2026-09-16 — set while a payday change waits for "which payday should
   // this start from". Saving it straight onto the pay cycle re-created
@@ -3734,6 +3871,8 @@ function PayCycleSettingsModal({
   // them; Cancel discards the draft and reverts to nothing having
   // changed at all, not just to whatever the fields happened to read.
   const [draftPayday, setDraftPayday] = useState(payday)
+  const [draftNextPayDate, setDraftNextPayDate] = useState(nextPayday ?? '')
+  const nextPayDateError = paySchedule ? nextPayDateProblem(paySchedule.kind, draftNextPayDate, todayIso()) : null
   const [draftAdjust, setDraftAdjust] = useState(adjustForNonWorkingDay)
   const [draftCycleStartDay, setDraftCycleStartDay] = useState(cycleStartDay)
   const [draftCycleFollowsPayday, setDraftCycleFollowsPayday] = useState(cycleStartFollowsPayday)
@@ -3745,6 +3884,7 @@ function PayCycleSettingsModal({
   // when nothing's changed, same rule the new Transfer wizards follow.
   const dirty =
     draftPayday !== payday ||
+    (paySchedule !== undefined && draftNextPayDate !== (nextPayday ?? '')) ||
     draftAdjust !== adjustForNonWorkingDay ||
     draftCycleStartDay !== cycleStartDay ||
     draftCycleFollowsPayday !== cycleStartFollowsPayday ||
@@ -3752,22 +3892,26 @@ function PayCycleSettingsModal({
     (Number(draftOpeningBalance) || 0) !== openingBalance ||
     draftOpeningBalanceDate !== openingBalanceDate
 
-  const paydayChanged = draftPayday !== payday || draftAdjust !== adjustForNonWorkingDay
-  const paydayLabel = (day: number, adjust: boolean) => `The ${day}${ordinalSuffixFor(day)}${adjust ? ', earlier if a weekend/bank holiday' : ''}`
+  const paydayChanged = draftPayday !== payday || draftAdjust !== adjustForNonWorkingDay || (paySchedule !== undefined && draftNextPayDate !== (nextPayday ?? ''))
+  const paydayLabel = (day: number, adjust: boolean, nextDate?: string) =>
+    `${paySchedule ? `Every 4 weeks from ${nextDate}` : `The ${day}${ordinalSuffixFor(day)}`}${adjust ? ', earlier if a weekend/bank holiday' : ''}`
+  // A 4-weekly change is re-anchored on the new next pay date; the schedule's kind comes from the salary's frequency.
+  const draftSchedule: PaySchedule | undefined = paySchedule ? { kind: paySchedule.kind, anchorPayDate: draftNextPayDate } : undefined
 
   function handleSave() {
     if (paydayChanged && paydayOccurrences.length > 0) {
       setChoosingPaydayFrom(true)
       return
     }
-    saveAll(draftPayday, draftAdjust)
+    saveAll(draftPayday, draftAdjust, draftSchedule)
     onClose()
   }
 
-  function saveAll(paydayDayOfMonth: number, paydayAdjustForNonWorkingDay: boolean) {
+  function saveAll(paydayDayOfMonth: number, paydayAdjustForNonWorkingDay: boolean, schedule: PaySchedule | undefined) {
     onSave({
       paydayDayOfMonth,
       paydayAdjustForNonWorkingDay,
+      paySchedule: schedule,
       cycleStartDayOfMonth: draftCycleStartDay,
       cycleStartFollowsPayday: draftCycleFollowsPayday,
       salarySortBasis: draftSalarySortBasis,
@@ -3780,15 +3924,15 @@ function PayCycleSettingsModal({
     return (
       <EffectiveDatedChangeFlow
         occurrences={paydayOccurrences}
-        dateStepDescription={`${personName}'s payday is changing from ${paydayLabel(payday, adjustForNonWorkingDay).toLowerCase()} to ${paydayLabel(draftPayday, draftAdjust).toLowerCase()}. Which payday should this start from? Every payday before it stays as it was.`}
-        buildChanges={() => [{ label: 'Payday', from: paydayLabel(payday, adjustForNonWorkingDay), to: paydayLabel(draftPayday, draftAdjust) }]}
+        dateStepDescription={`${personName}'s payday is changing from ${paydayLabel(payday, adjustForNonWorkingDay, nextPayday).toLowerCase()} to ${paydayLabel(draftPayday, draftAdjust, draftNextPayDate).toLowerCase()}. Which payday should this start from? Every payday before it stays as it was.`}
+        buildChanges={() => [{ label: 'Payday', from: paydayLabel(payday, adjustForNonWorkingDay, nextPayday), to: paydayLabel(draftPayday, draftAdjust, draftNextPayDate) }]}
         affectsClearedBalance={(effectiveFrom) => effectiveFrom <= todayIso()}
         onCancelAll={onClose}
         onCommit={(effectiveFrom) => {
           // Everything else first, keeping the current payday; the payday
           // change then re-dates stored salary from the chosen payday.
-          saveAll(payday, adjustForNonWorkingDay)
-          onChangePayday({ paydayDayOfMonth: draftPayday, paydayAdjustForNonWorkingDay: draftAdjust }, effectiveFrom)
+          saveAll(payday, adjustForNonWorkingDay, paySchedule)
+          onChangePayday({ paydayDayOfMonth: draftPayday, paydayAdjustForNonWorkingDay: draftAdjust, paySchedule: draftSchedule }, effectiveFrom)
           onClose()
         }}
       />
@@ -3811,27 +3955,35 @@ function PayCycleSettingsModal({
         <p className="text-xs text-[var(--color-ink-faint)] mb-4">Set once, rarely touched again.</p>
 
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Payday (day of month)">
-            <NumberInput
-              inputMode="numeric"
-              min={1}
-              max={31}
-              value={draftPayday}
-              onChange={(v) => setDraftPayday(Math.max(1, Math.min(31, Number(v) || 1)))}
-              className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono"
-            />
-          </Field>
-          <Field label={draftCycleFollowsPayday ? 'Budgeting cycle starts on (following payday)' : 'Budgeting cycle starts on'}>
-            <NumberInput
-              inputMode="numeric"
-              min={1}
-              max={31}
-              value={draftCycleStartDay}
-              disabled={draftCycleFollowsPayday}
-              onChange={(v) => setDraftCycleStartDay(Math.max(1, Math.min(31, Number(v) || 1)))}
-              className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono disabled:opacity-40"
-            />
-          </Field>
+          {paySchedule ? (
+            <div className="col-span-2">
+              <NextPayDateField value={draftNextPayDate} onChange={setDraftNextPayDate} error={draftNextPayDate !== (nextPayday ?? '') ? nextPayDateError : null} />
+            </div>
+          ) : (
+            <>
+              <Field label="Payday (day of month)">
+                <NumberInput
+                  inputMode="numeric"
+                  min={1}
+                  max={31}
+                  value={draftPayday}
+                  onChange={(v) => setDraftPayday(Math.max(1, Math.min(31, Number(v) || 1)))}
+                  className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono"
+                />
+              </Field>
+              <Field label={draftCycleFollowsPayday ? 'Budgeting cycle starts on (following payday)' : 'Budgeting cycle starts on'}>
+                <NumberInput
+                  inputMode="numeric"
+                  min={1}
+                  max={31}
+                  value={draftCycleStartDay}
+                  disabled={draftCycleFollowsPayday}
+                  onChange={(v) => setDraftCycleStartDay(Math.max(1, Math.min(31, Number(v) || 1)))}
+                  className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono disabled:opacity-40"
+                />
+              </Field>
+            </>
+          )}
           <Field label="Opening balance (£)">
             <input
               type="number"
@@ -3863,7 +4015,9 @@ function PayCycleSettingsModal({
           </span>
         </label>
         <p className="text-xs text-[var(--color-ink-faint)] mt-2">
-          {draftCycleFollowsPayday ? (
+          {paySchedule ? (
+            FOUR_WEEKLY_CYCLE_NOTE
+          ) : draftCycleFollowsPayday ? (
             <>
               Each cycle now runs from one payday to the day before the next, so a payday that shifts earlier takes its
               cycle boundary with it. The day above is kept but unused — untick to go back to it.
@@ -3890,7 +4044,7 @@ function PayCycleSettingsModal({
           </div>
         )}
 
-        <FormButtonRow onCancel={onClose} onSave={handleSave} saveDisabled={!dirty} />
+        <FormButtonRow onCancel={onClose} onSave={handleSave} saveDisabled={!dirty || (draftNextPayDate !== (nextPayday ?? '') && nextPayDateError !== null)} />
 
         <div className="mt-6 pt-4 border-t" style={{ borderColor: 'var(--color-track)' }}>
           <button onClick={() => setConfirmingDelete(true)} className="w-full text-center py-2 text-xs font-medium text-[var(--color-ink-faint)]">
@@ -3963,12 +4117,13 @@ function PayPeriodsSection({
   // is a synthetic calendar projection for editing, not the real
   // Transaction ledger, so removing a date here never touches an
   // already-materialized/cleared transaction elsewhere in the app.
-  const upcoming = upcomingPaydays(payCycle, today, 1 + THREE_CYCLES_AHEAD)
+  // Nothing upcoming until a 4-weekly salary's pay date is set: the card above asks for it (PROMPT-08c).
+  const upcoming = (salaryNeedsPayDate(person, payCycle) ? [] : upcomingPaydays(payCycle, today, 1 + THREE_CYCLES_AHEAD))
     .map(toLocalIsoDate)
-    .filter((d) => computeNetPayForPeriod(person, d) !== null)
+    .filter((d) => computeNetPayForPeriod(person, d, payCycle) !== null)
   const closed = closedPaydays(payCycle, today, 6)
     .map(toLocalIsoDate)
-    .filter((d) => computeNetPayForPeriod(person, d) !== null)
+    .filter((d) => computeNetPayForPeriod(person, d, payCycle) !== null)
   // REDESIGN (Adam-specified, 2026-09-02): History used to also include
   // the most-recent payment — the same row shown twice, once prominently
   // above Upcoming, once again inside History. Now History is
@@ -4116,7 +4271,10 @@ function PayPeriodRow({
   editingDeduction: { personId: string; deductionId: string } | null
   setEditingDeduction: (v: { personId: string; deductionId: string } | null) => void
 }) {
-  const netPay = computeNetPayForPeriod(person, dateIso)
+  const personPayCycle = data.payCycles.find((pc) => pc.personId === person.id)
+  const netPay = computeNetPayForPeriod(person, dateIso, personPayCycle)
+  // 2026-09-19 (PROMPT-08c Part D) — P13 of a 53-week fiscal year is paid for 5 weeks; say so on the row.
+  const isFiveWeekPeriod = findApplicableSnapshot(person, dateIso)?.payFrequency === 'four_weekly_fiscal' && personPayCycle !== undefined && payPeriodWeeks(personPayCycle, dateIso) === 5
   const existingOverride = person.salaryOverrides.find((o) => o.payPeriodDate === dateIso)
   const [sortOpen, setSortOpen] = useState(false)
   // Batch 9 (2026-09-07, Bug 11) — Salary Sort / Bonus / Override-net-pay
@@ -4150,6 +4308,7 @@ function PayPeriodRow({
             {dateIso}
             {existingOverride?.bonusGrossAmount && <span className="text-xs text-[var(--color-coral)]"> · Bonus attached</span>}
             {existingOverride && !existingOverride.bonusGrossAmount && <span className="text-xs text-[var(--color-coral)]"> · Adjusted</span>}
+            {isFiveWeekPeriod && <span className="text-xs text-[var(--color-ink-muted)]"> · 5-week period</span>}
           </span>
           <span className="font-mono text-sm text-[var(--color-ink)]">£{formatCurrency(netPay ?? 0)}</span>
         </button>
@@ -4494,8 +4653,8 @@ function PeriodEditor({
     if (draft.payFrequency !== snapshotFields.payFrequency) {
       changes.push({
         label: 'Paid',
-        from: snapshotFields.payFrequency === 'four_weekly' ? 'Every 4 weeks (13/yr)' : 'Monthly (12/yr)',
-        to: draft.payFrequency === 'four_weekly' ? 'Every 4 weeks (13/yr)' : 'Monthly (12/yr)',
+        from: payFrequencyLabel(snapshotFields.payFrequency),
+        to: payFrequencyLabel(draft.payFrequency),
       })
     }
     if (draft.employerPensionPercent !== snapshotFields.employerPensionPercent) {
@@ -4507,7 +4666,7 @@ function PeriodEditor({
     return changes
   }
   const breakdown = calculateNetSalary(fullDraft)
-  const periodLabel = draft.payFrequency === 'four_weekly' ? 'every 4 weeks' : 'monthly'
+  const periodLabel = draft.payFrequency === 'monthly' ? 'monthly' : 'every 4 weeks'
 
   // Any bonus attached to THIS period, folded into the breakdown below.
   // Deliberately computed against the live `fullDraft` rather than the
@@ -4586,8 +4745,11 @@ function PeriodEditor({
             onChange={(e) => setDraft({ ...draft, payFrequency: e.target.value as PayFrequency })}
             className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none"
           >
-            <option value="monthly">Monthly (12/yr)</option>
-            <option value="four_weekly">Every 4 weeks (13/yr)</option>
+            {PAY_FREQUENCY_OPTIONS.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Employer pension %">
