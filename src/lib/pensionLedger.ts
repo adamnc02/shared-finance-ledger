@@ -14,7 +14,7 @@
 import { addMonths, addQuarters, addWeeks, addYears, addDays, startOfDay } from 'date-fns'
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
 import { adjustToWorkingDay, cycleBoundsForDate } from './payCycle'
-import { earlyMoveLookaheadDays } from './occurrenceOverrides'
+import { earlyMoveLookaheadDays, isOccurrenceAdjusted } from './occurrenceOverrides'
 import { INCOME_CATEGORY_ID } from '../types/ledger'
 import type { AppDataV2, PayCycleConfig, Pension, RecurrenceFrequency, RecurringOccurrenceOverride, Transaction } from '../types/ledger'
 import { planReschedule, recentAndUpcomingFrom, redateStoredPayments, type ScheduleOccurrence } from './scheduleChange'
@@ -78,6 +78,15 @@ export function resolvePensionOccurrenceAmount(pension: Pension, originalDate: s
   const override = pension.occurrenceOverrides?.find((o) => o.originalDate === originalDate)
   if (override?.amount !== undefined) return override.amount
   return resolvePensionAmount(pension, originalDate)
+}
+
+/** Whether this payment shows the "Adjusted" badge — see isOccurrenceAdjusted. The natural date already carries the working-day adjustment, so a weekend shift is never "adjusted". */
+export function pensionOccurrenceAdjusted(pension: Pension, originalDate: string): boolean {
+  const override = pension.occurrenceOverrides?.find((o) => o.originalDate === originalDate)
+  if (!override || override.deleted) return false
+  const naturalDate = pension.adjustForNonWorkingDay ? toIso(adjustToWorkingDay(parseLocalDate(originalDate))) : originalDate
+  const natural = { date: naturalDate, amount: resolvePensionAmount(pension, originalDate) }
+  return isOccurrenceAdjusted({ date: override.date ?? naturalDate, amount: override.amount ?? natural.amount }, natural)
 }
 
 export interface RawPensionOccurrence {

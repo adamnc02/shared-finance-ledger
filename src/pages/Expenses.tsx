@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { formatCurrency, formatFullDate, formatMonthYear } from '../lib/format'
-import { Plus, Trash2, X, ChevronDown, ChevronUp, ArrowRight, ArrowLeftRight } from 'lucide-react'
+import { Plus, X, ChevronDown, ChevronUp, ArrowRight, ArrowLeftRight } from 'lucide-react'
 import { useLedgerData } from '../context/LedgerContext'
 import { EditField } from '../components/EditField'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { SwipeToDelete } from '../components/SwipeToDelete'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
-import { schedulePreviewWindow, scheduledDepositDates, depositOccurrencePreviews, setPausedDeposits, resolveSavingsPotDepositOccurrenceAmount, applySavingsPotSingleDepositAmountChange } from '../lib/savingsPotLedger'
-import { schedulePotPreviewWindow, scheduledPotDepositDates, potDepositOccurrencePreviews, setPausedPotDeposits, resolvePotDepositOccurrenceAmount, applyPotSingleDepositAmountChange } from '../lib/potLedger'
+import { schedulePreviewWindow, scheduledDepositDates, depositOccurrencePreviews, setPausedDeposits, resolveSavingsPotDepositOccurrenceAmount, applySavingsPotSingleDepositAmountChange, savingsPotDepositOccurrenceAdjusted } from '../lib/savingsPotLedger'
+import { schedulePotPreviewWindow, scheduledPotDepositDates, potDepositOccurrencePreviews, setPausedPotDeposits, resolvePotDepositOccurrenceAmount, applyPotSingleDepositAmountChange, potDepositOccurrenceAdjusted } from '../lib/potLedger'
 import { FormButtonRow } from '../components/FormButtons'
 import { useSavedFlash, SavedFlashOverlay } from '../components/SavedFlash'
 import { visibleCategoriesFor, seededCategoryIdForIcon } from '../lib/categories'
@@ -26,9 +26,9 @@ import {
   generateTransactionsForTemplate,
   describeSchedule,
   scheduleDiffers,
-  type RawOccurrence,
   type TemplateSchedule,
   occurrenceSlotForDate,
+  templateOccurrenceAdjusted,
 } from '../lib/schedule'
 import { transferLocationLabel, buildTransferLocationOptions, transferLocationKey, locationsEqual, type TransferLocationOption } from '../lib/transferLedger'
 import { LocationStep, FrequencyStep, DateStep, TransferFrequencySelect, TRANSFER_FREQUENCY_LABELS, type TransferFrequencyChoice, resolveTransferFrequencyChoice, transferFrequencyChoiceFor } from '../components/TransferSteps'
@@ -50,6 +50,7 @@ import {
   applyRecurringOverpaymentAmountChange,
   applyRecurringOverpaymentSingleAmountOverride,
   resolveRecurringOverpaymentAmount,
+  recurringOverpaymentOccurrenceAdjusted,
 } from '../lib/ledgerLoans'
 
 const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
@@ -2605,6 +2606,7 @@ function LoanRecurringOverpaymentEditForm({
           const periodDate = periodDateFor(realDate)
           onSave({ ...value, ...applyRecurringOverpaymentSingleAmountOverride(value, { type: 'fixed', amount: newAmount }, periodDate) })
         }}
+        isAdjusted={(realDate) => recurringOverpaymentOccurrenceAdjusted(value, periodDateFor(realDate))}
       />
     </div>
   )
@@ -3072,6 +3074,7 @@ function TransferRecurringRow({
               onSave={(pausedDates) => onUpdate(setPausedTemplateOccurrences(template, [...windowOriginalDates], pausedDates))}
               onSaveAmount={(originalDate, newAmount) => onUpdate(applyTemplateSingleOccurrenceAmountChange(template, newAmount, originalDate))}
               onSaveDate={(originalDate, newDate) => onUpdate(applyTemplateSingleOccurrenceDateChange(template, newDate, originalDate))}
+              isAdjusted={(originalDate) => templateOccurrenceAdjusted(template, originalDate, payCycle)}
             />
           </div>
         )}
@@ -3531,70 +3534,6 @@ function RecurringTransactionEditPanel({
   )
 }
 
-/**
- * One row inside the "next 12 upcoming" panel — tap to reveal an
- * amount/date editor for THIS occurrence only (writes an
- * occurrenceOverrides entry keyed by originalDate, overriding the
- * template's frequency-derived date/amount for that single slot), or hit
- * the trash icon to delete/skip it outright. Mirrors Salary.tsx's
- * PayPeriodRow — same "tappable pill, editor revealed below" shape.
- */
-function OccurrenceRow({
-  occurrence,
-  onSaveOverride,
-  onDeleteOccurrence,
-}: {
-  occurrence: RawOccurrence
-  onSaveOverride: (amount: number, date: string) => void
-  onDeleteOccurrence: () => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [amount, setAmount] = useState(String(occurrence.amount))
-  const [date, setDate] = useState(occurrence.date)
-  // Batch 9 (2026-09-07, Bug 11) — this always edits an EXISTING occurrence
-  // of an already-configured recurring transaction, so "updated" is
-  // always the right wording.
-  const { active: flashActive, trigger: triggerFlash } = useSavedFlash('Transaction updated.')
-  const isAdjusted = occurrence.date !== occurrence.originalDate
-
-  return (
-    <div className="relative rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-elevated)' }}>
-      <div className="w-full flex items-center gap-2 px-3 py-2.5">
-        <button onClick={() => setOpen(!open)} className="flex-1 flex items-center justify-between text-left min-w-0">
-          <span className="text-sm text-[var(--color-ink)]">
-            {occurrence.date}
-            {isAdjusted && <span className="text-xs text-[var(--color-coral)]"> · Adjusted</span>}
-          </span>
-          <span className="font-mono text-sm text-[var(--color-ink)]">£{formatCurrency(occurrence.amount)}</span>
-        </button>
-        <span role="button" onClick={onDeleteOccurrence} className="text-[var(--color-ink-faint)] shrink-0">
-          <Trash2 size={15} />
-        </span>
-      </div>
-      {open && (
-        <div className="px-3 pb-3 pt-1 flex flex-col gap-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
-          <div className="grid grid-cols-2 gap-3">
-            <EditField label="Amount (£)" type="number" value={amount} onChange={setAmount} />
-            <EditField label="Date" type="date" value={date} onChange={setDate} />
-          </div>
-          <button
-            onClick={() => {
-              onSaveOverride(Number(amount), date)
-              triggerFlash()
-              setOpen(false)
-            }}
-            className="w-full py-2 rounded-full text-xs font-semibold text-white"
-            style={{ background: 'var(--color-coral)' }}
-          >
-            Save this payment
-          </button>
-        </div>
-      )}
-      <SavedFlashOverlay active={flashActive} message="Transaction updated." />
-    </div>
-  )
-}
-
 function RecurringTransactionRow({
   template,
   categories,
@@ -3627,20 +3566,16 @@ function RecurringTransactionRow({
   }, [])
   const isIncome = template.recurringTransactionType === 'income'
 
-  // Next 12 upcoming occurrences, freshly recomputed on every render so a
-  // per-occurrence edit/delete just made is immediately reflected here —
-  // there's no separate materialized list to keep in sync with.
-  const upcoming = open ? templateOccurrencePreviews(template, new Date(), 12) : []
-
-  function saveOccurrenceOverride(originalDate: string, amount: number, date: string) {
-    const next = [...(template.occurrenceOverrides ?? []).filter((o) => o.originalDate !== originalDate), { originalDate, amount, date }]
-    onUpdate({ occurrenceOverrides: next })
-  }
-
-  function deleteOccurrence(originalDate: string) {
-    const next = [...(template.occurrenceOverrides ?? []).filter((o) => o.originalDate !== originalDate), { originalDate, deleted: true }]
-    onUpdate({ occurrenceOverrides: next })
-  }
+  // 2026-09-19 (PROMPT-08c Part A, Adam-specified) — "Manage upcoming
+  // payments" here is now the same shared PausedOccurrencesControl, with
+  // the same -2/+12 month window, as recurring transfers. It used to be a
+  // separate "Next 12 upcoming" list whose rows opened an Amount + Date
+  // form and had a trash icon. The trash wrote the same `deleted` override
+  // that Pause writes, so nothing is lost, and a pause can now be undone.
+  // A recurring transaction has no payday resolution, so no payCycle.
+  const windowDates = open ? scheduledTemplateDates(template, addMonths(new Date(), -2), addMonths(new Date(), 12)) : []
+  const windowOriginalDates = new Set(windowDates.map((w) => w.originalDate))
+  const currentlyPaused = new Set((template.occurrenceOverrides ?? []).filter((o) => o.deleted && windowOriginalDates.has(o.originalDate)).map((o) => o.originalDate))
 
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={template.name}>
@@ -3683,24 +3618,20 @@ function RecurringTransactionRow({
               onCancel={() => setOpen(false)}
             />
 
-            <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
-              <h4 className="text-xs font-semibold text-[var(--color-ink)] mb-2">Next 12 upcoming</h4>
-              <div className="flex flex-col gap-2">
-                {upcoming.map((occ) => (
-                  <OccurrenceRow
-                    key={occ.originalDate}
-                    occurrence={occ}
-                    onSaveOverride={(amount, date) => saveOccurrenceOverride(occ.originalDate, amount, date)}
-                    onDeleteOccurrence={() => deleteOccurrence(occ.originalDate)}
-                  />
-                ))}
-                {upcoming.length === 0 && (
-                  <p className="text-xs text-[var(--color-ink-faint)] text-center py-3">
-                    No upcoming payments — check the frequency and due date, or whether this recurring transaction is paused.
-                  </p>
-                )}
-              </div>
-            </div>
+            <PausedOccurrencesControl
+              windowDates={windowDates}
+              currentlyPaused={currentlyPaused}
+              amountForDate={(date) => resolveOccurrenceAmount(template, date)}
+              itemLabel="payments"
+              nextPaymentPreview={(tentative) => {
+                const previewTemplate: RecurringTemplate = { ...template, ...setPausedTemplateOccurrences(template, [...windowOriginalDates], tentative) }
+                return templateOccurrencePreviews(previewTemplate, new Date(), 1)[0]?.date ?? null
+              }}
+              onSave={(pausedDates) => onUpdate(setPausedTemplateOccurrences(template, [...windowOriginalDates], pausedDates))}
+              onSaveAmount={(originalDate, newAmount) => onUpdate(applyTemplateSingleOccurrenceAmountChange(template, newAmount, originalDate))}
+              onSaveDate={(originalDate, newDate) => onUpdate(applyTemplateSingleOccurrenceDateChange(template, newDate, originalDate))}
+              isAdjusted={(originalDate) => templateOccurrenceAdjusted(template, originalDate)}
+            />
           </>
         )}
 
@@ -3774,6 +3705,7 @@ function SavingsRecurringDepositRow({ pot, onSave }: { pot: SavingsPot; onSave: 
             }}
             onSave={(pausedDates) => onSave(setPausedDeposits(pot, windowDates, pausedDates))}
             onSaveAmount={(originalDate, newAmount) => onSave(applySavingsPotSingleDepositAmountChange(pot, newAmount, originalDate))}
+            isAdjusted={(originalDate) => savingsPotDepositOccurrenceAdjusted(pot, originalDate)}
           />
         </div>
       )}
@@ -3842,6 +3774,7 @@ function PotRecurringDepositRow({ pot, onSave }: { pot: Pot; onSave: (updates: P
             }}
             onSave={(pausedDates) => onSave(setPausedPotDeposits(pot, windowDates, pausedDates))}
             onSaveAmount={(originalDate, newAmount) => onSave(applyPotSingleDepositAmountChange(pot, newAmount, originalDate))}
+            isAdjusted={(originalDate) => potDepositOccurrenceAdjusted(pot, originalDate)}
           />
         </div>
       )}

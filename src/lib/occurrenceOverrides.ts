@@ -32,3 +32,22 @@ export function earlyMoveLookaheadDays(overrides: RecurringOccurrenceOverride[] 
   }
   return days
 }
+
+/**
+ * 2026-09-19 (PROMPT-08c Part A, Adam-specified) — the one rule behind the
+ * "· Adjusted" badge on every "Manage upcoming payments" row: a payment is
+ * adjusted when its date OR its amount differs from what its schedule
+ * alone would produce. The badge used to exist only on recurring
+ * transactions, and only noticed a moved date.
+ *
+ * Compares the RESULT, not the presence of an override, so an override
+ * that sets the amount back to the standing figure shows no badge. Amounts
+ * are compared to the penny. Each schedule's own wrapper (schedule.ts,
+ * pensionLedger.ts, potLedger.ts, savingsPotLedger.ts, ledgerLoans.ts)
+ * works out `natural`, because each has its own rules for that (payday
+ * resolution, working-day adjustment, amount history). A paused
+ * (deleted) occurrence is never "adjusted"; it has its own badge.
+ */
+export function isOccurrenceAdjusted(actual: { date: string; amount: number }, natural: { date: string; amount: number }): boolean {
+  return actual.date !== natural.date || Math.round(actual.amount * 100) !== Math.round(natural.amount * 100)
+}

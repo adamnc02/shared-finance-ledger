@@ -38,6 +38,7 @@ import {
   pensionScheduleChanged,
   recentAndUpcomingPensionDates,
   type PensionSchedule,
+  pensionOccurrenceAdjusted,
 } from '../lib/pensionLedger'
 import { JointAccountSetupModal } from '../components/JointAccountSetupModal'
 import { RebalanceAccountsModal, type RebalanceTarget } from '../components/RebalanceAccountsModal'
@@ -493,6 +494,7 @@ function PensionRow({
               }}
               onSave={(pausedDates) => onSave(setPausedPensionOccurrences(pension, pauseWindowDates, pausedDates))}
               onSaveAmount={(originalDate, newAmount) => onSave(applyPensionSingleOccurrenceAmountChange(pension, newAmount, originalDate))}
+              isAdjusted={(originalDate) => pensionOccurrenceAdjusted(pension, originalDate)}
             />
           </div>
         )}

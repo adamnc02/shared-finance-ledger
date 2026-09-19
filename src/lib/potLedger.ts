@@ -19,7 +19,7 @@
 
 import { addDays, addMonths } from 'date-fns'
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
-import { earlyMoveLookaheadDays } from './occurrenceOverrides'
+import { earlyMoveLookaheadDays, isOccurrenceAdjusted } from './occurrenceOverrides'
 import { generateTransactionsForTemplate } from './schedule'
 import { generateLoanPaymentTransactions } from './ledgerLoans'
 import { generateMinimumPaymentTransactions } from './creditCards'
@@ -203,6 +203,14 @@ export function resolvePotDepositOccurrenceAmount(pot: Pot, originalDate: string
   const override = pot.recurringDepositOverrides?.find((o) => o.originalDate === originalDate)
   if (override?.amount !== undefined) return override.amount
   return pot.recurringDepositAmount ?? 0
+}
+
+/** Whether this deposit shows the "Adjusted" badge — see isOccurrenceAdjusted. */
+export function potDepositOccurrenceAdjusted(pot: Pot, originalDate: string): boolean {
+  const override = pot.recurringDepositOverrides?.find((o) => o.originalDate === originalDate)
+  if (!override || override.deleted) return false
+  const natural = { date: originalDate, amount: pot.recurringDepositAmount ?? 0 }
+  return isOccurrenceAdjusted({ date: override.date ?? originalDate, amount: override.amount ?? natural.amount }, natural)
 }
 
 /**

@@ -29,6 +29,7 @@ import {
   setPausedTemplateOccurrences,
   resolveOccurrenceAmount,
   templateOccurrencePreviews,
+  templateOccurrenceAdjusted,
   occurrenceSlotForDate,
 } from '../lib/schedule'
 import { addMonths } from 'date-fns'
@@ -833,6 +834,7 @@ function BillEditPanel({
           // walkOccurrences/generateTransactionsForTemplate already pick
           // it up identically regardless of which template kind wrote it.
           onSaveDate={(originalDate, newDate) => onSave(applyTemplateSingleOccurrenceDateChange(template, newDate, originalDate))}
+          isAdjusted={(originalDate) => templateOccurrenceAdjusted(template, originalDate)}
         />
       </div>
 
