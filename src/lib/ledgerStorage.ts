@@ -8,6 +8,7 @@ import { nanoid } from 'nanoid'
 import { SHARED_CARD_COLORS, type AppDataV2, type CreditCard, type PayCycleConfig, type Person, type Transaction } from '../types/ledger'
 import { defaultCategories } from './categories'
 import { reconcilePersonReferences } from './household'
+import { salarySortPersonId } from './salarySortLedger'
 import { monthlyInterestRate } from './creditCards'
 import { toLocalIsoDate } from './date'
 
@@ -145,7 +146,12 @@ export function migrateLedgerData(data: AppDataV2): AppDataV2 {
     // (2026-09) — defaults to no sorts ever having been done, same as a
     // brand-new household. See SalarySort's own comment in
     // types/ledger.ts.
-    salarySorts: data.salarySorts ?? [],
+    // PROMPT-11 (2026-09-19): sorts gained a `personId`. A record saved before that is attributed
+    // to the owner of the transfers it created (the same answer it would have had), so a shared
+    // household never reads one partner's sort as the other's.
+    salarySorts: (data.salarySorts ?? []).map((s) =>
+      s.personId ? s : { ...s, personId: salarySortPersonId(s, data.transactions ?? [], data.primaryPersonId) },
+    ),
     scenarios: data.scenarios ?? [],
     // Absent on any backup persisted before the joint-account feature —
     // defaults to null (not yet set up), same as a brand-new household.

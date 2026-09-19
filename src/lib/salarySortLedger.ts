@@ -15,7 +15,7 @@ import { generateLoanPaymentTransactions } from './ledgerLoans'
 import { generateMinimumPaymentTransactions } from './creditCards'
 import { generateJointContributionTransactions } from './jointLedger'
 import { potBillsAndLoans } from './potLedger'
-import { locationsEqual } from './transferLedger'
+import { locationsEqual, transferLocationKey } from './transferLedger'
 import type { AppDataV2, PayCycleConfig, Pot, RecurringTemplate, SavingsPot, Transaction, TransferLocation } from '../types/ledger'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -100,10 +100,36 @@ export function dueAmountForLocation(data: AppDataV2, location: TransferLocation
   return 0 // 'savings' — no bill/loan linkage, and 'personal' is never a valid destination
 }
 
+// ── Deterministic Salary Sort ids (PROMPT-11, 2026-09-19) ──────────────
+// A sort, its targets and their transfer transactions all derive their ids from the person and the
+// payday, so two devices that sort the same payday before either has synced write the SAME rows
+// and the upsert merges them — instead of two sorts, two targets and two real transfers, which
+// would double the money moved (the same rule auto-cleared payments follow: MIGRATION-LESSONS §36).
+// Records created before this keep their nanoid ids; nothing reads the shape.
+export const salarySortId = (personId: string, payDate: string): string => `sort:${personId}:${payDate}`
+export const salarySortTargetId = (sortId: string, to: TransferLocation): string => `${sortId}:${transferLocationKey(to)}`
+export const salarySortTransactionId = (targetId: string): string => `${targetId}:tx`
+
+/**
+ * Whose sort this is. A record saved before sorts carried a person (PROMPT-11) is attributed to the
+ * owner of the transfers it created, falling back to the primary person — the same answer the sort
+ * would have had, since the Salary page only ever offers sorting for whoever the device is "me".
+ */
+export function salarySortPersonId(sort: { personId?: string; targets: { transactionId: string }[] }, transactions: Pick<Transaction, 'id' | 'ownerId'>[], fallbackPersonId: string): string {
+  if (sort.personId) return sort.personId
+  for (const target of sort.targets) {
+    const owner = transactions.find((t) => t.id === target.transactionId)?.ownerId
+    if (owner) return owner
+  }
+  return fallbackPersonId
+}
+
 /** This destination's amount on the most recent PRIOR salary sort (strictly before `beforePayDate`) — null if it's never been sorted to before. */
-export function lastSortedAmountFor(data: AppDataV2, location: TransferLocation, beforePayDate: string): number | null {
+export function lastSortedAmountFor(data: AppDataV2, location: TransferLocation, beforePayDate: string, personId: string = data.primaryPersonId): number | null {
   const priorSorts = (data.salarySorts ?? [])
-    .filter((s) => s.payDate < beforePayDate)
+    // Scoped to one person (PROMPT-11): otherwise the prefill for your payday could come from your
+    // partner's sort of theirs.
+    .filter((s) => s.payDate < beforePayDate && s.personId === personId)
     .sort((a, b) => b.payDate.localeCompare(a.payDate))
   for (const sort of priorSorts) {
     const match = sort.targets.find((t) => locationsEqual(t.to, location))
@@ -177,11 +203,11 @@ export interface SalarySortConflict {
  * followsPayday/followsCycleStart, none of which this function needs to
  * know about itself.
  */
-export function findSalarySortConflicts(data: AppDataV2, location: TransferLocation, dates: string[]): SalarySortConflict[] {
+export function findSalarySortConflicts(data: AppDataV2, location: TransferLocation, dates: string[], personId: string = data.primaryPersonId): SalarySortConflict[] {
   const dateSet = new Set(dates)
   const conflicts: SalarySortConflict[] = []
   for (const sort of data.salarySorts ?? []) {
-    if (!dateSet.has(sort.payDate)) continue
+    if (!dateSet.has(sort.payDate) || sort.personId !== personId) continue
     for (const target of sort.targets) {
       if (locationsEqual(target.to, location)) conflicts.push({ payDate: sort.payDate, amount: target.amount })
     }

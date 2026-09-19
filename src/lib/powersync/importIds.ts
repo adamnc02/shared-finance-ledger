@@ -19,10 +19,13 @@
 // primaryPersonId, and anything added later. verify-import-regenerates-ids.ts
 // proves it by mapping the result back and comparing it with the original.
 //
-// The one composite id: an auto-cleared payment is 'auto:<dedupeKey>' and
-// the key contains the source's id (§36). It is re-derived from the
-// remapped transaction, so it stays deterministic (two devices clearing the
-// same payment still write one row) and differs between two households.
+// Composite ids are re-derived, not just remapped, so they keep meaning what
+// they say and stay deterministic across two devices (§36):
+//   - an auto-cleared payment is 'auto:<dedupeKey>', and the key contains the
+//     source's id;
+//   - a Salary Sort, its targets and their transfers are
+//     'sort:<personId>:<payDate>[:<destination>[:tx]]' (PROMPT-11).
+// Both differ between two households once the ids inside them do.
 //
 // Pure: no PowerSync or Supabase import (runs in Node).
 
@@ -30,11 +33,13 @@ import { nanoid } from 'nanoid'
 import type { AppDataV2, Transaction } from '../../types/ledger'
 import { defaultCategories } from '../categories'
 import { dedupeKey } from '../projection'
+import { salarySortId, salarySortTargetId, salarySortTransactionId } from '../salarySortLedger'
 
 /** The app's 35 fixed category ids, kept as they are. */
 export const FIXED_CATEGORY_IDS: ReadonlySet<string> = new Set(defaultCategories().map((c) => c.id))
 
 const AUTO_PREFIX = 'auto:'
+const SORT_PREFIX = 'sort:'
 
 /** Every `id` of every object anywhere in `data` (dedupeKey-derived auto ids excluded). */
 function collectIds(value: unknown, out: Set<string>) {
@@ -67,6 +72,23 @@ function rederiveAutoIds(transactions: Transaction[], newId: () => string): Tran
   })
 }
 
+/** Salary Sort ids follow the (remapped) person and payday, and their targets and transfers follow them. */
+function rederiveSalarySortIds(data: AppDataV2): AppDataV2 {
+  const map = new Map<string, string>()
+  for (const sort of data.salarySorts) {
+    if (!sort.id.startsWith(SORT_PREFIX)) continue
+    const id = salarySortId(sort.personId, sort.payDate)
+    if (id !== sort.id) map.set(sort.id, id)
+    for (const target of sort.targets) {
+      const targetId = salarySortTargetId(id, target.to)
+      if (targetId !== target.id) map.set(target.id, targetId)
+      const txId = salarySortTransactionId(targetId)
+      if (target.transactionId && txId !== target.transactionId) map.set(target.transactionId, txId)
+    }
+  }
+  return map.size === 0 ? data : remap(data, map)
+}
+
 export interface RegeneratedImport {
   data: AppDataV2
   /** old id → new id (the fixed category ids and auto ids are not in it). */
@@ -92,6 +114,6 @@ export function regenerateIds(data: AppDataV2, newId: () => string = () => nanoi
  * own delivery has replaced them in the app).
  */
 export function applyIdMap(data: AppDataV2, map: ReadonlyMap<string, string>, newId: () => string = () => nanoid(8)): AppDataV2 {
-  const out = remap(data, map)
+  const out = rederiveSalarySortIds(remap(data, map))
   return { ...out, transactions: rederiveAutoIds(out.transactions, newId) }
 }

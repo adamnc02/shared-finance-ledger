@@ -1432,8 +1432,19 @@ export interface SalarySortTarget {
 }
 
 export interface SalarySort {
+  // PROMPT-11 (2026-09-19): `sort:<personId>:<payDate>` for anything created from then on, so two
+  // devices sorting the same payday at once converge on ONE record instead of each minting a
+  // nanoid and creating a second set of transfers (MIGRATION-LESSONS §36). Older records keep
+  // their nanoid; nothing reads the shape.
   id: string
   payDate: string // ISO date — the specific payday occurrence this sort is for
+  // WHOSE payday this sort is for (PROMPT-11, 2026-09-19). A sort was keyed on payDate alone,
+  // which is fine with one person and wrong in a shared household: when both partners are paid on
+  // the same date, both would read and overwrite ONE record, and the suggestion logic would mix
+  // their histories. Always the person doing the sorting (the Salary page only offers it for
+  // whoever the device is "me"). Backfilled on load from the target transactions' owner for
+  // records saved before this existed.
+  personId: string
   targets: SalarySortTarget[]
 }
 

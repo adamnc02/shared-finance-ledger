@@ -120,6 +120,7 @@ check('dueAmountForLocation: savings has no bill/loan linkage, always 0', dueFor
 const priorSort: SalarySort = {
   id: 'sort-jan',
   payDate: '2025-12-28',
+  personId: meId, // PROMPT-11: a sort belongs to one person; the suggestion logic is scoped to them
   targets: [{ id: 'tgt-1', to: { type: 'savings', savingsPotId: savings.id }, amount: 250, transactionId: 'txn-old' }],
 }
 const dataWithPriorSort: AppDataV2 = { ...data, salarySorts: [priorSort], transactions: [...data.transactions, { ...buildTransferTransaction({ type: 'personal' }, { type: 'savings', savingsPotId: savings.id }, 250, '2025-12-28', meId), id: 'txn-old' }] }
@@ -134,7 +135,7 @@ check('Suggestion LABEL: falls back to last-sorted when due is 0', savingsSugges
 // Pot has a real amount due (£300) despite ALSO having a prior-sort figure on file for a different destination test below — label must always lead with "due" when non-zero, per Adam's explicit "total due always wins the label" rule, even if a prior sort exists and differs.
 const dataWithPotPriorSort: AppDataV2 = {
   ...dataWithPriorSort,
-  salarySorts: [...dataWithPriorSort.salarySorts, { id: 'sort-pot', payDate: '2025-12-28', targets: [{ id: 'tgt-2', to: { type: 'pot', potId: billsPot.id }, amount: 150, transactionId: 'txn-old-pot' }] }],
+  salarySorts: [...dataWithPriorSort.salarySorts, { id: 'sort-pot', payDate: '2025-12-28', personId: meId, targets: [{ id: 'tgt-2', to: { type: 'pot', potId: billsPot.id }, amount: 150, transactionId: 'txn-old-pot' }] }],
 }
 const potSuggestion = salarySortSuggestion(dataWithPotPriorSort, paydayCycle, '2026-01-28', { type: 'pot', potId: billsPot.id })
 check('Suggestion PREFILL: last-sorted (£150) wins over due (£300) once a prior sort exists', potSuggestion.prefillAmount, 150)

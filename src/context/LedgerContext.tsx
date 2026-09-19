@@ -21,6 +21,7 @@ import type {
 } from '../types/ledger'
 import type { BillLocation } from '../types/models'
 import { categoryForTransfer, buildTransferTransaction, locationsEqual, locationTypeForTransfer, transferLocationLabel } from '../lib/transferLedger'
+import { salarySortId, salarySortTargetId, salarySortTransactionId } from '../lib/salarySortLedger'
 import { applyCreditCardLocationChange, reassignTransactionsForLocationChange, priorLocationEntry } from '../lib/locationChange'
 
 import type { Scenario } from '../types/models'
@@ -771,15 +772,17 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
       const payCycle = prev.payCycles.find((pc) => pc.personId === personId)
       const person = prev.people.find((p) => p.id === personId)
       if (!payCycle || !person) return prev
-      // Salary sorts are made against the primary person's paydays only.
-      const result = applyPaydayChange(payCycle, person, prev.transactions, personId === prev.primaryPersonId ? prev.salarySorts : null, next, pickedDate, todayIso())
+      // Only THIS person's sorts move with their payday (PROMPT-11): re-dating the household's
+      // whole list would drag the other person's sorts onto dates that aren't their paydays.
+      const mySorts = prev.salarySorts.filter((s) => s.personId === personId)
+      const result = applyPaydayChange(payCycle, person, prev.transactions, mySorts, next, pickedDate, todayIso())
       if (!result) return prev
       return {
         ...prev,
         transactions: result.transactions,
         payCycles: prev.payCycles.map((pc) => (pc.personId === personId ? result.payCycle : pc)),
         people: prev.people.map((p) => (p.id === personId ? result.person : p)),
-        salarySorts: result.salarySorts ?? prev.salarySorts,
+        salarySorts: result.salarySorts ? [...prev.salarySorts.filter((s) => s.personId !== personId), ...result.salarySorts] : prev.salarySorts,
       }
     })
   }
@@ -946,7 +949,10 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
   // removeTransaction piecemeal itself. ──────────────────────────────
   const saveSalarySort: LedgerContextValue['saveSalarySort'] = (payDate, targets) => {
     setDataState((prev) => {
-      const existingSort = prev.salarySorts.find((s) => s.payDate === payDate)
+      // Scoped to WHOSE payday this is (PROMPT-11): with two people paid on the same date, a sort
+      // keyed on payDate alone is one shared record they overwrite in turn.
+      const personId = prev.primaryPersonId
+      const existingSort = prev.salarySorts.find((s) => s.payDate === payDate && s.personId === personId)
       const existingTargets = existingSort?.targets ?? []
       const keepTransactionIds = new Set<string>()
       const finalTargets: SalarySortTarget[] = []
@@ -957,7 +963,10 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
       // clearSalarySortTarget match on later), so a fresh nanoid() per
       // loop iteration would give each new target its own orphaned id
       // that never matches the record it belongs to.
-      const sortId = existingSort?.id ?? nanoid(8)
+      // Deterministic (PROMPT-11, MIGRATION-LESSONS §36): two devices saving this payday's sort
+      // before either has synced write the SAME row ids, so the upsert merges them into one sort
+      // with one set of transfers, instead of two of everything.
+      const sortId = existingSort?.id ?? salarySortId(personId, payDate)
 
       for (const incoming of targets) {
         // Adam's explicit 2026-09 call: 0 (or negative) is treated as
@@ -976,14 +985,16 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
           }
           finalTargets.push({ ...existingTarget, amount: incoming.amount })
         } else {
-          const transaction = buildTransferTransaction({ type: 'personal' }, incoming.to, incoming.amount, payDate, prev.primaryPersonId, {
+          const targetId = salarySortTargetId(sortId, incoming.to)
+          const transaction = buildTransferTransaction({ type: 'personal' }, incoming.to, incoming.amount, payDate, personId, {
             note: `Salary Sort → ${transferLocationLabel(incoming.to, prev.savingsPots, prev.pots)}`,
             sourceType: 'salary_sort',
             sourceId: sortId,
+            id: salarySortTransactionId(targetId),
           })
           transactions = [...transactions, transaction]
           keepTransactionIds.add(transaction.id)
-          finalTargets.push({ id: nanoid(8), to: incoming.to, amount: incoming.amount, transactionId: transaction.id })
+          finalTargets.push({ id: targetId, to: incoming.to, amount: incoming.amount, transactionId: transaction.id })
         }
       }
 
@@ -995,11 +1006,11 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
         transactions = transactions.filter((t) => !droppedTransactionIds.includes(t.id))
       }
 
-      const otherSorts = prev.salarySorts.filter((s) => s.payDate !== payDate)
+      const otherSorts = prev.salarySorts.filter((s) => !(s.payDate === payDate && s.personId === personId))
       // An empty result (every target omitted/zeroed) means no SalarySort
       // record at all for this payDate — an empty sort isn't a sort, per
       // dropSalarySortTarget's own rule elsewhere in this file.
-      const salarySorts = finalTargets.length > 0 ? [...otherSorts, { id: sortId, payDate, targets: finalTargets }] : otherSorts
+      const salarySorts = finalTargets.length > 0 ? [...otherSorts, { id: sortId, payDate, personId, targets: finalTargets }] : otherSorts
 
       return { ...prev, transactions, salarySorts }
     })
@@ -1007,7 +1018,7 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
 
   const clearSalarySortTarget: LedgerContextValue['clearSalarySortTarget'] = (payDate, location) => {
     setDataState((prev) => {
-      const sort = prev.salarySorts.find((s) => s.payDate === payDate)
+      const sort = prev.salarySorts.find((s) => s.payDate === payDate && s.personId === prev.primaryPersonId)
       const target = sort?.targets.find((t) => locationsEqual(t.to, location))
       if (!sort || !target) return prev
       return {
@@ -1020,7 +1031,7 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
 
   const clearSalarySort: LedgerContextValue['clearSalarySort'] = (payDate) => {
     setDataState((prev) => {
-      const sort = prev.salarySorts.find((s) => s.payDate === payDate)
+      const sort = prev.salarySorts.find((s) => s.payDate === payDate && s.personId === prev.primaryPersonId)
       if (!sort) return prev
       const transactionIds = new Set(sort.targets.map((t) => t.transactionId))
       return {

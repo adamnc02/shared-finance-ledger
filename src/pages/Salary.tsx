@@ -4292,7 +4292,7 @@ function PayPeriodRow({
   // this to the primary person's Most-recent/Upcoming rows only, per the
   // caller.
   const showSortIcon = canSort && hasSalarySortDestinations(data)
-  const existingSort = data.salarySorts.find((s) => s.payDate === dateIso)
+  const existingSort = data.salarySorts.find((s) => s.payDate === dateIso && s.personId === data.primaryPersonId)
 
   return (
     <div className="relative rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-elevated)' }}>
@@ -4394,7 +4394,9 @@ function SalarySortModal({
   onClose: () => void
 }) {
   const destinations = salarySortDestinations(data)
-  const existingSort = data.salarySorts.find((s) => s.payDate === payDate)
+  // Scoped to whoever this device is "me" (PROMPT-11): with both partners paid on the same date,
+  // an unscoped lookup shows, and overwrites, the other person's sort.
+  const existingSort = data.salarySorts.find((s) => s.payDate === payDate && s.personId === data.primaryPersonId)
 
   const [drafts, setDrafts] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {}
