@@ -37,6 +37,19 @@ import { toLocalIsoDate, parseLocalDate } from './date'
 import type { AppDataV2, Transaction } from '../types/ledger'
 
 /**
+ * PROMPT-09 (2026-09-19): an auto-cleared payment's id comes from the
+ * occurrence it settles (its dedupeKey), not a random one. On one device
+ * that changes nothing. With two devices syncing one household, both clear
+ * the same payday's salary or bill on their own; random ids made that two
+ * rows, and the payment counted twice. Derived from the key, both devices
+ * write the SAME row id and the sync layer merges them into one. A candidate
+ * without a key (none today) keeps a random id. Existing rows keep theirs.
+ */
+export function autoClearedTransactionId(key: string | null): string {
+  return key ? `auto:${key}` : nanoid(8)
+}
+
+/**
  * Keeps an ALREADY-MATERIALIZED salary transaction's amount in step with
  * what that pay period's net pay currently computes to.
  *
@@ -491,7 +504,7 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
       const key = dedupeKey(candidate)
       if (key && globalExistingKeys.has(key)) continue // already materialized (or logged by hand) — don't duplicate, wherever it currently lives
 
-      const real: Transaction = { ...candidate, id: nanoid(8), status: 'cleared' }
+      const real: Transaction = { ...candidate, id: autoClearedTransactionId(key), status: 'cleared' }
       result = { ...result, transactions: [...result.transactions, real] }
       if (key) globalExistingKeys.add(key)
       changed = true
@@ -518,7 +531,7 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
         const key = dedupeKey(candidate)
         if (key && globalExistingKeys.has(key)) continue
 
-        const real: Transaction = { ...candidate, id: nanoid(8), status: 'cleared' }
+        const real: Transaction = { ...candidate, id: autoClearedTransactionId(key), status: 'cleared' }
         result = { ...result, transactions: [...result.transactions, real] }
         if (key) globalExistingKeys.add(key)
         changed = true
@@ -551,7 +564,7 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
           const key = dedupeKey(candidate)
           if (key && globalExistingKeys.has(key)) continue
 
-          const real: Transaction = { ...candidate, id: nanoid(8), status: 'cleared' }
+          const real: Transaction = { ...candidate, id: autoClearedTransactionId(key), status: 'cleared' }
           result = { ...result, transactions: [...result.transactions, real] }
           if (key) globalExistingKeys.add(key)
           changed = true
@@ -597,7 +610,7 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
           const key = dedupeKey(candidate)
           if (key && globalExistingKeys.has(key)) continue
 
-          const real: Transaction = { ...candidate, id: nanoid(8), status: 'cleared' }
+          const real: Transaction = { ...candidate, id: autoClearedTransactionId(key), status: 'cleared' }
           result = { ...result, transactions: [...result.transactions, real] }
           if (key) globalExistingKeys.add(key)
           changed = true
