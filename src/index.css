@@ -27,6 +27,13 @@
   /* Semantic */
   --color-positive: #4cd08a;
   --color-negative: #ff5b4c;
+  /* PROMPT-13 Part A — the amber "projected" segment of a loan's RAG pie
+     chart, and its legend swatch. Chosen to sit clearly between the green
+     and the red above without leaning toward either: the coral red is the
+     one it must stay distinguishable from at a 22px stroke on a small
+     arc. Single dark theme, so this is defined once; there is no
+     light-mode block in this app to mirror it into. */
+  --color-warning: #f5a524;
 
   /* RGB triplet of --color-bg, for edge-fade gradients that need to
      interpolate down to transparent (rgba(var(--bg-rgb), 0)) rather than

@@ -114,6 +114,11 @@ const FK_COLUMNS = new Set([
   'interest_destination_savings_pot_id', 'interest_destination_pot_id', 'transfer_from_savings_pot_id', 'transfer_from_pot_id',
   'transfer_to_savings_pot_id', 'transfer_to_pot_id', 'from_savings_pot_id', 'from_pot_id', 'to_savings_pot_id', 'to_pot_id',
   'to_savings_pot_id',
+  // PROMPT-13 B2 — id-shaped, mapped through idUp so '' becomes NULL.
+  // Deliberately NOT a real FK server-side (§27, see the migration), but it
+  // must still never go up as '': an id-shaped '' is how the ~80 ownerId/
+  // payee rows were nearly lost.
+  'rounding_pot_id',
 ])
 
 let emptyOwnerPayee = 0
@@ -234,6 +239,110 @@ console.log('\njsonb is canonical')
 const reordered = JSON.stringify({ z: 1, a: [{ y: 2, b: 3 }] })
 check('canonicalJson ignores key order', canonicalJson(JSON.parse(reordered)) === canonicalJson({ a: [{ b: 3, y: 2 }], z: 1 }))
 check('canonicalJson drops undefined keys', canonicalJson({ a: 1, b: undefined }) === '{"a":1}')
+
+// ── PROMPT-13 B6 — the six round-up columns ───────────────────────────────
+//
+// The real backups predate this feature, so none of them exercises these
+// columns and every generic check above passes over them vacuously. A
+// purpose-built fixture is the only way to prove the round trip, and the
+// only way to prove §33 for `round_up_history` specifically.
+//
+// 🚨 §33 IS THE POINT OF THIS SECTION. PowerSync holds jsonb as TEXT
+// locally. A connector that uploads that text as-is stores a JSON STRING in
+// the jsonb column — valid JSON, so no error — which syncs back as a
+// string, and one JSON.parse yields a string rather than an array. That is
+// exactly how a loan's recurringOverpayment crashed Home in UAT on
+// 2026-09-19, about 30 seconds after an otherwise perfect import. The
+// generic check above would catch it, but only if a row with a history
+// exists; this makes sure one does.
+console.log('\nPROMPT-13: the six round-up columns')
+
+const jarId = 'jar00001'
+const roundUpFixture: AppDataV2 = {
+  ...(parseLedgerBackupJson(readFileSync(backups[0], 'utf8')) as AppDataV2),
+}
+const rupPerson = roundUpFixture.people[0].id
+roundUpFixture.pots = [
+  {
+    id: jarId, personId: rupPerson, name: 'Coin Jar', openingBalance: -5.25, openingDate: '2026-09-01',
+    active: true, color: '#f5a524', isCoinJar: true,
+  },
+  // A control: an ordinary pot alongside it, so `is_coin_jar` is proven to
+  // discriminate rather than simply always come back true.
+  { id: 'pot00001', personId: rupPerson, name: 'Bills Pot', openingBalance: 100, openingDate: '2026-09-01', active: true, color: '#4cd08a' },
+]
+roundUpFixture.payCycles = roundUpFixture.payCycles.map((pc, i) =>
+  i === 0
+    ? {
+        ...pc,
+        roundUpEnabled: true,
+        roundUpEffectiveFrom: '2026-09-01',
+        roundUpHistory: [
+          { enabled: true, from: '2026-03-01', until: '2026-06-01', nextRuleFrom: '2026-06-01' },
+          { enabled: false, from: '2026-06-01', until: '2026-09-01', nextRuleFrom: '2026-09-01' },
+        ],
+      }
+    : pc,
+)
+roundUpFixture.transactions = [
+  // A rounded expense, and a control that was not rounded.
+  { ...roundUpFixture.transactions[0], id: 'rup00001', type: 'expense', paymentMethod: 'card', location: 'personal', amount: 8, roundedFrom: 7.5, roundingPotId: jarId },
+  { ...roundUpFixture.transactions[0], id: 'rup00002', type: 'expense', paymentMethod: 'cash', location: 'personal', amount: 7.5 },
+  // PROMPT-13 B1a — a row that deliberately opted out. Indistinguishable
+  // from rup00002 on the server WITHOUT this column, which is the point.
+  { ...roundUpFixture.transactions[0], id: 'rup00003', type: 'expense', paymentMethod: 'card', location: 'personal', amount: 7.5, roundUpSkipped: true },
+]
+
+const rupRows = toRows(roundUpFixture, ctx)
+const rupTxn = rupRows.transactions.find((r) => r.id === 'rup00001')!
+const rupTxnPlain = rupRows.transactions.find((r) => r.id === 'rup00002')!
+const rupJar = rupRows.pots.find((r) => r.id === jarId)!
+const rupOrdinary = rupRows.pots.find((r) => r.id === 'pot00001')!
+const rupCycle = rupRows.pay_cycles[0]
+
+check('transactions.rounded_from goes up as the pre-rounding amount', rupTxn.rounded_from === 7.5, rupTxn.rounded_from)
+check('transactions.rounding_pot_id goes up as the jar id', rupTxn.rounding_pot_id === jarId, rupTxn.rounding_pot_id)
+check('an unrounded row sends NULL for both, never 0 or \'\'', rupTxnPlain.rounded_from == null && rupTxnPlain.rounding_pot_id == null, [rupTxnPlain.rounded_from, rupTxnPlain.rounding_pot_id])
+const rupSkipped = rupRows.transactions.find((r) => r.id === 'rup00003')!
+check('transactions.round_up_skipped goes up as true on an opted-out row', rupSkipped.round_up_skipped === true, rupSkipped.round_up_skipped)
+check('CONTROL: and is NULL on a row that simply did not qualify', rupTxnPlain.round_up_skipped == null, rupTxnPlain.round_up_skipped)
+check('pots.is_coin_jar is set on the jar', rupJar.is_coin_jar === true, rupJar.is_coin_jar)
+check('CONTROL: and NOT on an ordinary pot', rupOrdinary.is_coin_jar == null, rupOrdinary.is_coin_jar)
+check('pay_cycles.round_up_enabled / _effective_from go up', rupCycle.round_up_enabled === true && rupCycle.round_up_effective_from === '2026-09-01', [rupCycle.round_up_enabled, rupCycle.round_up_effective_from])
+
+// 🚨 §33, stated directly rather than only via the generic sweep.
+const historySent = toServerRecord(localName('pay_cycles'), throughSqlite(rupRows).pay_cycles[0], { dropNulls: true }).round_up_history
+check('🚨 round_up_history is sent as a JSON VALUE, never a string (§33)', typeof historySent !== 'string', typeof historySent)
+check('...and it is the array itself, with both windows intact', Array.isArray(historySent) && (historySent as unknown[]).length === 2, historySent)
+
+// The full trip, through the server's own type handling.
+const rupBack = fromRows(throughServer(rupRows))
+const backJar = rupBack.pots.find((p) => p.id === jarId)!
+const backOrdinary = rupBack.pots.find((p) => p.id === 'pot00001')!
+const backCycle = rupBack.payCycles[0]
+const backTxn = rupBack.transactions.find((t) => t.id === 'rup00001')!
+check('round trip: the jar comes back a jar', backJar.isCoinJar === true, backJar.isCoinJar)
+check('round trip: an ordinary pot does NOT come back a jar', backOrdinary.isCoinJar === undefined || backOrdinary.isCoinJar === false, backOrdinary.isCoinJar)
+check('round trip: a NEGATIVE opening balance survives (Part C)', backJar.openingBalance === -5.25, backJar.openingBalance)
+check('round trip: roundedFrom / roundingPotId survive', backTxn.roundedFrom === 7.5 && backTxn.roundingPotId === jarId, [backTxn.roundedFrom, backTxn.roundingPotId])
+// 🚨 If this came back undefined, an edit on the other device would
+// silently round a row the person had excluded.
+const backSkipped = rupBack.transactions.find((t) => t.id === 'rup00003')!
+check('🚨 round trip: roundUpSkipped survives, so the other device does not re-round it', backSkipped.roundUpSkipped === true, backSkipped.roundUpSkipped)
+check('round trip: roundUpEnabled / roundUpEffectiveFrom survive', backCycle.roundUpEnabled === true && backCycle.roundUpEffectiveFrom === '2026-09-01', [backCycle.roundUpEnabled, backCycle.roundUpEffectiveFrom])
+// 🚨 The crash shape: a history that comes back as a STRING rather than an
+// array means §33 has returned. `.length` on a string would be truthy, so
+// this asserts the type, not just the presence.
+check('🚨 round trip: roundUpHistory comes back as an ARRAY, not a string (§33)', Array.isArray(backCycle.roundUpHistory), typeof backCycle.roundUpHistory)
+// `canonicalJson`, not JSON.stringify: Postgres jsonb reorders keys, which
+// is the whole reason this file has a canonical comparison (see "jsonb is
+// canonical" above). The first run of this check failed on key order alone
+// — a real property of jsonb, not a mapping fault.
+check(
+  '...with both windows, and their `from` dates intact (key order is jsonb\'s to choose)',
+  canonicalJson(backCycle.roundUpHistory) === canonicalJson(roundUpFixture.payCycles[0].roundUpHistory),
+  backCycle.roundUpHistory,
+)
 
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} check(s) FAILED.`)
 if (failures > 0) process.exit(1)

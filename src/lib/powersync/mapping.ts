@@ -214,7 +214,8 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
   data.pots.forEach((p, i) =>
     push('pots', {
       id: p.id, ...h, person_id: p.personId, name: p.name, opening_balance: p.openingBalance, opening_date: p.openingDate, active: p.active,
-      color: up(p.color), category_icon: up(p.categoryIcon), category_icon_color: up(p.categoryIconColor), position: i,
+      color: up(p.color), category_icon: up(p.categoryIcon), category_icon_color: up(p.categoryIconColor),
+      is_coin_jar: up(p.isCoinJar), position: i,
     }),
   )
 
@@ -252,7 +253,13 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
       follows_income_source_type: pc.followsIncomeSource?.type ?? null,
       follows_pension_id: pc.followsIncomeSource?.type === 'pension' ? idUp(pc.followsIncomeSource.pensionId) : null,
       payday_history: jsonUp(pc.paydayHistory), pay_schedule_kind: pc.paySchedule?.kind ?? null,
-      pay_schedule_anchor: pc.paySchedule?.anchorPayDate ?? null, salary_sort_basis: up(pc.salarySortBasis), position: i,
+      pay_schedule_anchor: pc.paySchedule?.anchorPayDate ?? null, salary_sort_basis: up(pc.salarySortBasis),
+      // PROMPT-13 B4. `jsonUp`, NOT `up` — §33: a jsonb column sent as the
+      // text SQLite holds is stored as a jsonb STRING and comes back as
+      // one, with no error anywhere. Same treatment as payday_history
+      // directly above, for exactly the same reason.
+      round_up_enabled: up(pc.roundUpEnabled), round_up_effective_from: up(pc.roundUpEffectiveFrom),
+      round_up_history: jsonUp(pc.roundUpHistory), position: i,
     }),
   )
 
@@ -319,7 +326,9 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
       payee: idUp(t.payee), payee_share_percent: up(t.payeeSharePercent), person_id: idUp(t.personId), source_type: up(t.sourceType),
       source_id: idUp(t.sourceId), occurrence_original_date: up(t.occurrenceOriginalDate), credit_card_id: idUp(t.creditCardId),
       savings_pot_id: idUp(t.savingsPotId), pot_id: idUp(t.potId), ...transferUp('from', 'from_location_type', t.fromLocation), ...transferUp('to', 'to_location_type', t.toLocation),
-      follows_payday: up(t.followsPayday), follows_cycle_start: up(t.followsCycleStart), position: i,
+      follows_payday: up(t.followsPayday), follows_cycle_start: up(t.followsCycleStart),
+      // PROMPT-13 B2. `amount` above is already the rounded figure.
+      rounded_from: up(t.roundedFrom), rounding_pot_id: idUp(t.roundingPotId), round_up_skipped: up(t.roundUpSkipped), position: i,
     }),
   )
 
@@ -403,6 +412,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
     obj<Pot>({
       id: r.id, personId: S(r.person_id), name: S(r.name), openingBalance: N(r.opening_balance), openingDate: S(r.opening_date), active: B(r.active),
       color: S(r.color), categoryIcon: s(r.category_icon), categoryIconColor: s(r.category_icon_color),
+      isCoinJar: b(r.is_coin_jar),
     }),
   )
 
@@ -447,6 +457,8 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
       paydayHistory: j(r.payday_history),
       paySchedule: kind ? { kind: kind as 'four_weekly', anchorPayDate: S(r.pay_schedule_anchor) } : undefined,
       salarySortBasis: s(r.salary_sort_basis),
+      roundUpEnabled: b(r.round_up_enabled), roundUpEffectiveFrom: s(r.round_up_effective_from),
+      roundUpHistory: j(r.round_up_history),
     })
   })
 
@@ -507,6 +519,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
       sourceId: s(r.source_id), occurrenceOriginalDate: s(r.occurrence_original_date), creditCardId: s(r.credit_card_id),
       savingsPotId: s(r.savings_pot_id), potId: s(r.pot_id), fromLocation: transferDown(r, 'from', 'from_location_type'), toLocation: transferDown(r, 'to', 'to_location_type'),
       followsPayday: b(r.follows_payday), followsCycleStart: b(r.follows_cycle_start),
+      roundedFrom: n(r.rounded_from), roundingPotId: s(r.rounding_pot_id), roundUpSkipped: b(r.round_up_skipped),
     }),
   )
 

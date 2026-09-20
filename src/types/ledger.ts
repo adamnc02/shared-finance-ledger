@@ -299,6 +299,49 @@ export interface Transaction {
   // cash balance the way a plain `location: 'personal'` row would.
   location: TransactionLocation
   ownerId: string // whose personal account, when location = 'personal'
+
+  // ── Round-ups / Coin Jar (2026-09-20, PROMPT-13 Part B) ─────────────
+  // Set ONLY on an expense that was rounded up when it was logged. The
+  // amount ABOVE is already the rounded figure (£8.00 for a £7.50 shop),
+  // so every existing reader — the personal ledger, every projection,
+  // every total — is correct as it stands and needs no change.
+  // `roundedFrom` is what it was rounded FROM (£7.50), and the difference
+  // between the two is the uplift that funds the Coin Jar.
+  //
+  // 🚨 THE UPLIFT IS NOT A SECOND TRANSACTION. Adam chose the derived
+  // option: the Coin Jar's balance is the sum of `amount - roundedFrom`
+  // over rows whose `roundingPotId` is that pot, computed on read. The
+  // same "derive it, don't store it twice" rule PROMPT-11 used for a
+  // Salary Sort's person — "a stored value that can disagree with the
+  // transfers is worse than one that cannot". Delete this expense and its
+  // 50p credit goes with it automatically, because the credit was never
+  // a row.
+  //
+  // 🚨 AND IT MUST NEVER REACH THE PERSONAL CASH BALANCE TWICE.
+  // `computeProjectionToDate` sums `signedAmount(t)`, which reads
+  // `amount` — already £8.00. Adding the uplift anywhere in that path
+  // would take £8.50 out of personal cash for a £7.50 shop.
+  // `verify-coin-jar-balance.ts` pins exactly this.
+  roundedFrom?: number
+  /** Which Coin Jar this row's uplift feeds — the OWNER's own jar (§0b Q5). */
+  roundingPotId?: string
+  /**
+   * PROMPT-13 B1a (Adam, 2026-09-20) — this ONE transaction opts out of
+   * rounding, even though it qualifies and the switch is on.
+   *
+   * Offered only when a Coin Jar actually exists, and only on a card,
+   * personal, ad-hoc expense — the exact rows that would otherwise round.
+   * It DEFAULTS to rounding (undefined/false), so the common case needs no
+   * decision and the field is an override, not a question.
+   *
+   * 🚨 IT IS STORED, NOT INFERRED. "Not rounded" and "deliberately not
+   * rounded" look identical on a saved row — both simply lack
+   * `roundedFrom`. Without this flag an edit would silently re-round a row
+   * the person had explicitly excluded, because `roundUpFields` recomputes
+   * from the rules every time it is saved. That is the whole reason this is
+   * a column rather than a UI-only choice.
+   */
+  roundUpSkipped?: boolean
   payee?: string
   payeeSharePercent?: number
   // Which person this belongs to — required for salary/bonus/income,
@@ -864,6 +907,52 @@ export interface PayCycleConfig {
   // recorded before this field existed).
   paydayHistory?: { paydayDayOfMonth: number; paydayAdjustForNonWorkingDay: boolean; paySchedule?: PaySchedule; until: string; nextRuleFrom: string }[]
 
+  // ── Round-ups (2026-09-20, PROMPT-13 Part B4) ───────────────────────
+  // Whether THIS PERSON's card spending is rounded up into their own Coin
+  // Jar. It lives on the pay cycle, not on the pot, because Adam ruled the
+  // pot out as circular: "If I can only turn rounding on from the coin jar
+  // pot, then this is a circular dependency... I don't want coin jar to be
+  // always visible if it's not turned on/has never been turned on for a
+  // person." It is a property of the current account, which is what this
+  // config describes, and it sits behind the same cog as the opening
+  // balance and payday — "set once and rarely touched".
+  //
+  // Switching it ON for the first time is what CREATES that person's Coin
+  // Jar pot. Until then the pot does not exist and appears nowhere.
+  // Switching it off leaves the pot and every past uplift exactly alone.
+  //
+  // 🚨 A SWITCH NEVER REWRITES A STORED ROW (Adam: "Correct"). These
+  // fields decide which NEWLY LOGGED rows round. Cleared or pending,
+  // nothing already saved is reached back into and changed.
+  roundUpEnabled?: boolean
+  /** The date the CURRENT setting took effect. Required whenever the switch is changed (B4), via the same EffectiveDatedChangeFlow as every other dated change. */
+  roundUpEffectiveFrom?: string
+  /**
+   * The on/off rules in force BEFORE each change, oldest first — the same
+   * shape and the same care as `paydayHistory` above. A rule governs dates
+   * from the previous rule's `nextRuleFrom` up to (not including) its own
+   * `until`; the current `roundUpEnabled`/`roundUpEffectiveFrom` pair
+   * governs from the last `nextRuleFrom` onward. Unlike a payday change,
+   * a round-up switch is instantaneous, so `until` and `nextRuleFrom` are
+   * always the same date — they are both kept so the two histories can be
+   * read and migrated by the same eye.
+   *
+   * 🚨 `from` IS THE ONE FIELD paydayHistory DOES NOT HAVE, AND IT IS NOT
+   * OPTIONAL DECORATION. A payday rule needs no start: before the first
+   * recorded change, SOME payday rule has always applied, so the earliest
+   * entry can safely govern all of time. A round-up rule cannot — before
+   * it was first switched on, rounding was not merely "some other rule",
+   * it was OFF. Without `from`, the first history entry governs from the
+   * beginning of time, and the moment you turn rounding off you retro-
+   * actively declare it to have been ON for every date before it ever
+   * existed. That is a B3 violation, and it is exactly what the first run
+   * of `verify-round-up-effective-dates.ts` caught.
+   *
+   * Resolved by `roundUpEnabledOn` in lib/roundUp.ts. Absent = the switch
+   * has never been changed.
+   */
+  roundUpHistory?: { enabled: boolean; from: string; until: string; nextRuleFrom: string }[]
+
   // ── Pay schedule (2026-09-19, PROMPT-08c Parts C and D) ─────────────
   // How the pay DATES repeat. Absent = monthly on paydayDayOfMonth, which
   // is every config saved before this existed, so nothing migrates.
@@ -1382,6 +1471,27 @@ export interface Pot {
   // "Savings" category.
   categoryIcon?: string
   categoryIconColor?: string
+
+  // ── Coin Jar (2026-09-20, PROMPT-13 Part B) ─────────────────────────
+  // True on the ONE pot per person that receives their round-up uplifts.
+  // Created by switching round-ups on in that person's pay cycle
+  // settings, never by the ordinary "new pot" form — which is why it is
+  // the only pot in the app whose `openingBalance` and `openingDate`
+  // stay editable after creation (every other pot's is deliberately a
+  // creation-only anchor, Salary.tsx ~1856: "a one-time creation-only
+  // anchor"). A Coin Jar never got the chance to be set at creation, so
+  // it gets the chance afterwards. **This is not an inconsistency to
+  // tidy up.**
+  //
+  // It is a pot with things TAKEN AWAY (Adam, 2026-09-20: "it gets a line
+  // chart but no ring, there is no target"). It has no target, no
+  // recurring deposits, cannot fund a bill/loan/credit-card payment and
+  // cannot be spent from ad hoc. Those restrictions are enforced in the
+  // GENERATORS (potLedger.ts) and in the pickers, each with its own
+  // assertion in verify-coin-jar-restrictions.ts — a hidden picker entry
+  // is not enforcement. Transfers in and out, to any location, are
+  // allowed.
+  isCoinJar?: boolean
 }
 
 // ── Salary Sort (App_Dev.md "Salary Sorter & Transfer Pill", 2026-09

@@ -35,6 +35,37 @@ export function streamQueries(): string[] {
   })
 }
 
+/**
+ * `tables.ts`'s view of the synced schema, as { table: [column, ...] }.
+ * PROMPT-13 B6 (2026-09-20).
+ *
+ * 🚨 WHY IT EXISTS — MIGRATION-LESSONS §34. `mapping.ts` once wrote
+ * `from_type` where the column is `from_location_type`. `toRows`/`fromRows`
+ * used the same wrong name both ways, so the round trip passed perfectly,
+ * and the in-memory fake accepted any column. It was caught only by running
+ * the real PowerSync database in headless Chromium.
+ *
+ * §34's own fix hardened `scripts/lib/fakeSyncDb.ts` to reject unknown
+ * columns, which covers mapping → tables.ts. Nothing covered tables.ts →
+ * POSTGRES, and that is the worse direction: an unknown-column error is not
+ * in FATAL_RESPONSE_CODES, so PowerSync retries it forever and blocks the
+ * device's entire upload queue rather than discarding one row.
+ *
+ * Emitted from here rather than from a file of its own so this repo gains no
+ * new sync-only script, and `check:divergence` reports the same file count it
+ * did before this prompt. Consumed by
+ * silver-octo-invention/tools/schema-test/check-app-schema.mjs, which has
+ * PGlite and the migrations:
+ *
+ *   npx tsx scripts/print-sync-streams.ts --columns
+ */
+export function syncedColumns(): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const t of SYNCED_TABLES) out[t.remote] = Object.keys(t.columns).sort()
+  return out
+}
+
 if (process.argv[1]?.endsWith('print-sync-streams.ts')) {
-  console.log(`  ${STREAM_NAME}:\n    auto_subscribe: false\n    queries:\n${streamQueries().map((q) => `      - ${q}`).join('\n')}`)
+  if (process.argv.includes('--columns')) console.log(JSON.stringify(syncedColumns(), null, 2))
+  else console.log(`  ${STREAM_NAME}:\n    auto_subscribe: false\n    queries:\n${streamQueries().map((q) => `      - ${q}`).join('\n')}`)
 }

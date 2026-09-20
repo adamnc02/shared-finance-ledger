@@ -1,6 +1,7 @@
 import { SplitEditor } from './SplitEditor'
 import type { BillLocation } from '../types/models'
 import type { Pot } from '../types/ledger'
+import { fundablePots } from '../lib/roundUp'
 
 /**
  * The "Joint" option is only shown once a second person exists AND that
@@ -63,7 +64,8 @@ export function LocationEditor({
   payeeSharePercent: number
   onChange: (patch: { location: BillLocation; ownerId?: string; potId?: string; payee?: string; payeeSharePercent?: number }) => void
 }) {
-  const ownerPots = pots.filter((p) => p.personId === ownerId)
+  // PROMPT-13 B5 — a Coin Jar never funds a bill, loan or card payment.
+  const ownerPots = fundablePots(pots).filter((p) => p.personId === ownerId)
   const canBePot = ownerPots.length > 0
 
   const showLocationField = canBeJoint || canBePot
@@ -131,7 +133,7 @@ export function LocationEditor({
               // location-reassignment flow as any other location change,
               // since this is genuinely changing where the bill is paid
               // from, not just relabelling who it belongs to.
-              const nextOwnerPots = pots.filter((p) => p.personId === nextOwner)
+              const nextOwnerPots = fundablePots(pots).filter((p) => p.personId === nextOwner)
               onChange({ location, ownerId: nextOwner, potId: location === 'pot' ? nextOwnerPots[0]?.id : potId })
             }}
             className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none"

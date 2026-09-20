@@ -210,5 +210,51 @@ const one = summarizeLoansProgress([mumLoans[0]], HORIZON_END)
 check('a single-loan card\'s combined figure equals that loan\'s own', round2(one.percentPaid), round2(one.perLoan[0].percentPaid))
 check('...including its projection', round2(one.projectedPercentPaid ?? -1), round2(one.perLoan[0].projectedPercentPaid ?? -2))
 
+// ── PROMPT-13 Part A — the rings this prompt must NOT have touched ─────
+//
+// Part A is scoped "loans only" (Adam, 2026-09-20: "We will keep this
+// just to loans, exclude credit cards from this work... Debt rings
+// only"). Credit-card and savings-pot rings keep the two-arc
+// colour-plus-translucent treatment they have today.
+//
+// "Untouched" is enforced at the SOURCE, not just behaviourally, because
+// the failure mode is a later session helpfully extending the RAG
+// treatment to every ring in the app and no numeric check noticing: the
+// pot and card rings would still be handed the same `percent`, and every
+// assertion above would still pass while the app looked completely
+// different. The checks below are therefore about which props each call
+// site passes.
+console.log('\n── PROMPT-13: credit-card and savings-pot rings are out of scope ──')
+
+const homeSrc = readFileSync(`${process.cwd()}/src/pages/Home.tsx`, 'utf8')
+const ringSrc = readFileSync(`${process.cwd()}/src/components/ProgressRing.tsx`, 'utf8')
+
+// Every `<ProgressRing` in the app, with the props block that follows it.
+const ringCalls = homeSrc.split('<ProgressRing').slice(1).map((chunk) => chunk.slice(0, chunk.indexOf('/>')))
+check('Home.tsx renders exactly four rings (pot, per-loan, combined loans, credit card)', ringCalls.length, 4)
+// Exactly two carry `segments` — the two LOAN rings. If this becomes 3 or
+// 4, a non-loan ring has been given the RAG treatment.
+check('exactly two rings are RAG rings', ringCalls.filter((c) => c.includes('segments=')).length, 2)
+check(
+  '...and both of them are loan rings',
+  ringCalls.filter((c) => c.includes('segments=')).every((c) => c.includes('loanEntryRagProgress') || c.includes('loansRagProgress')),
+  true,
+)
+// The converse: the two that are NOT RAG must still be the pot and the
+// card, identified by the props only they pass.
+const plainRings = ringCalls.filter((c) => !c.includes('segments='))
+check('the savings-pot ring still passes a bare percent/projectedPercent pair', plainRings.some((c) => c.includes('label={`of £${formatCurrency(target)}`}')), true)
+check('the credit-card ring still passes a bare percent and no projection', plainRings.some((c) => c.includes('label="Outstanding"') && !c.includes('projectedPercent')), true)
+check('no RagLegend is rendered next to a non-loan ring', homeSrc.split('<RagLegend').length - 1, 2)
+
+// The component's own two-arc path has to survive, or "unchanged" is
+// meaningless however the call sites look.
+check('ProgressRing still draws the 50%-opacity projected arc when given no segments', ringSrc.includes('strokeOpacity={0.5}'), true)
+check('...and that path is genuinely gated on `segments` being absent', ringSrc.includes('if (!segments || segments.length === 0) return null'), true)
+// The reported bug: the old projected arc had no linecap at all. The RAG
+// arcs must all be round-capped, which is checked by there being no
+// remaining cap-less arc in the RAG branch.
+check('every RAG segment is round-capped', ringSrc.split('ragArcs').length > 1 && ringSrc.includes('strokeLinecap="round"'), true)
+
 console.log(failures === 0 ? '\nAll progress-section checks passed.' : `\n${failures} progress-section check(s) FAILED.`)
 process.exit(failures === 0 ? 0 : 1)

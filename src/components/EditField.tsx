@@ -7,11 +7,13 @@ interface EditFieldProps {
   type?: string
   inputRef?: React.RefObject<HTMLInputElement | null>
   disabled?: boolean
+  /** PROMPT-13 Part C — passed through to NumberInput; see its own comment. Opt-in, for opening-balance fields only. */
+  allowNegative?: boolean
 }
 
 const INPUT_CLASS = 'w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono'
 
-export function EditField({ label, value, onChange, type = 'text', inputRef, disabled }: EditFieldProps) {
+export function EditField({ label, value, onChange, type = 'text', inputRef, disabled, allowNegative }: EditFieldProps) {
   return (
     <label className={`flex flex-col gap-1 ${disabled ? 'opacity-40' : ''}`}>
       <span className="text-xs text-[var(--color-ink-muted)]">{label}</span>
@@ -21,7 +23,7 @@ export function EditField({ label, value, onChange, type = 'text', inputRef, dis
         // header for the leading-zero bug this fixes. Every numeric
         // EditField in the app inherits the fix from here, which is why
         // it's applied at this level rather than call site by call site.
-        <NumberInput value={value} onChange={onChange} className={INPUT_CLASS} inputRef={inputRef} disabled={disabled} />
+        <NumberInput value={value} onChange={onChange} className={INPUT_CLASS} inputRef={inputRef} disabled={disabled} allowNegative={allowNegative} />
       ) : (
         <input
           ref={inputRef}

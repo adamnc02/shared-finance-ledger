@@ -29,7 +29,7 @@ import { defaultLedgerData, defaultPayCycleConfig } from '../lib/ledgerStorage'
 import { isPromiseLike, type LedgerStore } from '../lib/store/LedgerStore'
 import { localStorageLedgerStore } from '../lib/store/localStorageLedgerStore'
 import { createCategory, removeCategorySafely } from '../lib/categories'
-import { recordCreditCardSpend, recordCreditCardLumpPayment } from '../lib/creditCards'
+import { recordCreditCardSpend, recordCreditCardLumpPayment, pickNextSharedCardColor } from '../lib/creditCards'
 import { applyLoanOverpayment, settleLoan, calibrateLoanFromStatementLines, reassignLoanRecurringOverpaymentTransactions, type CalibrationResult } from '../lib/ledgerLoans'
 import { autoClearDuePayments } from '../lib/autoClear'
 import { applyTemplateScheduleChange, type TemplateSchedule } from '../lib/schedule'
@@ -54,6 +54,7 @@ import {
 import { convertClearedSalaryToStandaloneIncome, nextRecordedSeq } from '../lib/salaryLedger'
 
 import { toLocalIsoDate as toIso } from '../lib/date'
+import { roundUpFields, coinJarForOwner, unroundedAmount, applyRoundUpChange, findCoinJar, COIN_JAR_NAME } from '../lib/roundUp'
 const todayIso = () => toIso(new Date())
 
 // The pending-transaction sweep helpers live in lib/pendingSweep.ts so
@@ -83,6 +84,8 @@ interface AdHocInput {
    */
   location?: 'joint' | 'pot'
   potId?: string
+  /** PROMPT-13 B1a — this one entry opts out of rounding. Undefined/false = round it, per the switch. */
+  roundUpSkipped?: boolean
 }
 
 interface LedgerContextValue {
@@ -165,6 +168,18 @@ interface LedgerContextValue {
 
   /** Upserts — creates a PayCycleConfig for this person if one doesn't exist yet, otherwise patches the existing one. */
   updatePayCycle: (personId: string, updates: Partial<Omit<PayCycleConfig, 'personId'>>) => void
+  /**
+   * PROMPT-13 B4 — turns round-ups on or off for one person, from a
+   * chosen date, and CREATES that person's Coin Jar the first time it is
+   * switched on. Its own action rather than a `updatePayCycle` call,
+   * because enabling has a side effect on `pots` that a partial pay-cycle
+   * patch has no business carrying, and because the two must happen in
+   * one state update or a rounded expense could be written in between
+   * pointing at a jar that does not exist yet.
+   *
+   * 🚨 It never touches a transaction. See `applyRoundUpChange`.
+   */
+  setRoundUp: (personId: string, enabled: boolean, effectiveFrom: string) => void
 
   /** A "permanent" salary change — a new dated snapshot, effective going forward. See SalaryOverride for the "one-off" case. */
   // `recordedSeq` is omitted alongside id/personId deliberately: it is
@@ -453,8 +468,25 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
       ownerId: input.personId,
       personId: input.type === 'income' ? input.personId : undefined,
       note: input.note,
+      // PROMPT-13 B1a — carried onto the row BEFORE roundUpFields runs
+      // below, which is what lets `shouldRoundUp` see it and decline.
+      roundUpSkipped: input.roundUpSkipped || undefined,
     }
-    setDataState((prev) => ({ ...prev, transactions: [...prev.transactions, transaction] }))
+    // PROMPT-13 B1/B2 — round-ups are applied HERE, at the single ad-hoc
+    // write path, rather than in each of the three forms that reach it.
+    // A form that forgot would log an unrounded shop with no error
+    // anywhere; there is no equivalent way to forget a chokepoint.
+    //
+    // The OWNER's pay cycle and the OWNER's jar (§0b Q5): in a two-person
+    // household Ella's card expense rounds into Ella's jar, gated on
+    // Ella's own switch. `roundUpFields` returns the amount untouched and
+    // both fields undefined for everything that does not qualify, so the
+    // overwhelming majority of rows are unaffected.
+    setDataState((prev) => {
+      const payCycle = prev.payCycles.find((c) => c.personId === transaction.ownerId)
+      const jar = coinJarForOwner(prev.pots, transaction.ownerId)
+      return { ...prev, transactions: [...prev.transactions, { ...transaction, ...roundUpFields(transaction, payCycle, jar?.id) }] }
+    })
     return transaction.id
   }
 
@@ -471,7 +503,30 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
   const updateTransaction: LedgerContextValue['updateTransaction'] = (id, updates) => {
     setDataState((prev) => {
       const existing = prev.transactions.find((t) => t.id === id)
-      const transactions = prev.transactions.map((t) => (t.id === id ? { ...t, ...updates } : t))
+      // PROMPT-13 B3 — "Editing recomputes." Adam: "if I have to amend a
+      // transaction, it's because I got the price wrong, but my banking
+      // app would have handled it correctly." £7.50 → £9.20 becomes
+      // £10.00 with an 80p uplift.
+      //
+      // The price fed back in is the REAL one: `updates.amount` when the
+      // amount is being edited (the forms seed their field from
+      // `unroundedAmount`, so what arrives is the price, not the rounded
+      // figure), and the existing row's own unrounded amount otherwise —
+      // so editing only a note or a date re-derives the same figures
+      // rather than rounding £8.00 up to £9.00 each time it is saved.
+      //
+      // This does NOT contradict "a switch never rewrites a stored row":
+      // `roundUpEnabledOn` resolves against the ROW's own date, so a row
+      // logged inside an enabled window keeps rounding even after the
+      // switch is turned off, and an edit is the person's own action, not
+      // the switch's.
+      const rounded = (t: Transaction): Transaction => {
+        const merged = { ...t, ...updates }
+        const payCycle = prev.payCycles.find((c) => c.personId === merged.ownerId)
+        const jar = coinJarForOwner(prev.pots, merged.ownerId)
+        return { ...merged, ...roundUpFields({ ...merged, amount: updates.amount ?? unroundedAmount(t) }, payCycle, jar?.id) }
+      }
+      const transactions = prev.transactions.map((t) => (t.id === id ? rounded(t) : t))
 
       if (!existing || existing.sourceType !== 'salary_sort' || !existing.sourceId) {
         return { ...prev, transactions }
@@ -1104,6 +1159,40 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
 
   // ── Pots (App Dev.md "Pots" backlog item, Adam-specified 2026-09-03) ──
 
+  const setRoundUp: LedgerContextValue['setRoundUp'] = (personId, enabled, effectiveFrom) => {
+    const newPotId = nanoid(8)
+    setDataState((prev) => {
+      const payCycle = prev.payCycles.find((c) => c.personId === personId)
+      if (!payCycle) return prev
+      const payCycles = prev.payCycles.map((c) => (c.personId === personId ? { ...c, ...applyRoundUpChange(c, enabled, effectiveFrom) } : c))
+
+      // B4 — "Switching it on for the first time creates the Coin Jar pot
+      // for that person... Until then the pot does not exist and appears
+      // nowhere." One per person, so an existing jar is reused rather
+      // than a second one created; switching OFF never removes it, and
+      // never touches its balance ("Turning it off leaves the jar
+      // alone").
+      const existingJar = findCoinJar(prev.pots, personId)
+      if (!enabled || existingJar) return { ...prev, payCycles }
+
+      const jar: Pot = {
+        id: newPotId,
+        personId,
+        name: COIN_JAR_NAME,
+        // Created by a switch, not by a form, so there was no opportunity
+        // to state an opening balance. It starts empty and at the date
+        // rounding starts from — and, uniquely among pots, both stay
+        // EDITABLE afterwards (B5). See Pot.isCoinJar in types/ledger.ts.
+        openingBalance: 0,
+        openingDate: effectiveFrom,
+        active: true,
+        color: pickNextSharedCardColor(prev),
+        isCoinJar: true,
+      }
+      return { ...prev, payCycles, pots: [...prev.pots, jar] }
+    })
+  }
+
   const addPot: LedgerContextValue['addPot'] = (personId, pot) => {
     const id = nanoid(8)
     setDataState((prev) => ({ ...prev, pots: [...prev.pots, { ...pot, id, personId }] }))
@@ -1113,7 +1202,32 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
     setDataState((prev) => ({ ...prev, pots: prev.pots.map((p) => (p.id === id ? { ...p, ...updates } : p)) }))
   }
   const removePot: LedgerContextValue['removePot'] = (id) => {
-    setDataState((prev) => removePotFromData(prev, id))
+    setDataState((prev) => {
+      const pot = prev.pots.find((p) => p.id === id)
+      const next = removePotFromData(prev, id)
+      // PROMPT-13 B4 (2026-09-20, Adam's follow-up) — deleting a Coin Jar
+      // switches that person's round-ups OFF, and the toggle reverts to
+      // their pay cycle settings.
+      //
+      // 🚨 WITHOUT THIS THE TOGGLE WOULD LIE. The jar is the destination;
+      // with it gone `coinJarForOwner` returns undefined and `roundUpFields`
+      // quietly stops rounding anything. The switch would still read "on" in
+      // settings while doing precisely nothing, with no way to tell. Turning
+      // it off is the honest state, and turning it back on creates a fresh
+      // jar exactly as the first enable did.
+      //
+      // Dated TODAY, and recorded in the history like any other switch —
+      // which is why it cannot reach back: rows logged while the old jar
+      // existed keep their `roundedFrom` and their `roundingPotId`, pointing
+      // at a pot that is gone. That is correct. The money really was rounded
+      // (B3: nothing stored is ever rewritten), and their credits disappear
+      // with the jar because the credits were only ever derived from it.
+      if (!pot?.isCoinJar) return next
+      return {
+        ...next,
+        payCycles: next.payCycles.map((c) => (c.personId === pot.personId ? { ...c, ...applyRoundUpChange(c, false, todayIso()) } : c)),
+      }
+    })
   }
   const deleteWithResolutions: LedgerContextValue['deleteWithResolutions'] = (subject, decisions) => {
     setDataState((prev) => resolveBlockersAndDelete(prev, subject, decisions))
@@ -1255,6 +1369,7 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
     removePerson,
     setPrimaryPerson,
     updatePayCycle,
+    setRoundUp,
     addSalarySnapshot,
     updateSalarySnapshot,
     removeSalarySnapshot,
