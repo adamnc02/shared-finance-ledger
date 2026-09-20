@@ -53,7 +53,10 @@ export const SYNCED_TABLES: SyncedTable[] = [
   t('categories', { ...H, name: 'text', icon: 'text', icon_color: 'text', is_built_in: 'bool', ...P }),
   t('pots', {
     ...H, person_id: 'text', name: 'text', opening_balance: 'real', opening_date: 'text', active: 'bool', color: 'text',
-    category_icon: 'text', category_icon_color: 'text', ...P,
+    category_icon: 'text', category_icon_color: 'text',
+    // PROMPT-13 B5 — the one restricted pot per person.
+    is_coin_jar: 'bool',
+    ...P,
   }),
   t('savings_pots', {
     ...H, person_id: 'text', name: 'text', opening_balance: 'real', opening_date: 'text', active: 'bool', color: 'text',
@@ -75,7 +78,12 @@ export const SYNCED_TABLES: SyncedTable[] = [
     ...H, person_id: 'text', opening_balance: 'real', opening_balance_date: 'text', payday_day_of_month: 'integer',
     payday_adjust_for_non_working_day: 'bool', cycle_start_day_of_month: 'integer', cycle_start_follows_payday: 'bool',
     follows_income_source_type: 'text', follows_pension_id: 'text', payday_history: 'json', pay_schedule_kind: 'text',
-    pay_schedule_anchor: 'text', salary_sort_basis: 'text', ...P,
+    pay_schedule_anchor: 'text', salary_sort_basis: 'text',
+    // PROMPT-13 B4 — the switch, per person. `round_up_history` is 'json'
+    // and MUST reach the server as a jsonb VALUE, never a jsonb string
+    // (MIGRATION-LESSONS §33) — verify-mapping-nulls.ts covers it.
+    round_up_enabled: 'bool', round_up_effective_from: 'text', round_up_history: 'json',
+    ...P,
   }),
   t('salary_snapshots', {
     ...H, person_id: 'text', effective_from: 'text', gross_annual: 'real', tax_code: 'text', student_loan_plan: 'text',
@@ -124,7 +132,12 @@ export const SYNCED_TABLES: SyncedTable[] = [
     person_id: 'text', source_type: 'text', source_id: 'text', occurrence_original_date: 'text', credit_card_id: 'text',
     savings_pot_id: 'text', pot_id: 'text', from_location_type: 'text', from_savings_pot_id: 'text', from_pot_id: 'text',
     to_location_type: 'text', to_savings_pot_id: 'text', to_pot_id: 'text', follows_payday: 'bool',
-    follows_cycle_start: 'bool', ...P,
+    follows_cycle_start: 'bool',
+    // PROMPT-13 B2 — `amount` is ALREADY the rounded figure; `rounded_from`
+    // is what it came from. The Coin Jar credit is derived from the pair
+    // and is never a row of its own.
+    rounded_from: 'real', rounding_pot_id: 'text',
+    ...P,
   }),
   t('salary_sorts', { ...H, pay_date: 'text', ...P }),
   t('salary_sort_targets', {
