@@ -56,6 +56,7 @@ import { buildExampleLedger } from '../lib/savingsInterest'
 import { newPot, potBalanceAsOf, potDepositOccurrencePreviews } from '../lib/potLedger'
 import { pickNextSharedCardColor } from '../lib/creditCards'
 import { describeSchedule, recentAndUpcomingOccurrences } from '../lib/schedule'
+import { isBillTemplate } from '../lib/bills'
 import { recentAndUpcomingLoanPaymentDates } from '../lib/ledgerLoans'
 import { locationsEqual, transferLocationLabel, transferLocationKey, buildTransferLocationOptions, type TransferLocationOption } from '../lib/transferLedger'
 import { AmountStep, LocationStep, FrequencyStep, DateStep, type TransferFrequencyChoice, resolveTransferFrequencyChoice } from '../components/TransferSteps'
@@ -5052,7 +5053,7 @@ function BackupSection({ data, onRestore }: { data: AppDataV2; onRestore: (data:
       .then((text) => {
         const restoredData = parseLedgerBackupJson(text)
         const proceed = window.confirm(
-          `This will replace everything currently in the app (${data.people.length} ${data.people.length === 1 ? 'person' : 'people'}, ${data.recurringTemplates.length} bills, ${data.loans.length} loans, ${data.creditCards.length} credit cards, ${data.scenarios.length} scenarios) with the contents of this backup. This can't be undone. Continue?`,
+          `This will replace everything currently in the app (${data.people.length} ${data.people.length === 1 ? 'person' : 'people'}, ${data.recurringTemplates.filter(isBillTemplate).length} bills, ${data.loans.length} loans, ${data.creditCards.length} credit cards, ${data.scenarios.length} scenarios) with the contents of this backup. This can't be undone. Continue?`,
         )
         if (!proceed) return
         onRestore(restoredData)

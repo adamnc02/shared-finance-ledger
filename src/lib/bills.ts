@@ -1,4 +1,30 @@
 import type { Bill } from '../types/models'
+import type { RecurringTemplate } from '../types/ledger'
+
+/**
+ * A RecurringTemplate is only a BILL when its `kind` says so. `kind` is
+ * optional and absent means 'bill' (see types/ledger.ts — every template
+ * persisted before the field existed is a bill), so the default has to be
+ * folded in here rather than testing `kind === 'bill'` on its own.
+ *
+ * Without this, the 'transaction' and 'transfer' kinds leak into anything
+ * that reads recurringTemplates as "the bills": a recurring transfer (e.g.
+ * a monthly current-account -> Pot deposit) is populated with location:
+ * 'personal' / ownerId: primary person purely so the projection and
+ * auto-clear engines pick it up by their shared `location === 'personal'
+ * && ownerId === personId` filter, which makes it indistinguishable from a
+ * personal bill to a caller that only looks at location/ownerId. Bills and
+ * Transfers are separate things; recurring transfers belong to the
+ * Transactions page's Transfer pill (Expenses.tsx's `recurringTransfers`),
+ * which does the mirror-image `kind === 'transfer'` filter.
+ *
+ * Deliberately NOT used by lib/legacyBridge.ts: the What-if baseline wants
+ * every kind counted, since a transfer out of the current account really
+ * does reduce what's available to spend (confirmed 2026-09-20).
+ */
+export function isBillTemplate(t: RecurringTemplate): boolean {
+  return (t.kind ?? 'bill') === 'bill'
+}
 
 /** Total of every joint-account bill, regardless of who it's nominally tagged to. */
 export function jointAccountTotal(bills: Bill[]): number {
