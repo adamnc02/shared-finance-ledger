@@ -17,6 +17,7 @@ import { FormButtonRow, CancelButton, SaveButton } from '../components/FormButto
 import { useSavedFlash, SavedFlashOverlay } from '../components/SavedFlash'
 import { EffectiveDatedChangeFlow, type RecurringChangeField, type ChangeScope } from '../components/EffectiveDatedChangeFlow'
 import { peopleWithIncomeCount } from '../lib/household'
+import { isBillTemplate } from '../lib/bills'
 import { shouldOfferLocationPicker } from '../lib/pickerFirst'
 import {
   recentAndUpcomingOccurrences,
@@ -191,7 +192,9 @@ export function Bills() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routerLocation.state])
 
-  const visibleBills = data.recurringTemplates
+  const billTemplates = data.recurringTemplates.filter(isBillTemplate)
+
+  const visibleBills = billTemplates
     .slice()
     .filter((t) => locationFilter === 'all' || t.location === locationFilter)
     .sort((a, b) => parseLocalDate(a.anchorDate).getDate() - parseLocalDate(b.anchorDate).getDate())
@@ -201,7 +204,7 @@ export function Bills() {
   // would do something" instinct as the whole row's own visibility guard
   // below (which now also fires once a bill is pot-located, not just
   // joint).
-  const filterOptions: ('all' | BillLocation)[] = ['all', 'personal', ...(data.recurringTemplates.some((t) => t.location === 'joint') ? (['joint'] as const) : []), ...(data.recurringTemplates.some((t) => t.location === 'pot') ? (['pot'] as const) : [])]
+  const filterOptions: ('all' | BillLocation)[] = ['all', 'personal', ...(billTemplates.some((t) => t.location === 'joint') ? (['joint'] as const) : []), ...(billTemplates.some((t) => t.location === 'pot') ? (['pot'] as const) : [])]
 
   return (
     <div className="max-w-md mx-auto px-4 pt-6">
