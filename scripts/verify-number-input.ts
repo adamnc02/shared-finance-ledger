@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 // REPORTED: "Amount input fields do not clear completely in most places
 // in the app — when deleting all numbers the input field leaves a leading
 // zero which is really hard to clear."
@@ -126,6 +127,65 @@ const clampPercent = (v: string) => Math.max(0, Math.min(100, Number(v)))
 check('Split percent still clamps an empty input to 0', clampPercent(''), 0)
 check('...but the field stays empty while focused, rather than showing a stuck "0"', resync('', clampPercent(''), true), '')
 check('...and settles on blur', onBlur(clampPercent('')), '0')
+
+// ---- 7. PROMPT-13 Part C — a negative opening balance, without SQL ----
+//
+// Adam hit this on 2026-09-20 setting Ella up: she is overdrawn, and he
+// could not type −380.39. He fixed it with a direct UPDATE on
+// `shared_finance_ledger.pay_cycles`.
+//
+// IT IS A UI BUG, NOT A RULE. Nothing clamps: `Number(openingBalance)` is
+// stored unclamped and there is no `min="0"` anywhere in the app. The
+// blocker is `inputMode="decimal"`, which on iOS shows a keypad with no
+// minus key.
+//
+// 🚨 THE CHECK THAT MATTERS IS THE NEGATIVE ONE: a field that has NOT
+// opted in must still refuse a minus. The plausible wrong fix is to widen
+// every numeric field in the app, which would put a minus key on amounts,
+// rates, terms and days-of-the-month, where a negative is always a typo.
+console.log('\n── Part C: allowNegative ──')
+
+const readFile = (p: string) => readFileSync(`${process.cwd()}/${p}`, 'utf8')
+const numberInput = readFile('src/components/NumberInput.tsx')
+const editField = readFile('src/components/EditField.tsx')
+const salary = readFile('src/pages/Salary.tsx')
+
+// The mechanism: inputMode is what picks the keypad, and only 'text' has
+// a minus key. `type="number"` still governs what is ACCEPTED, so this
+// widens the keyboard without widening the field.
+check('NumberInput takes an allowNegative opt-in', numberInput.includes('allowNegative'), true)
+check('...which switches inputMode to one with a minus key', numberInput.includes("inputMode={allowNegative ? 'text' : (rest.inputMode ?? 'decimal')}"), true)
+check('...and defaults to the decimal pad when not opted in', numberInput.includes("rest.inputMode ?? 'decimal'"), true)
+check('EditField passes it through, so every numeric EditField can opt in', editField.includes('allowNegative={allowNegative}'), true)
+
+// Parsing was never the problem, but pin it: a minus must survive the
+// same path a positive takes, and an empty field must still read 0.
+const parseTyped = (v: string) => (v.trim() === '' ? 0 : Number(v))
+check('a negative parses to a negative, unclamped', parseTyped('-380.39'), -380.39)
+check('a bare minus is still "mid-typing", not a value', Number.isNaN(parseTyped('-')), true)
+check('...so the resync must not clobber it', resync('-', -380.39, false), '-')
+check('an empty field still reads 0, not NaN', parseTyped(''), 0)
+
+// WHICH FIELDS. Opening balances only.
+// Counted as a bare PROP on its own line, so the prose mentioning it in
+// a nearby comment is not miscounted as a fourth opted-in field.
+const optedIn = salary.split('\n').filter((l) => l.trim() === 'allowNegative').length
+check('exactly three fields in Salary.tsx opt in', optedIn, 3)
+check('...the pay-cycle settings opening balance (Adam’s own case)', salary.includes('value={draftOpeningBalance}') && salary.includes('allowNegative'), true)
+check('...the salary setup form’s opening balance', salary.includes('value={openingBalance}'), true)
+check('...and the Coin Jar’s editable opening balance (B5)', salary.includes('value={openingBalance}\n                onChange={setOpeningBalance}'), true)
+
+// THE CONTROL — the fields that must still refuse a minus. Each is a
+// NumberInput in the same file that does NOT opt in.
+const paydayField = salary.slice(salary.indexOf('value={draftPayday}') - 400, salary.indexOf('value={draftPayday}'))
+check('CONTROL: the payday field does NOT opt in', paydayField.includes('allowNegative'), false)
+check('CONTROL: ...and keeps its numeric keypad', paydayField.includes("inputMode=\"numeric\""), true)
+const cycleField = salary.slice(salary.indexOf('value={draftCycleStartDay}') - 400, salary.indexOf('value={draftCycleStartDay}'))
+check('CONTROL: the cycle-start-day field does NOT opt in', cycleField.includes('allowNegative'), false)
+// And the clamps that already existed still do their job — a minus typed
+// into a day-of-month field is clamped away by the call site regardless.
+check('CONTROL: a minus typed into the payday field still clamps to 1', clampDay('-5'), 1)
+check('CONTROL: a minus in a split percent still clamps to 0', clampPercent('-20'), 0)
 
 console.log(failures === 0 ? '\nAll number-input checks passed.' : `\n${failures} number-input check(s) failed.`)
 if (failures > 0) process.exit(1)

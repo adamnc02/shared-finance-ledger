@@ -45,12 +45,31 @@ export function NumberInput({
   onChange,
   className,
   inputRef,
+  allowNegative,
   ...rest
 }: {
   value: string | number
   onChange: (raw: string) => void
   className?: string
   inputRef?: React.RefObject<HTMLInputElement | null>
+  /**
+   * PROMPT-13 Part C (2026-09-20) — OPT IN to a keypad with a minus key.
+   *
+   * Nothing in this app ever clamped a negative away: `Number(value)` is
+   * stored unclamped and there is no `min="0"` anywhere. The blocker was
+   * `inputMode="decimal"` below, which on iOS shows a numeric keypad with
+   * NO MINUS KEY — so an overdrawn opening balance simply could not be
+   * typed on a phone. Adam hit this setting Ella up on 2026-09-20 and had
+   * to fix it with a direct UPDATE on `pay_cycles`.
+   *
+   * 🚨 IT IS OPT-IN, AND MUST STAY OPT-IN. Only fields that legitimately
+   * take a minus get it: an opening balance (an overdraft; a pot
+   * reconciled below zero). An amount, a rate, a term and a day-of-month
+   * do NOT — a negative there is a typo, and offering the key invites it.
+   * `verify-number-input.ts` asserts both directions, including that a
+   * non-negative field still refuses a minus.
+   */
+  allowNegative?: boolean
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'className'>) {
   const [raw, setRaw] = useState(() => display(value))
   const [focused, setFocused] = useState(false)
@@ -73,7 +92,13 @@ export function NumberInput({
       type="number"
       // iOS shows the full alphabetic keyboard for type="number" unless
       // told otherwise — inputMode is what actually picks the decimal pad.
-      inputMode={rest.inputMode ?? 'decimal'}
+      //
+      // `text` is what gets a minus key: iOS's "decimal" and "numeric"
+      // pads have none, and there is no inputMode that means
+      // "decimal, with a sign". `type="number"` above still governs what
+      // the field will accept, so this widens the KEYBOARD without
+      // widening what can be entered.
+      inputMode={allowNegative ? 'text' : (rest.inputMode ?? 'decimal')}
       value={raw}
       onFocus={(e) => {
         setFocused(true)

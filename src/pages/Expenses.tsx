@@ -88,7 +88,7 @@ const RECURRING_FREQUENCY_LABELS: Record<'weekly' | 'every_n_weeks' | 'monthly' 
 type RecurringFrequency = keyof typeof RECURRING_FREQUENCY_LABELS
 
 import { todayIso, toLocalIsoDate } from '../lib/date'
-import { fundablePots } from '../lib/roundUp'
+import { fundablePots, unroundedAmount } from '../lib/roundUp'
 
 type PageMode = 'transactions' | 'recurring' | 'transfer' | 'overpayments'
 
@@ -213,7 +213,12 @@ function EditSimpleTransactionForm({
   onSave: (updates: Partial<Pick<Transaction, 'amount' | 'date' | 'note' | 'fromLocation' | 'toLocation'>>) => void
   onCancel: () => void
 }) {
-  const [amount, setAmount] = useState(String(transaction.amount))
+  // PROMPT-13 B3 — the field shows the REAL PRICE, not the stored rounded
+  // figure: a £7.50 shop stored as £8.00 opens at 7.50. The person is
+  // correcting what they actually spent ("it's because I got the price
+  // wrong"), and LedgerContext re-rounds on save. Seeding this from
+  // `amount` would ratchet the row up a pound every time it was saved.
+  const [amount, setAmount] = useState(String(unroundedAmount(transaction)))
   const [date, setDate] = useState(transaction.date)
   const [note, setNote] = useState(transaction.note ?? '')
   const [fromLocation, setFromLocation] = useState(transaction.fromLocation)
@@ -227,7 +232,7 @@ function EditSimpleTransactionForm({
   // edit row as well as any other simple amount/date/note entity, so
   // this one fix covers both "transaction" and "transfer" edit rows.
   const dirty =
-    amountNumber !== transaction.amount ||
+    amountNumber !== unroundedAmount(transaction) ||
     date !== transaction.date ||
     note.trim() !== (transaction.note ?? '') ||
     (!!locations && (!locationsEqual(fromLocation, transaction.fromLocation) || !locationsEqual(toLocation, transaction.toLocation)))
@@ -805,7 +810,12 @@ function EditEntryForm({
   onCancel: () => void
 }) {
   const [name, setName] = useState(transaction.note ?? '')
-  const [amount, setAmount] = useState(String(transaction.amount))
+  // PROMPT-13 B3 — the field shows the REAL PRICE, not the stored rounded
+  // figure: a £7.50 shop stored as £8.00 opens at 7.50. The person is
+  // correcting what they actually spent ("it's because I got the price
+  // wrong"), and LedgerContext re-rounds on save. Seeding this from
+  // `amount` would ratchet the row up a pound every time it was saved.
+  const [amount, setAmount] = useState(String(unroundedAmount(transaction)))
   const [date, setDate] = useState(transaction.date)
   const [categoryId, setCategoryId] = useState(transaction.categoryId)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(transaction.paymentMethod)
@@ -855,7 +865,7 @@ function EditEntryForm({
   // follows.
   const dirty =
     name.trim() !== (transaction.note ?? '') ||
-    amountNumber !== transaction.amount ||
+    amountNumber !== unroundedAmount(transaction) ||
     date !== transaction.date ||
     categoryId !== transaction.categoryId ||
     (paymentMethodEditable && paymentMethod !== transaction.paymentMethod) ||

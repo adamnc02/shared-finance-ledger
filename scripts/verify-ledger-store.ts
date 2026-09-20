@@ -217,7 +217,11 @@ check('no direct localStorage use', !/\blocalStorage\b/.test(contextSource))
 
 // ── 6. Public API snapshot ────────────────────────────────────────────────
 console.log('\n6. LedgerContextValue public API is unchanged')
-// Taken from `main` before PROMPT-06 (de042dd4 test / 6b4d9112 live): 76 members.
+// Taken from `main` before PROMPT-06 (de042dd4 test / 6b4d9112 live): 76
+// members. PROMPT-13 (2026-09-20) adds `setRoundUp` — 77. The point of
+// this snapshot is that a member is never added or removed WITHOUT
+// noticing, not that the list never grows: it caught this addition on the
+// first run after it was made, which is the behaviour wanted.
 const API_SNAPSHOT = [
   'addAdHocTransaction', 'addCategory', 'addCreditCard', 'addLoan', 'addPension', 'addPerson', 'addPot',
   'addRecurringTemplate', 'addRecurringTransfer', 'addSalaryOverride', 'addSalarySnapshot', 'addSavingsPot',
@@ -225,6 +229,7 @@ const API_SNAPSHOT = [
   'assignRecurringTemplateLocation', 'calibrateLoanAction', 'changeCardPaymentDay', 'changeLoanStartDate',
   'changePayday', 'changePensionSchedule', 'changeRecurringOverpaymentStartDate', 'changeRecurringTemplateSchedule',
   'clearSalarySort', 'clearSalarySortTarget', 'data', 'deleteWithResolutions', 'importGeneration',
+  'setRoundUp', // PROMPT-13 B4 — turns round-ups on/off for one person and creates their Coin Jar
   'logCreditCardLumpPayment', 'logCreditCardSpend', 'logJointDeposit', 'logJointWithdrawal', 'logLoanOverpayment',
   'logPotDeposit', 'logPotWithdrawal', 'logSavingsDeposit', 'logSavingsWithdrawal', 'logTransfer',
   'overrideSavingsInterest', 'removeAllSalaryHistory', 'removeCategory', 'removeCreditCard',
