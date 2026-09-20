@@ -31,8 +31,9 @@ import { computeCycleSummary, compareByDateSalaryFirst } from '../lib/cycleSumma
 import { WalletStack } from '../components/WalletStack'
 import { BankCard } from '../components/BankCard'
 import { ProgressRing } from '../components/ProgressRing'
+import { RagLegend } from '../components/RagLegend'
 import { ProgressBar } from '../components/ProgressBar'
-import { progressSectionTitle, isCreditCardProgressVisible, summarizeLoansProgress } from '../lib/progressSection'
+import { progressSectionTitle, isCreditCardProgressVisible, summarizeLoansProgress, loansRagProgress, loanEntryRagProgress } from '../lib/progressSection'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { BalanceSpendChart, SavingsPotPillChart, shortDayLabel, type BalanceSpendView } from '../components/TrendChart'
 import { SAVINGS_CATEGORY_ID, CREDIT_CARD_CATEGORY_ID } from '../types/ledger'
@@ -3029,7 +3030,10 @@ function PersonalDetail({
           data={data}
           horizon={horizon}
           loans={data.loans.filter((l) => l.location === 'personal' && l.ownerId === data.primaryPersonId && l.active)}
-          horizonEndDate={parseLocalDate(projection.horizonEnd)}
+          // The page's own horizon keeps its existing value verbatim;
+          // only the modal's divergent one takes the horizonRangeEnd
+          // walk (which is what computeProjection used to reach it).
+          horizonEndFor={(h) => (h === horizon ? parseLocalDate(projection.horizonEnd) : horizonRangeEnd(data, data.primaryPersonId, h, new Date()))}
           title={progressSectionTitle('combined_loans')}
           color="var(--color-coral)"
           individualRings={false}
@@ -3071,13 +3075,18 @@ function HomeSection({ children, className = '' }: { children: ReactNode; classN
  * `--nav-h`/`--safe-bottom` padding below are all carried over unchanged
  * rather than rewritten, so that fix cannot be lost twice.
  *
- * NOTE (PROMPT-08c): the This cycle / Next 3 cycles control is on the home
- * page behind this modal and can't be reached from inside it. The rings
- * here honour whatever horizon was active when the modal was opened, which
- * is the same horizon the preview bar outside is drawn from — so the two
- * always agree. Making it reachable, and the per-cycle tooltip, is 08c.
+ * NOTE (PROMPT-08c, SUPERSEDED by PROMPT-13 A3 on 2026-09-20): this used
+ * to say the This cycle / Next 3 cycles control sat on the home page
+ * behind the modal and could not be reached from inside it, so the rings
+ * always agreed with the preview bar outside. That was the BUG, not the
+ * design. The LOAN modals now carry their own control via
+ * `ProgressModalWithHorizon` (the `control` prop below) and are free to
+ * disagree with the page. Credit-card and savings-pot modals pass no
+ * control and still follow the page's horizon — PROMPT-13 is scoped to
+ * loans only. The per-cycle tooltip was dropped outright when Adam closed
+ * 08d.
  */
-function ProgressModal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+function ProgressModal({ title, children, onClose, control }: { title: string; children: ReactNode; onClose: () => void; control?: ReactNode }) {
   return createPortal(
     <div className="fixed inset-0 z-[500] flex items-end justify-center" style={{ background: 'rgba(5,7,13,0.72)' }} onClick={onClose}>
       <div
@@ -3100,11 +3109,75 @@ function ProgressModal({ title, children, onClose }: { title: string; children: 
               <X size={20} className="text-[var(--color-ink-muted)]" />
             </button>
           </div>
+          {/* PROMPT-13 A3 — the modal's own horizon control, when it has
+              one. Full-width under the header, same position TrendsModal
+              puts its own controls in. */}
+          {control && <div className="w-full">{control}</div>}
           <div className="w-full pt-1">{children}</div>
         </div>
       </div>
     </div>,
     document.body,
+  )
+}
+
+/**
+ * PROMPT-13 A3 — `ProgressModal` plus its OWN This cycle / Next 3 cycles
+ * control.
+ *
+ * The bug: `ProgressModal` covers the page, so the page's own horizon
+ * control sits behind it and cannot be reached. Adam, 2026-09-20: "the
+ * next 3 cycles/this cycle buttons need to now also exist on the pie
+ * chart modals, and not be restricted due to the filters on the main home
+ * page (we already fixed this bug with the trend charts)."
+ *
+ * `TrendsModal` is the precedent and its arrangement is copied rather
+ * than reinvented: the segmented control sits full-width directly under
+ * the header row, above the body.
+ *
+ * 🚨 THE MODAL AND THE PAGE ARE ALLOWED TO DISAGREE, DELIBERATELY. The
+ * control starts on whatever the page was showing, and from then on it is
+ * independent — that is precisely what "not restricted due to the filters
+ * on the main home page" means. The preview BAR outside keeps following
+ * the page's own horizon. The 08b-era note on `ProgressModal` saying the
+ * two "always agree" described the bug, and no longer applies to the loan
+ * modals.
+ *
+ * State lives here rather than in `ProgressPreview` so that closing and
+ * reopening the modal returns to the page's horizon, instead of silently
+ * remembering a choice made inside a sheet the person has already
+ * dismissed.
+ */
+function ProgressModalWithHorizon({
+  title,
+  pageHorizon,
+  renderBody,
+  onClose,
+}: {
+  title: string
+  pageHorizon: ProjectionHorizon
+  renderBody: (horizon: ProjectionHorizon) => ReactNode
+  onClose: () => void
+}) {
+  const [horizon, setHorizon] = useState<ProjectionHorizon>(pageHorizon)
+  return (
+    <ProgressModal
+      title={title}
+      onClose={onClose}
+      control={
+        <SegmentedControl
+          fullWidth
+          options={[
+            { value: 'current_cycle' as const, label: HORIZON_LABELS.current_cycle },
+            { value: 'three_cycles' as const, label: HORIZON_LABELS.three_cycles },
+          ]}
+          value={horizon}
+          onChange={setHorizon}
+        />
+      }
+    >
+      {renderBody(horizon)}
+    </ProgressModal>
   )
 }
 
@@ -3131,7 +3204,31 @@ export interface ProgressBarSpec {
  * nothing to show (Adam, 2026-09-18: "the section is hidden if there is
  * nothing to show"), which is why there is no empty state below.
  */
-function ProgressPreview({ title, bars, children }: { title: string; bars: ProgressBarSpec[]; children: ReactNode }) {
+function ProgressPreview({
+  title,
+  bars,
+  children,
+  renderBody,
+  pageHorizon,
+}: {
+  title: string
+  bars: ProgressBarSpec[]
+  children?: ReactNode
+  /**
+   * PROMPT-13 A3 — when present, the modal owns its OWN This cycle /
+   * Next 3 cycles control and hands the chosen horizon to this function,
+   * instead of rendering `children` against the page's horizon.
+   *
+   * Only the LOAN flavour passes it. Part A is scoped "loans only"
+   * (Adam, 2026-09-20: "We will keep this just to loans, exclude credit
+   * cards from this work... Debt rings only"), so the credit-card and
+   * savings-pot progress modals still follow the page's own filter and
+   * still render via `children`. See §0b in the prompt doc.
+   */
+  renderBody?: (horizon: ProjectionHorizon) => ReactNode
+  /** What the modal's own control STARTS on — the page's horizon, after which the two are free to disagree. */
+  pageHorizon?: ProjectionHorizon
+}) {
   const [open, setOpen] = useState(false)
   return (
     <HomeSection>
@@ -3158,11 +3255,14 @@ function ProgressPreview({ title, bars, children }: { title: string; bars: Progr
           View progress
         </div>
       </button>
-      {open && (
-        <ProgressModal title={title} onClose={() => setOpen(false)}>
-          {children}
-        </ProgressModal>
-      )}
+      {open &&
+        (renderBody ? (
+          <ProgressModalWithHorizon title={title} pageHorizon={pageHorizon ?? 'current_cycle'} renderBody={renderBody} onClose={() => setOpen(false)} />
+        ) : (
+          <ProgressModal title={title} onClose={() => setOpen(false)}>
+            {children}
+          </ProgressModal>
+        ))}
     </HomeSection>
   )
 }
@@ -3186,7 +3286,7 @@ function LoanProgressSection({
   data,
   horizon,
   loans,
-  horizonEndDate,
+  horizonEndFor,
   title,
   color,
   individualRings = true,
@@ -3195,7 +3295,20 @@ function LoanProgressSection({
   data: AppDataV2
   horizon: ProjectionHorizon
   loans: Loan[]
-  horizonEndDate: Date
+  /**
+   * PROMPT-13 A3 — was a fixed `horizonEndDate: Date`, derived by the
+   * caller from the PAGE's horizon. That could not survive the modal
+   * getting its own control: with the page on "This cycle" and the modal
+   * switched to "Next 3 cycles", the projection would have been taken
+   * against this cycle's end and every amber segment would have been far
+   * too small, with nothing on screen to suggest anything was wrong.
+   *
+   * Callers therefore hand over the WALK, not the answer. Each one keeps
+   * returning its own previously-computed date unchanged when asked for
+   * the page's own horizon, so the default view is provably identical to
+   * before; only the modal's divergent horizon takes the new path.
+   */
+  horizonEndFor: (horizon: ProjectionHorizon) => Date
   title: string
   color: string
   individualRings?: boolean
@@ -3206,7 +3319,8 @@ function LoanProgressSection({
   if (loans.length === 0) return null
 
   const showProjection = horizon === 'three_cycles'
-  const summary = summarizeLoansProgress(loans, showProjection ? horizonEndDate : undefined)
+  // The BARS stay on the page's horizon — see the note on ProgressPreview.
+  const summary = summarizeLoansProgress(loans, showProjection ? horizonEndFor(horizon) : undefined)
 
   const bars: ProgressBarSpec[] = [
     { key: 'combined', percent: summary.percentPaid, projectedPercent: summary.projectedPercentPaid, color },
@@ -3225,9 +3339,17 @@ function LoanProgressSection({
   }
 
   return (
-    <ProgressPreview title={title} bars={bars}>
-      <LoanProgressRingsSection data={data} horizon={horizon} loans={loans} horizonEndDate={horizonEndDate} individualRings={individualRings} />
-    </ProgressPreview>
+    // PROMPT-13 A3 — the BARS above stay on the page's own `horizon`;
+    // the modal's body is rendered against whatever its own control is
+    // set to. The two are deliberately allowed to disagree.
+    <ProgressPreview
+      title={title}
+      bars={bars}
+      pageHorizon={horizon}
+      renderBody={(modalHorizon) => (
+        <LoanProgressRingsSection data={data} horizon={modalHorizon} loans={loans} horizonEndDate={horizonEndFor(modalHorizon)} individualRings={individualRings} />
+      )}
+    />
   )
 }
 
@@ -3328,8 +3450,14 @@ function LoanProgressRingsSection({
               const projected = projectedLoanProgress?.[i]
               const category = data.categories.find((c) => c.id === loan.categoryId)
               return (
-                <div key={loan.id} className="flex flex-col items-center gap-1">
+                <div key={loan.id} className="flex flex-col items-center gap-1 w-full">
+                  {/* PROMPT-13 §0b Q4 — a legend above EVERY ring, the
+                      per-loan ones included, not just the combined one. */}
+                  <div className="w-full mb-2">
+                    <RagLegend progress={loanEntryRagProgress(summary.perLoan[i], showProjection)} />
+                  </div>
                   <ProgressRing
+                    segments={loanEntryRagProgress(summary.perLoan[i], showProjection).segments}
                     percent={progress.percentPaid}
                     projectedPercent={projected?.percentPaid}
                     value={`£${formatCurrency(progress.totalPaid)}`}
@@ -3380,7 +3508,11 @@ function LoanProgressRingsSection({
                 className={`flex flex-col items-center gap-1 w-full${individualRings ? ' pt-5 mt-1 border-t' : ''}`}
                 style={{ borderColor: 'var(--color-track)' }}
               >
+                <div className="w-full mb-2">
+                  <RagLegend progress={loansRagProgress(summary, showProjection)} />
+                </div>
                 <ProgressRing
+                  segments={loansRagProgress(summary, showProjection).segments}
                   percent={totalLoansPercentPaid}
                   projectedPercent={showProjection ? totalLoansProjectedPercent : undefined}
                   value={`£${formatCurrency(totalLoansPaid)}`}
@@ -3555,7 +3687,7 @@ function JointDetail({
           data={data}
           horizon={horizon}
           loans={jointLoans}
-          horizonEndDate={parseLocalDate(jointProjection.horizonEnd)}
+          horizonEndFor={(h) => (h === horizon ? parseLocalDate(jointProjection.horizonEnd) : horizonRangeEnd(data, data.primaryPersonId, h, new Date()))}
           title={progressSectionTitle('combined_loans')}
           color="var(--color-positive)"
           individualBars
@@ -3783,7 +3915,7 @@ function HouseholdDetail({
           data={data}
           horizon={horizon}
           loans={householdLoans}
-          horizonEndDate={householdHorizonEnd}
+          horizonEndFor={(h) => (h === horizon ? householdHorizonEnd : horizonRangeEnd(data, data.primaryPersonId, h, new Date()))}
           title={progressSectionTitle('combined_loans')}
           color="var(--color-coral)"
           individualBars
@@ -4133,7 +4265,7 @@ function LoanDetail({
         data={data}
         horizon={horizon}
         loans={[loan]}
-        horizonEndDate={horizonRangeEnd(data, data.primaryPersonId, horizon, asOf)}
+        horizonEndFor={(h) => horizonRangeEnd(data, data.primaryPersonId, h, asOf)}
         title={progressSectionTitle('loan', loan.name)}
         color={color}
       />
