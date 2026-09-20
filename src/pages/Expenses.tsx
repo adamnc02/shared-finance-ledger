@@ -88,6 +88,7 @@ const RECURRING_FREQUENCY_LABELS: Record<'weekly' | 'every_n_weeks' | 'monthly' 
 type RecurringFrequency = keyof typeof RECURRING_FREQUENCY_LABELS
 
 import { todayIso, toLocalIsoDate } from '../lib/date'
+import { fundablePots } from '../lib/roundUp'
 
 type PageMode = 'transactions' | 'recurring' | 'transfer' | 'overpayments'
 
@@ -815,7 +816,12 @@ function EditEntryForm({
   // own existing location semantics untouched.
   const canEditLocation = transaction.type === 'expense' || transaction.type === 'income'
   const PERSONAL_LOCATION_OPTION: TransferLocationOption = { key: 'personal', label: 'Current Account', location: { type: 'personal' } }
-  const pickableLocationOptions = buildTransferLocationOptions(data.savingsPots, data.pots, !!data.jointAccount, data.primaryPersonId).filter(
+  // PROMPT-13 B5, restriction 4 — nothing is spent out of a Coin Jar ad
+  // hoc, so it is not an option for "where did this money come from".
+  // The TRANSFER wizard's own options (transferLocationOptions, above)
+  // are deliberately NOT filtered: transfers in and out are the
+  // sanctioned way to move money to and from a jar.
+  const pickableLocationOptions = buildTransferLocationOptions(data.savingsPots, fundablePots(data.pots), !!data.jointAccount, data.primaryPersonId).filter(
     (o) => o.location.type !== 'savings',
   )
   const nonPersonalLocationOptions = pickableLocationOptions.filter((o) => o.location.type !== 'personal')
@@ -1039,7 +1045,12 @@ function ExpenseForm({
   // there's no genuine non-Personal choice to make — no Joint account and
   // no Pots.
   const PERSONAL_LOCATION_OPTION: TransferLocationOption = { key: 'personal', label: 'Current Account', location: { type: 'personal' } }
-  const pickableLocationOptions = buildTransferLocationOptions(data.savingsPots, data.pots, !!data.jointAccount, data.primaryPersonId).filter(
+  // PROMPT-13 B5, restriction 4 — nothing is spent out of a Coin Jar ad
+  // hoc, so it is not an option for "where did this money come from".
+  // The TRANSFER wizard's own options (transferLocationOptions, above)
+  // are deliberately NOT filtered: transfers in and out are the
+  // sanctioned way to move money to and from a jar.
+  const pickableLocationOptions = buildTransferLocationOptions(data.savingsPots, fundablePots(data.pots), !!data.jointAccount, data.primaryPersonId).filter(
     (o) => o.location.type !== 'savings',
   )
   const nonPersonalLocationOptions = pickableLocationOptions.filter((o) => o.location.type !== 'personal')
@@ -1696,7 +1707,7 @@ function OverpaymentCreateForm({
 
   const amountNumber = mode === 'recurring' && recurringAmountType === 'percent_of_balance' ? Number(recurringPercent) : Number(amount)
   const targetLoan = target?.kind === 'loan' ? loans.find((l) => l.id === target.id) : undefined
-  const ownerPots = targetLoan ? pots.filter((p) => p.personId === targetLoan.ownerId) : []
+  const ownerPots = targetLoan ? fundablePots(pots).filter((p) => p.personId === targetLoan.ownerId) : []
 
   function reset() {
     setMode('one_off')
@@ -2216,7 +2227,7 @@ function LoanRecurringOverpaymentRow({
 }) {
   const [isEditing, setIsEditing] = useState(false)
   const { active: flashActive, message: flashMessage, trigger: triggerFlash } = useSavedFlash('Recurring overpayment updated.')
-  const ownerPots = pots.filter((p) => p.personId === loan.ownerId)
+  const ownerPots = fundablePots(pots).filter((p) => p.personId === loan.ownerId)
 
   const summary =
     value.amount.type === 'fixed' ? `£${formatCurrency(value.amount.amount)}` : `${value.amount.percent}% of balance`
@@ -2542,7 +2553,7 @@ function LoanRecurringOverpaymentEditForm({
             <option value="personal" style={{ color: '#000' }}>
               Personal
             </option>
-            {pots.map((p) => (
+            {fundablePots(pots).map((p) => (
               <option key={p.id} value={`pot:${p.id}`} style={{ color: '#000' }}>
                 {p.name}
               </option>
@@ -3196,7 +3207,12 @@ function RecurringTransactionForm({
   // comment for the full reasoning (personal/joint/pot, never savings,
   // skipped when there's no non-Personal choice to make).
   const PERSONAL_LOCATION_OPTION: TransferLocationOption = { key: 'personal', label: 'Current Account', location: { type: 'personal' } }
-  const pickableLocationOptions = buildTransferLocationOptions(data.savingsPots, data.pots, !!data.jointAccount, data.primaryPersonId).filter(
+  // PROMPT-13 B5, restriction 4 — nothing is spent out of a Coin Jar ad
+  // hoc, so it is not an option for "where did this money come from".
+  // The TRANSFER wizard's own options (transferLocationOptions, above)
+  // are deliberately NOT filtered: transfers in and out are the
+  // sanctioned way to move money to and from a jar.
+  const pickableLocationOptions = buildTransferLocationOptions(data.savingsPots, fundablePots(data.pots), !!data.jointAccount, data.primaryPersonId).filter(
     (o) => o.location.type !== 'savings',
   )
   const nonPersonalLocationOptions = pickableLocationOptions.filter((o) => o.location.type !== 'personal')

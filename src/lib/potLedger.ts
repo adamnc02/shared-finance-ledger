@@ -28,6 +28,7 @@ import { potTransferSignedAmount, transferTouchesPot } from './transferLedger'
 import { nanoid } from 'nanoid'
 import { SAVINGS_CATEGORY_ID } from '../types/ledger'
 import { daysBetweenInclusive, buildDailyBalanceSeries, buildDailySpendSeries, type BalanceSpendGranularity, type BalanceSpendTrendSeries } from './runningBalance'
+import { storedUplift } from './roundUp'
 import type { AppDataV2, CreditCard, Loan, PayCycleConfig, Pot, RecurringOccurrenceOverride, RecurringTemplate, Transaction } from '../types/ledger'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -57,6 +58,16 @@ export function newPot(input: { personId: string; name: string; openingBalance: 
 // itself (see Pot's own header comment). ───────────────────────────────
 
 export function potBillsAndLoans(data: AppDataV2, potId: string): { templates: RecurringTemplate[]; loans: Loan[]; creditCards: CreditCard[] } {
+  // PROMPT-13 B5, restriction 2 of 4 — a Coin Jar funds NOTHING. Adam,
+  // 2026-09-20: it has no target, no recurring deposits, and cannot pay a
+  // bill, loan or credit-card payment. Enforced HERE, at the generator,
+  // and not only by hiding it from the pickers: "a hidden picker entry is
+  // not enforcement". Returning empty lists means that even if a stored
+  // bill somehow points its `potId` at a Coin Jar — imported data, a
+  // future bug, a hand-edited backup — no payment is ever generated out
+  // of it and its balance cannot be driven negative by something the UI
+  // never offered.
+  if (data.pots.find((p) => p.id === potId)?.isCoinJar) return { templates: [], loans: [], creditCards: [] }
   return {
     templates: data.recurringTemplates.filter((t) => t.location === 'pot' && t.potId === potId),
     loans: data.loans.filter((l) => l.location === 'pot' && l.potId === potId),
@@ -121,6 +132,11 @@ function walkPotDepositOccurrences(pot: Pot, rangeStart: Date, rangeEnd: Date): 
  * safety.
  */
 export function generatePotDepositTransactions(pot: Pot, rangeStart: Date, rangeEnd: Date, transferTemplates: RecurringTemplate[] = [], payCycle?: PayCycleConfig): Omit<Transaction, 'id'>[] {
+  // PROMPT-13 B5, restriction 3 of 4 — no recurring deposits into a Coin
+  // Jar. It fills from round-up uplifts and from ad-hoc transfers in,
+  // nothing else. A standing monthly deposit would make it an ordinary
+  // savings pot with a strange name.
+  if (pot.isCoinJar) return []
   const legacy = walkPotDepositOccurrences(pot, rangeStart, rangeEnd).map((occ) => ({
     date: occ.date,
     amount: occ.amount,
@@ -274,6 +290,13 @@ export function setPausedPotDeposits(pot: Pot, windowDates: string[], pausedDate
  * loan's own regular payment belongs here.
  */
 export function generatePotOutgoingTransactions(data: AppDataV2, pot: Pot, rangeStart: Date, rangeEnd: Date): Omit<Transaction, 'id'>[] {
+  // PROMPT-13 B5, restriction 2 of 4 (the other half). `potBillsAndLoans`
+  // above already returns nothing for a Coin Jar, so this early return is
+  // belt and braces — but it is also what the check asserts against, and
+  // it covers the `overpaymentOnlyLoans` path below, which does NOT go
+  // through `potBillsAndLoans` and would otherwise generate a pot-funded
+  // recurring overpayment out of a jar that must never fund anything.
+  if (pot.isCoinJar) return []
   const { templates, loans, creditCards } = potBillsAndLoans(data, pot.id)
   const results: Omit<Transaction, 'id'>[] = []
 
@@ -368,6 +391,71 @@ function transactionTouchesPot(t: Pick<Transaction, 'type' | 'potId' | 'fromLoca
 }
 
 /**
+ * PROMPT-13 B2 — the Coin Jar's credits, DERIVED from the expenses that
+ * fed it. There is no second transaction and never was; see
+ * `Transaction.roundedFrom` in types/ledger.ts for the decision.
+ *
+ * One synthetic `pot_deposit` row per rounded expense, for `amount -
+ * roundedFrom`, dated on the expense and labelled from its own note —
+ * exactly what Adam asked the Coin Jar's ledger to show. The id is
+ * derived from the expense's (`roundup:<id>`) rather than random so a
+ * React key is stable across renders and two devices agree on it; these
+ * rows are never stored, so nothing about them reaches the sync layer.
+ *
+ * 🚨 DELETE THE EXPENSE AND THE CREDIT GOES WITH IT, automatically,
+ * because it was never a row. That is the whole point of the derived
+ * model, and `verify-coin-jar-balance.ts` proves it by deleting one.
+ *
+ * 🚨 THESE ROWS MUST NEVER REACH THE PERSONAL LEDGER. They are
+ * `location: 'pot'` with this pot's `potId`, and they are produced only
+ * inside this file, which is only ever called with a pot in scope. The
+ * personal balance already accounts for the full £8.00 through the
+ * expense's own `amount`; a second £0.50 anywhere in that path is the
+ * double-count this comment exists to prevent.
+ *
+ * `openingDate` is honoured the same way every other pot row is: nothing
+ * before it counts, so setting a Coin Jar's opening balance "as of" a
+ * date does what it does for any pot.
+ */
+export function coinJarCreditRows(pot: Pot, allTransactions: Transaction[]): Transaction[] {
+  if (!pot.isCoinJar) return []
+  const rows: Transaction[] = []
+  for (const t of allTransactions) {
+    if (t.roundingPotId !== pot.id) continue
+    const uplift = storedUplift(t)
+    if (uplift <= 0) continue
+    if (t.date < pot.openingDate) continue
+    rows.push({
+      ...t,
+      id: `roundup:${t.id}`,
+      amount: uplift,
+      type: 'pot_deposit',
+      direction: 'in',
+      location: 'pot',
+      potId: pot.id,
+      categoryId: SAVINGS_CATEGORY_ID,
+      // The credit is as real as the spend that made it — a pending shop
+      // has a pending 50p, and both clear together (prompt doc §0c
+      // assumption 2). Anything else lets the jar's cleared balance
+      // disagree with the ledger feeding it.
+      status: t.status,
+      note: t.note,
+      // Cleared of everything that pointed at the ORIGINAL row, so this
+      // synthetic row can never be mistaken for its source or be
+      // re-rounded by anything reading it back.
+      roundedFrom: undefined,
+      roundingPotId: undefined,
+      sourceType: undefined,
+      sourceId: undefined,
+      fromLocation: undefined,
+      toLocation: undefined,
+      creditCardId: undefined,
+    })
+  }
+  return rows
+}
+
+/**
  * This pot's balance as of a given date: openingBalance, plus every
  * pot_deposit, minus every pot_withdrawal AND every bill_payment/
  * loan_payment funded from it (a pot-funded bill payment reduces the
@@ -380,7 +468,12 @@ function transactionTouchesPot(t: Pick<Transaction, 'type' | 'potId' | 'fromLoca
  */
 export function potBalanceAsOf(pot: Pot, activity: Transaction[], asOfDate: Date): number {
   const asOfIso = toIso(asOfDate)
-  const relevant = activity
+  // PROMPT-13 B2 — the Coin Jar's round-up credits are folded in HERE
+  // rather than at the call sites, so a caller cannot forget them and
+  // report a jar as empty. `coinJarCreditRows` returns nothing for any
+  // other pot, so this costs every other pot a single boolean.
+  const withCredits = [...activity, ...coinJarCreditRows(pot, activity)]
+  const relevant = withCredits
     .filter((t) => transactionTouchesPot(t, pot.id) && t.date >= pot.openingDate && t.date <= asOfIso)
     .sort((a, b) => a.date.localeCompare(b.date))
 
@@ -425,7 +518,13 @@ export function computePotProjection(data: AppDataV2, pot: Pot, horizon: Project
   const openingDateObj = parseLocalDate(pot.openingDate)
   const genStart = cycles[0].start > openingDateObj ? cycles[0].start : openingDateObj
 
-  const stored = data.transactions.filter((t) => transactionTouchesPot(t, pot.id) && t.date >= pot.openingDate)
+  // PROMPT-13 B2 — the derived Coin Jar credits sit alongside the stored
+  // rows, not the generated ones: they are not a schedule walk and are
+  // not deduped against anything, because each one already corresponds
+  // 1:1 with a real stored expense.
+  const stored = [...data.transactions, ...coinJarCreditRows(pot, data.transactions)].filter(
+    (t) => transactionTouchesPot(t, pot.id) && t.date >= pot.openingDate,
+  )
   const existingKeys = new Set(stored.map(dedupeKey).filter((k): k is string => k !== null))
 
   const generated: Omit<Transaction, 'id'>[] = [
@@ -483,7 +582,11 @@ export interface PotScheduleRow {
  */
 export function buildPotScheduleRows(data: AppDataV2, pot: Pot, asOfDate: Date = new Date()): PotScheduleRow[] {
   const { start, end } = schedulePotPreviewWindow(pot, asOfDate)
-  const potStored = data.transactions.filter((t) => transactionTouchesPot(t, pot.id) && t.date >= toIso(start) && t.date <= toIso(end))
+  // PROMPT-13 B2 — "Coin Jar's ledger shows one +£0.50 row per rounded
+  // expense, labelled from the expense's own note, dated on it."
+  const potStored = [...data.transactions, ...coinJarCreditRows(pot, data.transactions)].filter(
+    (t) => transactionTouchesPot(t, pot.id) && t.date >= toIso(start) && t.date <= toIso(end),
+  )
   const storedKeys = new Set(potStored.map((t) => `${t.type}:${t.sourceId ?? ''}:${t.date}`))
   const payCycle = data.payCycles.find((c) => c.personId === data.primaryPersonId)
 

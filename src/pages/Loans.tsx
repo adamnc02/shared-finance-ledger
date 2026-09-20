@@ -38,6 +38,7 @@ import { peopleWithIncomeCount } from '../lib/household'
 import { shouldOfferLocationPicker } from '../lib/pickerFirst'
 
 import { parseLocalDate, todayIso } from '../lib/date'
+import { fundablePots } from '../lib/roundUp'
 
 // The pre-seeded "Loan" category (see categories.ts) — LoanForm defaults
 // new loans onto this rather than falling through to whatever happens to
@@ -281,7 +282,7 @@ export function Loans() {
         {pickingLoanLocation && (
           <LocationPickerCard
             canBeJoint={canBeJoint}
-            ownerPots={data.pots.filter((p) => p.personId === loanDefaultOwnerId && p.active)}
+            ownerPots={fundablePots(data.pots).filter((p) => p.personId === loanDefaultOwnerId && p.active)}
             onPick={(pick) => {
               setLoanDefaultLocation(pick)
               setPickingLoanLocation(false)

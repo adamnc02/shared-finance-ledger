@@ -53,6 +53,7 @@ const FREQUENCY_LABELS: Record<RecurrenceFrequency, string> = {
 }
 
 import { todayIso, parseLocalDate } from '../lib/date'
+import { fundablePots } from '../lib/roundUp'
 
 type BillPrefill = Partial<Omit<RecurringTemplate, 'id' | 'active'>>
 
@@ -242,7 +243,7 @@ export function Bills() {
       {pickingBillLocation && (
         <LocationPickerCard
           canBeJoint={canBeJoint}
-          ownerPots={data.pots.filter((p) => p.personId === billDefaultOwnerId && p.active)}
+          ownerPots={fundablePots(data.pots).filter((p) => p.personId === billDefaultOwnerId && p.active)}
           onPick={(pick) => {
             setBillDefaultLocation(pick)
             setPickingBillLocation(false)
