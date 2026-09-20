@@ -1869,10 +1869,19 @@ function PotEditForm({
   onSave,
   onAssignTemplateLocation,
   onAssignLoanLocation,
+  roundUp,
 }: {
   pot: Pot
   templates: RecurringTemplate[]
   loans: Loan[]
+  /**
+   * PROMPT-13 B4 (Adam, 2026-09-20) — present only for a Coin Jar. The
+   * round-up toggle STARTS in the person's pay cycle settings, because the
+   * jar does not exist until it is first switched on; once the jar is real
+   * it lives here instead, which is where you would look for it. Deleting
+   * the jar moves it back to settings and switches rounding off.
+   */
+  roundUp?: { enabled: boolean; personName: string; occurrences: { date: string; isPast: boolean }[]; onChange: (enabled: boolean, effectiveFrom: string) => void }
   onCancel: () => void
   onSave: (updates: Partial<Omit<Pot, 'id' | 'personId'>>) => void
   onAssignTemplateLocation: (templateId: string, location: 'personal' | 'pot', effectiveFrom: string, potId?: string) => void
@@ -1888,6 +1897,12 @@ function PotEditForm({
   // balance and as of date". **This is not an inconsistency to tidy up.**
   const [openingBalance, setOpeningBalance] = useState(String(pot.openingBalance))
   const [openingDate, setOpeningDate] = useState(pot.openingDate)
+  // Its own flow, committed on its own, exactly as the pay cycle settings
+  // version is — NOT batched into this form's Save, which governs the name
+  // and the anchor pair. A dated change that shares a Save with undated
+  // fields is how you end up applying one person's date to the other's
+  // change (the same reasoning Batch 7 used for the bill/loan checklist).
+  const [choosingRoundUpFrom, setChoosingRoundUpFrom] = useState<boolean | null>(null)
   const items = potEligibleItems(pot, templates, loans)
   // Height of exactly CHECKLIST_VISIBLE_ROWS full rows, measured from the
   // rendered rows (their height depends on font size and dividers).
@@ -1989,6 +2004,28 @@ function PotEditForm({
     onSave(pot.isCoinJar ? { name: name.trim(), openingBalance: Number(openingBalance) || 0, openingDate } : { name: name.trim() })
   }
 
+  if (roundUp && choosingRoundUpFrom !== null) {
+    return (
+      <EffectiveDatedChangeFlow
+        occurrences={roundUp.occurrences}
+        dateStepDescription={
+          choosingRoundUpFrom
+            ? `Card spending from ${roundUp.personName}'s current account will be rounded up to the next pound, with the difference coming into this Coin Jar. Which payday should that start from? Everything already logged stays exactly as it is.`
+            : `${roundUp.personName}'s card spending will stop being rounded up. Which payday should that apply from? Every round-up already logged stays exactly as it is, and this Coin Jar keeps its balance.`
+        }
+        buildChanges={() => [{ label: 'Round-ups', from: roundUp.enabled ? 'On' : 'Off', to: choosingRoundUpFrom ? 'On' : 'Off' }]}
+        // A past date changes nothing already stored (B3) — only which
+        // NEWLY logged rows round — so it never affects a cleared balance.
+        affectsClearedBalance={() => false}
+        onCancelAll={() => setChoosingRoundUpFrom(null)}
+        onCommit={(effectiveFrom) => {
+          roundUp.onChange(choosingRoundUpFrom, effectiveFrom)
+          setChoosingRoundUpFrom(null)
+        }}
+      />
+    )
+  }
+
   return (
     <div className="rounded-2xl p-4" style={{ background: 'var(--color-bg-elevated)' }}>
       <div className="grid grid-cols-2 gap-3">
@@ -2034,6 +2071,27 @@ function PotEditForm({
           the name now, not the checklist below (which commits on its own,
           immediately, per item). */}
       <FormButtonRow onCancel={onCancel} onSave={handleSave} saveDisabled={!name.trim() || !dirty} />
+
+      {roundUp && (
+        // PROMPT-13 B4 — the toggle's home once the jar exists. Commits on
+        // its own through the dated flow above, like the checklist below and
+        // unlike the name/anchor fields, so it is placed AFTER this form's
+        // own Save rather than among the fields it governs.
+        <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--color-track)' }}>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={roundUp.enabled} onChange={(e) => setChoosingRoundUpFrom(e.target.checked)} />
+            <span className="text-xs text-[var(--color-ink)]">Round {roundUp.personName}'s card spending up to the next pound</span>
+          </label>
+          <p className="text-xs text-[var(--color-ink-faint)] mt-1.5 ml-6">
+            {roundUp.enabled
+              ? 'A £7.50 shop reads −£8.00 in the ledger and +£0.50 here. You’ll pick which payday a change applies from.'
+              : 'Off. Everything already rounded stays as it is, and this jar keeps its balance.'}
+          </p>
+          <p className="text-xs text-[var(--color-ink-faint)] mt-1.5 ml-6">
+            Delete this Coin Jar and round-ups switch off with it — the toggle goes back to {roundUp.personName}'s pay cycle settings.
+          </p>
+        </div>
+      )}
 
       {items.length > 0 && (
         <div className="mt-4">
@@ -2138,8 +2196,11 @@ function PotRow({
   onRemoveRecurringTemplate,
   shouldFlashOnMount,
   onFlashedOnMount,
+  roundUp,
 }: {
   pot: Pot
+  /** PROMPT-13 B4 — present only for a Coin Jar; passed straight through to PotEditForm, which owns the toggle. */
+  roundUp?: { enabled: boolean; personName: string; occurrences: { date: string; isPast: boolean }[]; onChange: (enabled: boolean, effectiveFrom: string) => void }
   people: Person[]
   categories: Category[]
   templates: RecurringTemplate[]
@@ -2269,6 +2330,7 @@ function PotRow({
               onSave={(updates) => { onSave(updates); onToggle(); triggerFlash() }}
               onAssignTemplateLocation={onAssignTemplateLocation}
               onAssignLoanLocation={onAssignLoanLocation}
+              roundUp={roundUp}
             />
           )}
         </div>
@@ -2568,6 +2630,26 @@ export function Salary() {
   // threaded down to every Wallet-page deposit/withdrawal/recurring
   // wizard (Savings/Pots/Joint alike) rather than each row rebuilding it.
   const transferLocationOptions = buildTransferLocationOptions(data.savingsPots, data.pots, !!data.jointAccount, data.primaryPersonId)
+
+  /**
+   * PROMPT-13 B4 (Adam, 2026-09-20) — the round-up toggle's props for a Coin
+   * Jar, and `undefined` for every ordinary pot, which is what keeps the
+   * toggle off every other pot's form.
+   *
+   * The jar's OWNER, not the primary person: in a two-person household
+   * Ella's jar carries Ella's switch and offers Ella's paydays (§0b Q5).
+   */
+  function coinJarRoundUpProps(pot: Pot) {
+    if (!pot.isCoinJar) return undefined
+    const owner = data.people.find((p) => p.id === pot.personId)
+    const cycle = data.payCycles.find((c) => c.personId === pot.personId)
+    return {
+      enabled: cycle?.roundUpEnabled ?? false,
+      personName: owner?.name ?? 'this person',
+      occurrences: cycle && owner && hasSalaryConfigured(owner) ? recentAndUpcomingPaydayDates(cycle, new Date()) : [],
+      onChange: (enabled: boolean, effectiveFrom: string) => setRoundUp(pot.personId, enabled, effectiveFrom),
+    }
+  }
   const [editingJointAccount, setEditingJointAccount] = useState(false)
   const [rebalancing, setRebalancing] = useState(false)
   // Batch 9 (2026-09-07, Bug 11) — same "one shared flash for main Save/
@@ -3233,6 +3315,7 @@ export function Salary() {
               onRemoveRecurringTemplate={removeRecurringTemplate}
               shouldFlashOnMount={justCreatedPotId === pot.id}
               onFlashedOnMount={() => setJustCreatedPotId(null)}
+              roundUp={coinJarRoundUpProps(pot)}
             />
           ))}
           {data.pots.length === 0 && !addingBillsPotFor && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No pots yet.</p>}
@@ -3341,6 +3424,7 @@ export function Salary() {
               openingBalance={payCycle?.openingBalance ?? 0}
               openingBalanceDate={payCycle?.openingBalanceDate ?? todayIso()}
               roundUpEnabled={payCycle?.roundUpEnabled ?? false}
+              hasCoinJar={data.pots.some((p) => p.isCoinJar && p.personId === person.id)}
               onChangeRoundUp={(enabled, effectiveFrom) => setRoundUp(person.id, enabled, effectiveFrom)}
               onSave={(updates) => updatePayCycle(person.id, updates)}
               paydayOccurrences={payCycle && hasSalaryConfigured(person) ? recentAndUpcomingPaydayDates(payCycle, new Date()) : []}
@@ -3868,6 +3952,7 @@ function PayCycleSettingsModal({
   openingBalance,
   openingBalanceDate,
   roundUpEnabled,
+  hasCoinJar,
   onChangeRoundUp,
   onSave,
   onDeleteSalary,
@@ -3890,8 +3975,22 @@ function PayCycleSettingsModal({
   salarySortBasis: 'payday' | 'budget_cycle'
   openingBalance: number
   openingBalanceDate: string
-  /** PROMPT-13 B4 — whether round-ups are currently on for this person, and the flow that changes it. */
+  /**
+   * PROMPT-13 B4 — whether round-ups are currently on for this person, and
+   * the flow that changes it.
+   *
+   * 🚨 THE TOGGLE LIVES HERE ONLY UNTIL THE COIN JAR EXISTS (Adam,
+   * 2026-09-20). It has to start here, because the jar does not exist until
+   * the switch is first turned on and Adam did not want an always-visible
+   * jar for someone who has never used the feature — "this is a circular
+   * dependency". Once the jar is real, the toggle MOVES to the jar's own
+   * expanded form, which is where you would look for it. It moves BACK here
+   * if the jar is ever deleted (which also switches rounding off — see
+   * removePot).
+   */
   roundUpEnabled: boolean
+  /** True when this person already has a Coin Jar; the toggle then lives on the pot, not here. */
+  hasCoinJar: boolean
   onChangeRoundUp: (enabled: boolean, effectiveFrom: string) => void
   onSave: (updates: {
     paydayDayOfMonth: number
@@ -4124,12 +4223,21 @@ function PayCycleSettingsModal({
             from the coin jar pot, then this is a circular dependency...
             I don't want coin jar to be always visible if it's not turned
             on/has never been turned on for a person." */}
-        <label className="flex items-center gap-2 mt-2.5">
-          <input type="checkbox" checked={draftRoundUp} onChange={(e) => setDraftRoundUp(e.target.checked)} />
-          <span className="text-xs text-[var(--color-ink-muted)]">
-            Round card spending up to the next pound, and put the difference in a Coin Jar
-          </span>
-        </label>
+        {hasCoinJar ? (
+          // The jar exists, so the toggle has moved to it. A pointer rather
+          // than silence: someone who switched it on here will come back
+          // looking for it.
+          <p className="text-xs text-[var(--color-ink-faint)] mt-2.5">
+            Round-ups are managed on the Coin Jar itself now — Wallet → Coin Jar → expand.
+          </p>
+        ) : (
+          <label className="flex items-center gap-2 mt-2.5">
+            <input type="checkbox" checked={draftRoundUp} onChange={(e) => setDraftRoundUp(e.target.checked)} />
+            <span className="text-xs text-[var(--color-ink-muted)]">
+              Round card spending up to the next pound, and put the difference in a Coin Jar
+            </span>
+          </label>
+        )}
         {draftRoundUp !== roundUpEnabled && (
           <p className="text-xs text-[var(--color-ink-faint)] mt-1.5 ml-6">
             {draftRoundUp

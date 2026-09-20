@@ -33,7 +33,7 @@
 
 import { readFileSync } from 'node:fs'
 import { potBillsAndLoans, generatePotOutgoingTransactions, generatePotDepositTransactions, computePotProjection } from '../src/lib/potLedger'
-import { fundablePots } from '../src/lib/roundUp'
+import { fundablePots, applyRoundUpChange, roundUpEnabledOn } from '../src/lib/roundUp'
 import type { AppDataV2, CreditCard, Loan, Pot, RecurringTemplate } from '../src/types/ledger'
 
 let failures = 0
@@ -165,6 +165,61 @@ check('the TRANSFER wizard is NOT filtered — transfers in and out are allowed'
 // rebalance targets (a rebalance is a transfer by another name).
 check('the Wallet stack still lists every pot, jar included', salary.includes('data.pots.map((pot) => ('), true)
 check('the rebalance targets still include every pot', salary.includes('data.pots.filter((p) => p.personId === data.primaryPersonId)'), true)
+
+// ── B4 (Adam, 2026-09-20) — WHERE the round-up toggle lives ───────────────
+//
+// It starts in the person's pay cycle settings, because the jar does not
+// exist until the switch is first turned on and Adam did not want an
+// always-visible jar for someone who has never used the feature: "this is a
+// circular dependency". Once the jar is real the toggle MOVES to the jar's
+// own expanded form. If the jar is ever deleted it moves BACK, and rounding
+// switches off with it.
+//
+// 🚨 THE FAILURE THIS GUARDS AGAINST IS THE TOGGLE BECOMING UNREACHABLE.
+// A Coin Jar is an ordinary Pot as far as SwipeToDelete is concerned — there
+// is no isCoinJar special-case on deletion. If the toggle lived ONLY on the
+// pot and the jar were deleted, there would be no way to turn rounding off
+// or on again, and `roundUpEnabled` would sit at true while
+// `coinJarForOwner` returned undefined and nothing rounded. Exactly one of
+// the two homes must be showing it at any moment.
+console.log('\n── B4: the toggle has exactly one home, and it is never unreachable ──')
+
+const salarySrc = read('src/pages/Salary.tsx')
+const contextSrc = read('src/context/LedgerContext.tsx')
+
+// Settings: shown only while there is NO jar.
+check('the settings toggle is gated on the jar not existing', salarySrc.includes('{hasCoinJar ? ('), true)
+check('...and hasCoinJar is computed from this person’s own pots', salarySrc.includes("data.pots.some((p) => p.isCoinJar && p.personId === person.id)"), true)
+check('...with a pointer to where it went, rather than silence', salarySrc.includes('Round-ups are managed on the Coin Jar itself now'), true)
+
+// Pot form: offered only for a Coin Jar.
+check('the pot form’s toggle is offered only for a Coin Jar', salarySrc.includes('if (!pot.isCoinJar) return undefined'), true)
+check('...and takes its effective-from through EffectiveDatedChangeFlow, like every other dated change', salarySrc.includes('onCommit={(effectiveFrom) => {\n          roundUp.onChange(choosingRoundUpFrom, effectiveFrom)'), true)
+// The OWNER's switch and the OWNER's paydays — not the primary person's
+// (§0b Q5). In a two-person household Ella's jar carries Ella's switch.
+check('the pot form uses the JAR OWNER’s pay cycle, not the primary person’s', salarySrc.includes('data.payCycles.find((c) => c.personId === pot.personId)'), true)
+check('...and the owner’s own paydays', salarySrc.includes('setRoundUp(pot.personId, enabled, effectiveFrom)'), true)
+
+// Deleting the jar switches rounding off, so the reverted toggle tells the
+// truth. Asserted in the context, which is where it has to happen.
+check('deleting a Coin Jar switches that person’s round-ups off', contextSrc.includes("if (!pot?.isCoinJar) return next"), true)
+check('...through applyRoundUpChange, so it is recorded like any other switch', /removePot[\s\S]{0,1400}applyRoundUpChange\(c, false, todayIso\(\)\)/.test(contextSrc), true)
+
+console.log('\n── B4: deleting the jar, end to end ──')
+// Behavioural, not just source: the pay cycle really does come back off,
+// and the history records the window rather than losing it.
+const jarOwnerCycle = {
+  personId: PERSON, openingBalance: 0, openingBalanceDate: '2026-01-01', paydayDayOfMonth: 28,
+  paydayAdjustForNonWorkingDay: false, cycleStartDayOfMonth: 1,
+  roundUpEnabled: true, roundUpEffectiveFrom: '2026-03-01',
+}
+const afterDelete = { ...jarOwnerCycle, ...applyRoundUpChange(jarOwnerCycle, false, '2026-09-20') }
+check('rounding is off after the jar is deleted', afterDelete.roundUpEnabled, false)
+check('...so the toggle reverting to settings tells the truth', roundUpEnabledOn(afterDelete, '2026-09-21'), false)
+// 🚨 B3 still holds: the window it WAS on for is preserved, so rows logged
+// then still resolve as rounded and nothing stored is rewritten.
+check('🚨 the window it was on for is preserved, not erased', roundUpEnabledOn(afterDelete, '2026-05-01'), true)
+check('...and the history records that window with its start', afterDelete.roundUpHistory, [{ enabled: true, from: '2026-03-01', until: '2026-09-20', nextRuleFrom: '2026-09-20' }])
 
 console.log(failures === 0 ? '\n✅ All Coin Jar restriction checks passed\n' : `\n❌ ${failures} check(s) failed\n`)
 process.exit(failures === 0 ? 0 : 1)

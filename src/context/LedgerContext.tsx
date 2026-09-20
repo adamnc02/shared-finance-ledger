@@ -1197,7 +1197,32 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
     setDataState((prev) => ({ ...prev, pots: prev.pots.map((p) => (p.id === id ? { ...p, ...updates } : p)) }))
   }
   const removePot: LedgerContextValue['removePot'] = (id) => {
-    setDataState((prev) => removePotFromData(prev, id))
+    setDataState((prev) => {
+      const pot = prev.pots.find((p) => p.id === id)
+      const next = removePotFromData(prev, id)
+      // PROMPT-13 B4 (2026-09-20, Adam's follow-up) — deleting a Coin Jar
+      // switches that person's round-ups OFF, and the toggle reverts to
+      // their pay cycle settings.
+      //
+      // 🚨 WITHOUT THIS THE TOGGLE WOULD LIE. The jar is the destination;
+      // with it gone `coinJarForOwner` returns undefined and `roundUpFields`
+      // quietly stops rounding anything. The switch would still read "on" in
+      // settings while doing precisely nothing, with no way to tell. Turning
+      // it off is the honest state, and turning it back on creates a fresh
+      // jar exactly as the first enable did.
+      //
+      // Dated TODAY, and recorded in the history like any other switch —
+      // which is why it cannot reach back: rows logged while the old jar
+      // existed keep their `roundedFrom` and their `roundingPotId`, pointing
+      // at a pot that is gone. That is correct. The money really was rounded
+      // (B3: nothing stored is ever rewritten), and their credits disappear
+      // with the jar because the credits were only ever derived from it.
+      if (!pot?.isCoinJar) return next
+      return {
+        ...next,
+        payCycles: next.payCycles.map((c) => (c.personId === pot.personId ? { ...c, ...applyRoundUpChange(c, false, todayIso()) } : c)),
+      }
+    })
   }
   const deleteWithResolutions: LedgerContextValue['deleteWithResolutions'] = (subject, decisions) => {
     setDataState((prev) => resolveBlockersAndDelete(prev, subject, decisions))
