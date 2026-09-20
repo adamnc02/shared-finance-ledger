@@ -1922,6 +1922,14 @@ the store treats as an import: fresh ids, and a full replace of the household.
 `personal-ledger/src/`, and **fails on any difference not covered by a listed path**. Keep the
 table machine-readable: one path or glob per row, no prose in the path column.
 
+> 🚨 **`DIVERGENCE.md` is NOT in this repo.** It lives at
+> `~/Downloads/App Development & Bug Tracking/shared-finance-ledger/DIVERGENCE.md` and
+> `scripts/check-divergence.ts` reads it there **by absolute path**. It is one of four files in
+> that folder the repos depend on at runtime — the other three are the real backups
+> `finance-ledger-backup-2026-09-15.json`, `finance-ledger-backup-2026-09-15-mum.json` and
+> `finance-ledger-backup-2026-09-17-mum.json`, which **45 verify scripts across the three ledger
+> repos read by absolute path**. Deleting any of the four breaks the sweep.
+
 **Explicitly not allowed to diverge** — a difference here is a bug, not a decision:
 
 - `src/lib/**`, except `src/lib/powersync/**`, `src/lib/supabaseClient.ts` and

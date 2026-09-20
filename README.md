@@ -29,6 +29,11 @@ persistence sits behind one `LedgerStore` interface with two implementations, so
 > `npm run check:divergence` diffs `src/` against `personal-ledger/src/` and **fails on any
 > difference not listed in `DIVERGENCE.md`.** That register is enforced, not advisory. A commit that
 > makes the two apps differ must add its row in the same commit.
+>
+> 🚨 **`DIVERGENCE.md` lives OUTSIDE this repo**, at
+> `~/Downloads/App Development & Bug Tracking/shared-finance-ledger/DIVERGENCE.md`, and
+> `scripts/check-divergence.ts` reads it there by absolute path. Deleting or moving it breaks the
+> check.
 
 The rule for deciding, when a change is needed here:
 
@@ -260,7 +265,7 @@ Everything in `personal-ledger`'s "Known limitations", plus:
 | Document | Holds |
 |---|---|
 | `TECHNICAL.md` | The full implementation reference, offline engines and sync layer |
-| `DIVERGENCE.md` | The enforced register of what may differ from `personal-ledger` |
+| `DIVERGENCE.md` (in the tracking folder, **not** this repo) | The enforced register of what may differ from `personal-ledger` |
 | `src/types/ledger.ts` | **The comments are the spec** |
 | `silver-octo-invention/docs/` | The Supabase schema, RLS and functions, per app |
 | `listly/docs/LEDGER-INTEGRATION.md` | What Listly depends on in this schema |
