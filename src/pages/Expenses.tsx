@@ -88,7 +88,7 @@ const RECURRING_FREQUENCY_LABELS: Record<'weekly' | 'every_n_weeks' | 'monthly' 
 type RecurringFrequency = keyof typeof RECURRING_FREQUENCY_LABELS
 
 import { todayIso, toLocalIsoDate } from '../lib/date'
-import { fundablePots, unroundedAmount } from '../lib/roundUp'
+import { fundablePots, unroundedAmount, roundUpAvailable, roundUpTarget, roundUpUplift, coinJarForOwner } from '../lib/roundUp'
 
 type PageMode = 'transactions' | 'recurring' | 'transfer' | 'overpayments'
 
@@ -479,6 +479,7 @@ export function Expenses() {
                         note: entry.note || undefined,
                         location: entry.location,
                         potId: entry.potId,
+                        roundUpSkipped: entry.roundUpSkipped,
                       })
                 setJustCreatedTransactionId(id)
                 setAdding(false)
@@ -846,6 +847,10 @@ function EditEntryForm({
   // "Editing just loads the form, no flow" — Adam's own words — so this is
   // a second dropdown that appears once Credit Card is chosen as the
   // Location, not a second wizard step.
+  // PROMPT-13 B1a (Adam, 2026-09-20) — the per-transaction override, as an
+  // editable field rather than a wizard step: "Editing just loads the form,
+  // no flow" (Adam's own words, quoted above).
+  const [roundUpSkipped, setRoundUpSkipped] = useState(transaction.roundUpSkipped ?? false)
   const initialIsCreditCardLocation = transaction.paymentMethod === 'card' && !!transaction.creditCardId
   const [isCreditCardLocation, setIsCreditCardLocation] = useState(initialIsCreditCardLocation)
   const [creditCardId, setCreditCardId] = useState<string | undefined>(transaction.creditCardId)
@@ -871,7 +876,31 @@ function EditEntryForm({
     (paymentMethodEditable && paymentMethod !== transaction.paymentMethod) ||
     isCreditCardLocation !== initialIsCreditCardLocation ||
     (isCreditCardLocation && creditCardId !== transaction.creditCardId) ||
-    (canEditLocation && locationOption.key !== initialLocationOption.key)
+    (canEditLocation && locationOption.key !== initialLocationOption.key) ||
+    roundUpSkipped !== (transaction.roundUpSkipped ?? false)
+
+  // Offered only on the rows that would otherwise round, and only once a
+  // Coin Jar exists — the field is computed from the CURRENT form state,
+  // not the stored row, so switching the payment method to Cash or the
+  // location to Joint makes it disappear as you edit.
+  const editedPaymentMethod = isCreditCardLocation ? 'card' : paymentMethodEditable ? paymentMethod : transaction.paymentMethod
+  const editedLocation = canEditLocation
+    ? !isCreditCardLocation && (locationOption.location.type === 'joint' || locationOption.location.type === 'pot')
+      ? locationOption.location.type
+      : 'personal'
+    : transaction.location
+  const ownerCoinJar = coinJarForOwner(data.pots, transaction.ownerId)
+  const roundUpOffered = roundUpAvailable(
+    {
+      type: transaction.type,
+      paymentMethod: editedPaymentMethod,
+      location: editedLocation,
+      date,
+      creditCardId: isCreditCardLocation ? creditCardId : undefined,
+    },
+    data.payCycles.find((c) => c.personId === transaction.ownerId),
+    ownerCoinJar?.id,
+  )
 
   return (
     <div className="p-3 pt-0 flex flex-col gap-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
@@ -954,10 +983,30 @@ function EditEntryForm({
           </div>
         </label>
       )}
+      {roundUpOffered && (
+        <label className="flex items-start gap-2">
+          <input type="checkbox" className="mt-0.5" checked={!roundUpSkipped} onChange={(e) => setRoundUpSkipped(!e.target.checked)} />
+          <span className="text-xs text-[var(--color-ink-muted)]">
+            Round up to the next pound, into {ownerCoinJar?.name ?? 'the Coin Jar'}
+            {roundUpUplift(amountNumber) > 0 ? (
+              <span className="block text-[var(--color-ink-faint)]">
+                £{formatCurrency(amountNumber)} would be logged as £{formatCurrency(roundUpTarget(amountNumber))}, with £
+                {formatCurrency(roundUpUplift(amountNumber))} going in.
+              </span>
+            ) : (
+              // Shown rather than hidden: the control's visibility follows
+              // the row's SHAPE, not its amount, so it does not blink in and
+              // out as the figure is typed.
+              <span className="block text-[var(--color-ink-faint)]">Nothing to round on an exact pound.</span>
+            )}
+          </span>
+        </label>
+      )}
       <FormButtonRow
         onCancel={onCancel}
         onSave={() =>
           onSave({
+            roundUpSkipped: roundUpSkipped || undefined,
             amount: amountNumber,
             date,
             categoryId,
@@ -990,9 +1039,15 @@ interface ExpenseFormEntry {
   /** 2026-09-13 (dev.md item 5) — Personal (omit), Joint, or a regular Pot — never a Savings Pot. See ExpenseForm's own Location block comment. */
   location?: 'joint' | 'pot'
   potId?: string
+  /** PROMPT-13 B1a — this one entry opts out of rounding. */
+  roundUpSkipped?: boolean
 }
 
-type ExpenseFormStep = 'direction' | 'amount' | 'location' | 'date' | 'name' | 'category' | 'payment_method' | 'card'
+// PROMPT-13 B1a (Adam, 2026-09-20) — `round_up` is the LAST step, reached
+// only when the answers so far add up to a card, personal, ad-hoc expense
+// with a real uplift and a Coin Jar to put it in. Every other combination
+// commits straight from `payment_method` as before.
+type ExpenseFormStep = 'direction' | 'amount' | 'location' | 'date' | 'name' | 'category' | 'payment_method' | 'card' | 'round_up'
 
 /**
  * 2026-09-13 (Adam-specified follow-up) — rebuilt from one flat card
@@ -1086,12 +1141,47 @@ function ExpenseForm({
 
   const amountNumber = Number(amount)
 
+  // PROMPT-13 B1a — the round-up step's own state. `pendingCommit` holds
+  // the payment-method answers while the question is asked, for the same
+  // reason commitSave takes them as arguments rather than reading state:
+  // they are set in the same click that navigates here.
+  const [pendingCommit, setPendingCommit] = useState<{ type: EntryType; paymentMethod: PaymentMethod; creditCardId?: string } | null>(null)
+  // The logging person's own jar and cycle — this wizard always logs for
+  // the primary person (`personId: data.primaryPersonId` below).
+  const primaryPayCycle = data.payCycles.find((c) => c.personId === data.primaryPersonId)
+  const coinJar = coinJarForOwner(data.pots, data.primaryPersonId)
+
   // The payment-method step's own tap targets each commit and save
   // directly (there's no further step after them, except "Credit Card" →
   // "Which card") — passing the chosen values straight through as
   // arguments rather than reading paymentMethod/creditCardId state avoids
   // acting on a stale value from before the same click's setState apply.
-  function commitSave(finalType: EntryType, finalPaymentMethod: PaymentMethod, finalCreditCardId?: string) {
+  function commitSave(finalType: EntryType, finalPaymentMethod: PaymentMethod, finalCreditCardId?: string, roundUpSkipped?: boolean) {
+    const location = locationOption.location.type === 'joint' || locationOption.location.type === 'pot' ? locationOption.location.type : undefined
+
+    // PROMPT-13 B1a — one more question, but only when there is genuinely
+    // one to ask: the entry would otherwise round, and there is a real
+    // uplift to decline. `roundUpSkipped === undefined` means we have not
+    // asked yet; once the step answers, it comes back through here with a
+    // boolean and falls past this guard.
+    //
+    // The uplift check is what keeps an exact £8.00 from stopping the flow
+    // to ask about 0p. The amount is already fixed by this point in the
+    // wizard, so it cannot change under the question.
+    if (
+      roundUpSkipped === undefined &&
+      roundUpAvailable(
+        { type: finalType, paymentMethod: finalPaymentMethod, location: location ?? 'personal', date, creditCardId: finalCreditCardId },
+        primaryPayCycle,
+        coinJar?.id,
+      ) &&
+      roundUpUplift(amountNumber) > 0
+    ) {
+      setPendingCommit({ type: finalType, paymentMethod: finalPaymentMethod, creditCardId: finalCreditCardId })
+      setStep('round_up')
+      return
+    }
+
     onSave({
       type: finalType,
       amount: amountNumber,
@@ -1101,8 +1191,9 @@ function ExpenseForm({
       creditCardId: finalCreditCardId,
       personId: data.primaryPersonId,
       note: name.trim(),
-      location: locationOption.location.type === 'joint' || locationOption.location.type === 'pot' ? locationOption.location.type : undefined,
+      location,
       potId: locationOption.location.type === 'pot' ? locationOption.location.potId : undefined,
+      roundUpSkipped,
     })
   }
 
@@ -1286,6 +1377,46 @@ function ExpenseForm({
         <p className="text-xs text-[var(--color-ink-faint)] mt-3">
           This adds to the card's balance — it won't reduce your cash balance until you pay the card down.
         </p>
+      </div>
+    )
+  }
+
+  if (step === 'round_up' && pendingCommit) {
+    // PROMPT-13 B1a (Adam, 2026-09-20) — "By default, the value should be
+    // set to round up if the toggle is on. But I can turn it off per
+    // transaction."
+    //
+    // So rounding is the highlighted, pre-picked option, in the same
+    // coral-default treatment the Payment method step gives "Card". One
+    // tap either way, no Continue.
+    const target = roundUpTarget(amountNumber)
+    const uplift = roundUpUplift(amountNumber)
+    return (
+      <div className="rounded-2xl p-4 mb-4" style={{ background: 'var(--color-bg-elevated)' }}>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-semibold text-[var(--color-ink-muted)]">Round up?</span>
+          <button onClick={onCancel} className="text-[var(--color-ink-faint)]">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <button
+            onClick={() => commitSave(pendingCommit.type, pendingCommit.paymentMethod, pendingCommit.creditCardId, false)}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-medium"
+            style={{ background: 'var(--color-coral)', color: '#fff' }}
+          >
+            Round up to £{formatCurrency(target)}
+            <span className="block text-xs font-normal opacity-90">£{formatCurrency(uplift)} into {coinJar?.name ?? 'the Coin Jar'}</span>
+          </button>
+          <button
+            onClick={() => commitSave(pendingCommit.type, pendingCommit.paymentMethod, pendingCommit.creditCardId, true)}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-medium text-[var(--color-ink)]"
+            style={{ background: 'var(--color-surface)' }}
+          >
+            Not this one
+            <span className="block text-xs font-normal text-[var(--color-ink-muted)]">Log it as £{formatCurrency(amountNumber)}</span>
+          </button>
+        </div>
       </div>
     )
   }

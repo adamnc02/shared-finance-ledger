@@ -1739,8 +1739,23 @@ function potEligibleItems(pot: Pot, templates: RecurringTemplate[], loans: Loan[
   // 'transfer' are the two later-added extensions), so the exclusion has
   // to be `!== 'transfer'`, not `=== 'transaction'` — the latter silently
   // excluded every real bill and made this whole checklist vanish.
-  const eligibleTemplates = templates.filter((t) => t.kind !== 'transfer' && t.ownerId === pot.personId && (t.location === 'personal' || t.location === 'pot'))
-  const eligibleLoans = loans.filter((l) => l.ownerId === pot.personId && (l.location === 'personal' || l.location === 'pot'))
+  // 🚨 PROMPT-13 B5 (fixed 2026-09-20, reported by Adam) — a Coin Jar pays
+  // NOTHING, so it offers nothing to tick. This checklist IS a picker: it
+  // is the most direct route in the whole app to pointing a bill or loan at
+  // a pot, and it was missed when B5's other pickers were filtered through
+  // `fundablePots`, because it does not go through them — it builds its own
+  // list here. The generators in potLedger.ts would have refused to produce
+  // a payment anyway, so no money could ever have moved; but the jar
+  // offered a checklist it would then silently ignore, which is worse than
+  // either answer on its own.
+  //
+  // Existing recurring transfers OUT of the jar still appear below: B5
+  // allows transfers "in and out, to any location", and those rows are
+  // locked/read-only, not an assignment choice.
+  const eligibleTemplates = pot.isCoinJar
+    ? []
+    : templates.filter((t) => t.kind !== 'transfer' && t.ownerId === pot.personId && (t.location === 'personal' || t.location === 'pot'))
+  const eligibleLoans = pot.isCoinJar ? [] : loans.filter((l) => l.ownerId === pot.personId && (l.location === 'personal' || l.location === 'pot'))
   const potWithdrawals = templates.filter((t) => t.kind === 'transfer' && t.transferFrom?.type === 'pot' && t.transferFrom.potId === pot.id)
   type Item = { key: string; id: string; kind: 'template' | 'loan' | 'withdrawal'; name: string; amount: number; inPot: boolean; locked?: boolean }
   const items: Item[] = [

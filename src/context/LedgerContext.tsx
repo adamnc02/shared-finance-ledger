@@ -84,6 +84,8 @@ interface AdHocInput {
    */
   location?: 'joint' | 'pot'
   potId?: string
+  /** PROMPT-13 B1a — this one entry opts out of rounding. Undefined/false = round it, per the switch. */
+  roundUpSkipped?: boolean
 }
 
 interface LedgerContextValue {
@@ -466,6 +468,9 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
       ownerId: input.personId,
       personId: input.type === 'income' ? input.personId : undefined,
       note: input.note,
+      // PROMPT-13 B1a — carried onto the row BEFORE roundUpFields runs
+      // below, which is what lets `shouldRoundUp` see it and decline.
+      roundUpSkipped: input.roundUpSkipped || undefined,
     }
     // PROMPT-13 B1/B2 — round-ups are applied HERE, at the single ad-hoc
     // write path, rather than in each of the three forms that reach it.

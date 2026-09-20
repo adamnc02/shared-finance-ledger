@@ -105,9 +105,12 @@ export function roundUpEnabledOn(payCycle: PayCycleConfig | undefined, dateIso: 
  * Coin Jar against cash that never moved.
  */
 export function shouldRoundUp(
-  t: Pick<Transaction, 'type' | 'paymentMethod' | 'location' | 'date' | 'creditCardId'> & { amount: number },
+  t: Pick<Transaction, 'type' | 'paymentMethod' | 'location' | 'date' | 'creditCardId' | 'roundUpSkipped'> & { amount: number },
   payCycle: PayCycleConfig | undefined,
 ): boolean {
+  // PROMPT-13 B1a — the per-transaction override, checked first because it
+  // beats every other clause: the person has said "not this one".
+  if (t.roundUpSkipped) return false
   if (t.type !== 'expense') return false
   if (t.paymentMethod !== 'card') return false
   if (t.location !== 'personal') return false
@@ -140,7 +143,7 @@ export function shouldRoundUp(
  * omitted and leave the old pair in place crediting a jar forever.
  */
 export function roundUpFields(
-  t: Pick<Transaction, 'type' | 'paymentMethod' | 'location' | 'date' | 'creditCardId'> & { amount: number },
+  t: Pick<Transaction, 'type' | 'paymentMethod' | 'location' | 'date' | 'creditCardId' | 'roundUpSkipped'> & { amount: number },
   payCycle: PayCycleConfig | undefined,
   coinJarId: string | undefined,
 ): { amount: number; roundedFrom: number | undefined; roundingPotId: string | undefined } {
@@ -149,6 +152,38 @@ export function roundUpFields(
     return { amount: price, roundedFrom: undefined, roundingPotId: undefined }
   }
   return { amount: roundUpTarget(price), roundedFrom: price, roundingPotId: coinJarId }
+}
+
+/**
+ * PROMPT-13 B1a — whether the per-transaction "don't round this one"
+ * control should be OFFERED for a row at all.
+ *
+ * Adam, 2026-09-20: *"the per transaction level ability to ignore rounding
+ * ONLY if the coin jar exists... an editable field in the transaction form
+ * if it's card, personal and expense, and also... a new step in the picker
+ * flow - if it's card, personal and expense."*
+ *
+ * So: a jar exists, rounding is on for that row's own date, and the row is
+ * the shape that would otherwise round. Deliberately **not** gated on the
+ * amount — an exact pound still shows the control rather than having it
+ * appear and vanish as the figure is typed; callers that have nothing to
+ * ask (the wizard, where the amount is already fixed) check the uplift
+ * themselves.
+ *
+ * `roundUpSkipped` is deliberately NOT consulted: a row that has opted out
+ * must still offer the control, or there would be no way to opt back in.
+ */
+export function roundUpAvailable(
+  t: Pick<Transaction, 'type' | 'paymentMethod' | 'location' | 'date' | 'creditCardId'>,
+  payCycle: PayCycleConfig | undefined,
+  coinJarId: string | undefined,
+): boolean {
+  if (!coinJarId) return false
+  if (t.type !== 'expense') return false
+  if (t.paymentMethod !== 'card') return false
+  if (t.location !== 'personal') return false
+  if (t.creditCardId) return false
+  return roundUpEnabledOn(payCycle, t.date)
 }
 
 /**

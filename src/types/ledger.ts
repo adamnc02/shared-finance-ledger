@@ -325,6 +325,23 @@ export interface Transaction {
   roundedFrom?: number
   /** Which Coin Jar this row's uplift feeds — the OWNER's own jar (§0b Q5). */
   roundingPotId?: string
+  /**
+   * PROMPT-13 B1a (Adam, 2026-09-20) — this ONE transaction opts out of
+   * rounding, even though it qualifies and the switch is on.
+   *
+   * Offered only when a Coin Jar actually exists, and only on a card,
+   * personal, ad-hoc expense — the exact rows that would otherwise round.
+   * It DEFAULTS to rounding (undefined/false), so the common case needs no
+   * decision and the field is an override, not a question.
+   *
+   * 🚨 IT IS STORED, NOT INFERRED. "Not rounded" and "deliberately not
+   * rounded" look identical on a saved row — both simply lack
+   * `roundedFrom`. Without this flag an edit would silently re-round a row
+   * the person had explicitly excluded, because `roundUpFields` recomputes
+   * from the rules every time it is saved. That is the whole reason this is
+   * a column rather than a UI-only choice.
+   */
+  roundUpSkipped?: boolean
   payee?: string
   payeeSharePercent?: number
   // Which person this belongs to — required for salary/bonus/income,

@@ -182,6 +182,34 @@ check('the rebalance targets still include every pot', salary.includes('data.pot
 // or on again, and `roundUpEnabled` would sit at true while
 // `coinJarForOwner` returned undefined and nothing rounded. Exactly one of
 // the two homes must be showing it at any moment.
+// ── B5, restriction 1 — the "What this pot pays" checklist ───────────────
+//
+// 🚨 REPORTED BY ADAM, 2026-09-20: the Coin Jar's expanded form was still
+// showing this checklist, which is exactly what B5 says must be blocked.
+//
+// It was missed because it does NOT go through `fundablePots` like the
+// other pickers — `potEligibleItems` builds its own list from the
+// templates and loans directly. And it is the single most direct route in
+// the app to pointing a bill or loan at a pot: one tap, no location flow.
+//
+// The generators would have refused to produce a payment anyway, so no
+// money could ever have moved. That is arguably worse rather than better:
+// the jar offered a checklist it would then silently ignore.
+//
+// Existing recurring transfers OUT of the jar still appear (locked,
+// read-only) — B5 allows transfers "in and out, to any location", and
+// those rows are not an assignment choice.
+console.log('\n── B5: a Coin Jar offers nothing to tick ──')
+
+const eligibleSrc = read('src/pages/Salary.tsx')
+check('potEligibleItems offers no bills for a Coin Jar', eligibleSrc.includes('const eligibleTemplates = pot.isCoinJar'), true)
+check('...and no loans either', eligibleSrc.includes('const eligibleLoans = pot.isCoinJar ? []'), true)
+// The section itself is already gated on `items.length > 0`, so an empty
+// list hides the whole "What this pot pays" block rather than showing an
+// empty one. Pinned, because a future change to that gate would bring the
+// heading back with nothing under it.
+check('the checklist section is hidden entirely when there is nothing to list', eligibleSrc.includes('{items.length > 0 && ('), true)
+
 console.log('\n── B4: the toggle has exactly one home, and it is never unreachable ──')
 
 const salarySrc = read('src/pages/Salary.tsx')

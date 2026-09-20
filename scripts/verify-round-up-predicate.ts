@@ -28,7 +28,7 @@
 //  - Ignoring the effective date, which is the B3 violation — it would
 //    reach back and round rows logged before the switch was ever on.
 
-import { shouldRoundUp, roundUpTarget, roundUpUplift, roundUpFields, roundUpEnabledOn } from '../src/lib/roundUp'
+import { shouldRoundUp, roundUpTarget, roundUpUplift, roundUpFields, roundUpEnabledOn, roundUpAvailable } from '../src/lib/roundUp'
 import type { PayCycleConfig, Transaction } from '../src/types/ledger'
 
 let failures = 0
@@ -121,6 +121,51 @@ check('no Coin Jar → nothing is rounded', roundUpFields(base, ON, undefined), 
 console.log('\n── B1: roundUpEnabledOn is date-resolved, not a bare flag ──')
 check('a bare disabled config is off on any date', roundUpEnabledOn({ ...ON, roundUpEnabled: false }, '2026-09-20'), false)
 check('undefined config is off', roundUpEnabledOn(undefined, '2026-09-20'), false)
+
+// ── B1a (Adam, 2026-09-20) — the per-transaction opt-out ─────────────────
+//
+// "the per transaction level ability to ignore rounding ONLY if the coin
+// jar exists. By default, the value should be set to round up if the toggle
+// is on. But I can turn it off per transaction."
+//
+// 🚨 WHY IT IS A STORED FIELD AND NOT A UI-ONLY CHOICE. On a saved row,
+// "was not rounded" and "was DELIBERATELY not rounded" are indistinguishable
+// — both simply lack `roundedFrom`. `roundUpFields` recomputes from the
+// rules every time a row is saved, so without a stored flag, editing the
+// note on an excluded row would silently round it after all. That is the
+// failure this section exists to pin.
+console.log('\n── B1a: the per-transaction opt-out ──')
+
+check('the control row still rounds by DEFAULT — no decision needed', shouldRoundUp(base, ON), true)
+check('...and an undefined flag is the same as rounding', shouldRoundUp({ ...base, roundUpSkipped: undefined }, ON), true)
+check('...and an explicit false is too', shouldRoundUp({ ...base, roundUpSkipped: false }, ON), true)
+check('a skipped row does NOT round', shouldRoundUp({ ...base, roundUpSkipped: true }, ON), false)
+check('...and stores no roundedFrom or pot id', roundUpFields({ ...base, roundUpSkipped: true }, ON, 'jar1'), { amount: 7.5, roundedFrom: undefined, roundingPotId: undefined })
+// 🚨 The re-round trap: saving an excluded row again must leave it alone.
+check('🚨 re-saving a skipped row does not round it after all', roundUpFields({ ...base, roundUpSkipped: true, amount: 7.5 }, ON, 'jar1').roundedFrom, undefined)
+check('...and clearing the flag rounds it again', roundUpFields({ ...base, roundUpSkipped: false }, ON, 'jar1'), { amount: 8, roundedFrom: 7.5, roundingPotId: 'jar1' })
+
+console.log('\n── B1a: when the control is OFFERED (roundUpAvailable) ──')
+// Adam's three conditions, plus the jar, plus the switch. Each is checked
+// against the control, which IS offered.
+check('CONTROL: a personal card expense with a jar offers it', roundUpAvailable(base, ON, 'jar1'), true)
+check('🚨 no Coin Jar → never offered ("ONLY if the coin jar exists")', roundUpAvailable(base, ON, undefined), false)
+check('rounding switched off → not offered (it would decide nothing)', roundUpAvailable(base, { ...ON, roundUpEnabled: false }, 'jar1'), false)
+check('a date outside the enabled window → not offered', roundUpAvailable({ ...base, date: '2025-12-31' }, ON, 'jar1'), false)
+check('not an expense → not offered', roundUpAvailable({ ...base, type: 'income' }, ON, 'jar1'), false)
+check('not card → not offered', roundUpAvailable({ ...base, paymentMethod: 'cash' }, ON, 'jar1'), false)
+check('not personal → not offered', roundUpAvailable({ ...base, location: 'joint' }, ON, 'jar1'), false)
+check('a credit-card charge → not offered', roundUpAvailable({ ...base, creditCardId: 'cc1' }, ON, 'jar1'), false)
+
+// Deliberately NOT gated on the amount: an exact pound still OFFERS the
+// control, so it does not blink in and out as a figure is typed in the edit
+// form. The wizard checks the uplift itself, because it has nothing to ask
+// when there is nothing to round.
+check('an exact pound still OFFERS the control (visibility follows shape, not amount)', roundUpAvailable({ ...base, amount: 8 }, ON, 'jar1'), true)
+check('...though there is nothing for it to do', roundUpUplift(8), 0)
+// And a row that already opted out must still offer it, or there would be
+// no way back in.
+check('🚨 an already-skipped row STILL offers the control, or you could never opt back in', roundUpAvailable({ ...base, roundUpSkipped: true } as never, ON, 'jar1'), true)
 
 console.log(failures === 0 ? '\n✅ All round-up predicate checks passed\n' : `\n❌ ${failures} check(s) failed\n`)
 process.exit(failures === 0 ? 0 : 1)
