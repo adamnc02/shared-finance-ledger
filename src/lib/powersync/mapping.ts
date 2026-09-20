@@ -328,7 +328,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
       savings_pot_id: idUp(t.savingsPotId), pot_id: idUp(t.potId), ...transferUp('from', 'from_location_type', t.fromLocation), ...transferUp('to', 'to_location_type', t.toLocation),
       follows_payday: up(t.followsPayday), follows_cycle_start: up(t.followsCycleStart),
       // PROMPT-13 B2. `amount` above is already the rounded figure.
-      rounded_from: up(t.roundedFrom), rounding_pot_id: idUp(t.roundingPotId), position: i,
+      rounded_from: up(t.roundedFrom), rounding_pot_id: idUp(t.roundingPotId), round_up_skipped: up(t.roundUpSkipped), position: i,
     }),
   )
 
@@ -519,7 +519,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
       sourceId: s(r.source_id), occurrenceOriginalDate: s(r.occurrence_original_date), creditCardId: s(r.credit_card_id),
       savingsPotId: s(r.savings_pot_id), potId: s(r.pot_id), fromLocation: transferDown(r, 'from', 'from_location_type'), toLocation: transferDown(r, 'to', 'to_location_type'),
       followsPayday: b(r.follows_payday), followsCycleStart: b(r.follows_cycle_start),
-      roundedFrom: n(r.rounded_from), roundingPotId: s(r.rounding_pot_id),
+      roundedFrom: n(r.rounded_from), roundingPotId: s(r.rounding_pot_id), roundUpSkipped: b(r.round_up_skipped),
     }),
   )
 

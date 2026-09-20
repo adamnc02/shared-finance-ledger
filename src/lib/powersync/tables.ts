@@ -137,6 +137,9 @@ export const SYNCED_TABLES: SyncedTable[] = [
     // is what it came from. The Coin Jar credit is derived from the pair
     // and is never a row of its own.
     rounded_from: 'real', rounding_pot_id: 'text',
+    // PROMPT-13 B1a — this one row opted out. Stored, not inferred: on a
+    // saved row "not rounded" and "deliberately not rounded" look identical.
+    round_up_skipped: 'bool',
     ...P,
   }),
   t('salary_sorts', { ...H, pay_date: 'text', ...P }),

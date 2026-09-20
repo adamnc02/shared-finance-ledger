@@ -288,6 +288,9 @@ roundUpFixture.transactions = [
   // A rounded expense, and a control that was not rounded.
   { ...roundUpFixture.transactions[0], id: 'rup00001', type: 'expense', paymentMethod: 'card', location: 'personal', amount: 8, roundedFrom: 7.5, roundingPotId: jarId },
   { ...roundUpFixture.transactions[0], id: 'rup00002', type: 'expense', paymentMethod: 'cash', location: 'personal', amount: 7.5 },
+  // PROMPT-13 B1a — a row that deliberately opted out. Indistinguishable
+  // from rup00002 on the server WITHOUT this column, which is the point.
+  { ...roundUpFixture.transactions[0], id: 'rup00003', type: 'expense', paymentMethod: 'card', location: 'personal', amount: 7.5, roundUpSkipped: true },
 ]
 
 const rupRows = toRows(roundUpFixture, ctx)
@@ -300,6 +303,9 @@ const rupCycle = rupRows.pay_cycles[0]
 check('transactions.rounded_from goes up as the pre-rounding amount', rupTxn.rounded_from === 7.5, rupTxn.rounded_from)
 check('transactions.rounding_pot_id goes up as the jar id', rupTxn.rounding_pot_id === jarId, rupTxn.rounding_pot_id)
 check('an unrounded row sends NULL for both, never 0 or \'\'', rupTxnPlain.rounded_from == null && rupTxnPlain.rounding_pot_id == null, [rupTxnPlain.rounded_from, rupTxnPlain.rounding_pot_id])
+const rupSkipped = rupRows.transactions.find((r) => r.id === 'rup00003')!
+check('transactions.round_up_skipped goes up as true on an opted-out row', rupSkipped.round_up_skipped === true, rupSkipped.round_up_skipped)
+check('CONTROL: and is NULL on a row that simply did not qualify', rupTxnPlain.round_up_skipped == null, rupTxnPlain.round_up_skipped)
 check('pots.is_coin_jar is set on the jar', rupJar.is_coin_jar === true, rupJar.is_coin_jar)
 check('CONTROL: and NOT on an ordinary pot', rupOrdinary.is_coin_jar == null, rupOrdinary.is_coin_jar)
 check('pay_cycles.round_up_enabled / _effective_from go up', rupCycle.round_up_enabled === true && rupCycle.round_up_effective_from === '2026-09-01', [rupCycle.round_up_enabled, rupCycle.round_up_effective_from])
@@ -319,6 +325,10 @@ check('round trip: the jar comes back a jar', backJar.isCoinJar === true, backJa
 check('round trip: an ordinary pot does NOT come back a jar', backOrdinary.isCoinJar === undefined || backOrdinary.isCoinJar === false, backOrdinary.isCoinJar)
 check('round trip: a NEGATIVE opening balance survives (Part C)', backJar.openingBalance === -5.25, backJar.openingBalance)
 check('round trip: roundedFrom / roundingPotId survive', backTxn.roundedFrom === 7.5 && backTxn.roundingPotId === jarId, [backTxn.roundedFrom, backTxn.roundingPotId])
+// 🚨 If this came back undefined, an edit on the other device would
+// silently round a row the person had excluded.
+const backSkipped = rupBack.transactions.find((t) => t.id === 'rup00003')!
+check('🚨 round trip: roundUpSkipped survives, so the other device does not re-round it', backSkipped.roundUpSkipped === true, backSkipped.roundUpSkipped)
 check('round trip: roundUpEnabled / roundUpEffectiveFrom survive', backCycle.roundUpEnabled === true && backCycle.roundUpEffectiveFrom === '2026-09-01', [backCycle.roundUpEnabled, backCycle.roundUpEffectiveFrom])
 // 🚨 The crash shape: a history that comes back as a STRING rather than an
 // array means §33 has returned. `.length` on a string would be truthy, so
