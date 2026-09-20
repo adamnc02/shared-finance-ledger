@@ -58,6 +58,7 @@ import type {
   Transaction,
   TransferLocation,
 } from '../../types/ledger'
+import { salarySortPersonId } from '../salarySortLedger'
 import type { SalaryDeduction } from '../tax'
 import type { Scenario } from '../../types/models'
 
@@ -509,9 +510,17 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
     }),
   )
 
+  // PROMPT-11: a sort's person is DERIVED from the owner of the transfers it created, not stored.
+  // The pair is inseparable anyway (an empty sort isn't a sort), so there is no column to keep in
+  // step, no migration, and no way for the two to disagree.
   const salarySorts: SalarySort[] = sorted(rows.salary_sorts).map((r) => ({
     id: r.id,
     payDate: S(r.pay_date),
+    personId: salarySortPersonId(
+      { targets: (targets.get(r.id) ?? []).map((t) => ({ transactionId: S(t.transaction_id) })) },
+      transactions,
+      people[0]?.id ?? '',
+    ),
     targets: (targets.get(r.id) ?? []).map((t) => ({
       id: t.id,
       to: obj<TransferLocation>({ type: S(t.to_type), savingsPotId: s(t.to_savings_pot_id), potId: s(t.to_pot_id) }),

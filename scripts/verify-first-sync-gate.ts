@@ -127,13 +127,17 @@ console.log('\n4. primaryPersonId is per device, and re-preferred (§23)')
 
   s3.save({ ...latest, primaryPersonId: adam.id }, latest)
   await s3.flush()
-  check('choosing a person on this device writes no row (never syncs)', db3.log.length === 0, db3.log)
+  // PROMPT-10 (Adam, 2026-09-19): "Set as me" = link + view. The choice itself never syncs; the link
+  // moves with it, as two one-column UPDATEs: my old row cleared first, then the new one
+  // (verify-set-as-me.ts covers the rules).
+  check('choosing a person: only linked_user_id is written (old row cleared, then the new one)',
+    JSON.stringify(db3.log.map((s) => [s.id, s.columns])) === JSON.stringify([[ella.id, ['linked_user_id']], [adam.id, ['linked_user_id']]]), db3.log)
   check('the choice is remembered on this device', storage.map.get('k') === adam.id)
   const reload = createPowerSyncLedgerStore({ db: db3, householdId: HH, userId: ME, firstSync: Promise.resolve(), storageKey: 'k', storage, log })
   check('and wins over the linked row after a reload', (await reload.load())!.primaryPersonId === adam.id)
   storage.setItem('k', 'someone-deleted')
   const fallback = createPowerSyncLedgerStore({ db: db3, householdId: HH, userId: ME, firstSync: Promise.resolve(), storageKey: 'k', storage, log })
-  check('a remembered person who no longer exists falls back to the linked row', (await fallback.load())!.primaryPersonId === ella.id)
+  check('a remembered person who no longer exists falls back to the linked row', (await fallback.load())!.primaryPersonId === adam.id)
 }
 
 console.log('\n5. The household changes under a running session (UAT 2026-09-19)')

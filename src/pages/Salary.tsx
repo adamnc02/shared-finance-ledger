@@ -41,6 +41,7 @@ import {
   pensionOccurrenceAdjusted,
 } from '../lib/pensionLedger'
 import { JointAccountSetupModal } from '../components/JointAccountSetupModal'
+import { HeaderAccessory } from '../components/HeaderAccessory'
 import { RebalanceAccountsModal, type RebalanceTarget } from '../components/RebalanceAccountsModal'
 import { formatFullDate } from '../lib/format'
 import {
@@ -2682,14 +2683,18 @@ export function Salary() {
     <div className="max-w-md mx-auto px-4 pt-6">
       <header className="mb-6 flex items-center justify-between">
         <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Wallet</h1>
-        <button
-          onClick={() => setPeopleModalOpen(true)}
-          className="w-9 h-9 rounded-full flex items-center justify-center transition-colors duration-300"
-          style={{ background: flashPeopleButton ? 'var(--color-coral)' : 'var(--color-surface)' }}
-          aria-label="Manage people"
-        >
-          <Users size={18} className={flashPeopleButton ? 'text-white' : 'text-[var(--color-ink)]'} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPeopleModalOpen(true)}
+            className="w-9 h-9 rounded-full flex items-center justify-center transition-colors duration-300"
+            style={{ background: flashPeopleButton ? 'var(--color-coral)' : 'var(--color-surface)' }}
+            aria-label="Manage people"
+          >
+            <Users size={18} className={flashPeopleButton ? 'text-white' : 'text-[var(--color-ink)]'} />
+          </button>
+          {/* Empty offline; the sync app's Account button (HeaderAccessory.tsx). */}
+          <HeaderAccessory />
+        </div>
       </header>
 
       <BackupSection data={data} onRestore={setData} />
@@ -4287,7 +4292,7 @@ function PayPeriodRow({
   // this to the primary person's Most-recent/Upcoming rows only, per the
   // caller.
   const showSortIcon = canSort && hasSalarySortDestinations(data)
-  const existingSort = data.salarySorts.find((s) => s.payDate === dateIso)
+  const existingSort = data.salarySorts.find((s) => s.payDate === dateIso && s.personId === data.primaryPersonId)
 
   return (
     <div className="relative rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-elevated)' }}>
@@ -4389,7 +4394,9 @@ function SalarySortModal({
   onClose: () => void
 }) {
   const destinations = salarySortDestinations(data)
-  const existingSort = data.salarySorts.find((s) => s.payDate === payDate)
+  // Scoped to whoever this device is "me" (PROMPT-11): with both partners paid on the same date,
+  // an unscoped lookup shows, and overwrites, the other person's sort.
+  const existingSort = data.salarySorts.find((s) => s.payDate === payDate && s.personId === data.primaryPersonId)
 
   const [drafts, setDrafts] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {}

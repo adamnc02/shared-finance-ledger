@@ -31,7 +31,7 @@
 // onto whichever row happened to arrive first):
 //   1. a choice made on this device (setPrimaryPerson), if that person exists;
 //   2. otherwise the person linked to the signed-in user (people.linked_user_id,
-//      "Set as me" — written by PROMPT-10's linking UI, read here already);
+//      "Set as me", written by this store: see below);
 //   3. otherwise the first person.
 // A choice is recorded only when the app changes primaryPersonId away from
 // what the store resolved, so the store's own resolution is never mistaken
@@ -49,12 +49,50 @@
 // that membership (or appearing in a different household) SUSPENDS the
 // store — nothing is written or delivered again — and onHouseholdLost()
 // tells the boot sequence to clear the local copy and start over.
+//
+// IMPORTS GET FRESH IDS (PROMPT-10 Part 3, MIGRATION-LESSONS §31). A save
+// whose lists are ALL new to the store (setData with parsed JSON: Wallet →
+// Backup's restore, a cloud restore, the empty-household import; see
+// isImport) is an import: its ids are
+// regenerated (importIds.ts) before anything is written, so one backup
+// imported into two households never collides. The app still holds the
+// backup's ids until the store's next delivery (flagged wholesale, so pages
+// resync); saves in between are translated through the same id map.
+//
+// "SET AS ME" LINKS THE ROW (PROMPT-10 Part 4; MIGRATION-LESSONS §18; Adam,
+// 2026-09-19: Set as me = link + view). LedgerContext only changes
+// primaryPersonId; this store turns that into people.linked_user_id = me,
+// clearing my previous row first (the (household, linked_user_id) unique
+// index), as one-column UPDATEs at the ends of the save:
+//   - an unlinked row, or an import's own "Me" row → linked to me;
+//   - a row linked to someone else → view only, never taken, UNLESS I have
+//     no linked row at all (Ella claiming her row after Adam tapped it:
+//     she can; his device falls back to its own choice);
+//   - primaryPersonId moving only because my person was deleted → nothing.
+// verify-set-as-me.ts.
 
 import type { AppDataV2 } from '../../types/ledger'
 import { migrateLedgerData } from '../ledgerStorage'
 import type { LedgerStore } from './LedgerStore'
 import { fromRows, toRows, type Rows } from '../powersync/mapping'
 import { diffRows, type Op, type Positions } from '../powersync/writes'
+import { applyIdMap, regenerateIds } from '../powersync/importIds'
+
+/** Every list in AppDataV2. */
+const LISTS = [
+  'people', 'categories', 'recurringTemplates', 'loans', 'creditCards', 'pensions',
+  'savingsPots', 'pots', 'transactions', 'payCycles', 'salarySorts', 'scenarios',
+] as const satisfies readonly (keyof AppDataV2)[]
+
+/**
+ * An import (setData with parsed JSON) is the only save where NO list is one the store has seen:
+ * every edit starts from data the store delivered, loaded or was saved, and keeps at least the lists
+ * it didn't touch. (Comparing with the provider's `prev` is not enough: when a delivery and an edit
+ * land in one render, `prev` is older than the edit's base, and every list looks new.)
+ */
+export function isImport(next: AppDataV2, known: WeakSet<object>): boolean {
+  return LISTS.every((k) => !known.has(next[k]))
+}
 
 /** What the store needs from the database; the real one wraps PowerSync (powerSyncAdapter.ts), tests pass a fake. */
 export interface SyncDatabase {
@@ -88,6 +126,10 @@ export interface PowerSyncLedgerStore extends LedgerStore {
   readonly suspended: boolean
   /** Resolves when every write handed to save() so far has been applied locally. */
   flush(): Promise<void>
+  /** The last import's old → new ids (null before any import). For checks. */
+  readonly importMap: ReadonlyMap<string, string> | null
+  /** The person row linked to the signed-in user ("Set as me"), as of the last read. */
+  readonly linkedPersonId: string | null
 }
 
 export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): PowerSyncLedgerStore {
@@ -109,6 +151,14 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
   let writeVersion = 0
   let seenMember = false
   let suspended = false
+  let importMap: Map<string, string> | null = null // the last import's old → new ids
+  let nextDeliveryWholesale = false
+  const linkedTo = new Map<string, string>() // person id → linked_user_id, as the database holds it
+  const knownLists = new WeakSet<object>() // every list the store has delivered, loaded or saved (isImport)
+  const deliveries = new WeakSet<AppDataV2>() // every dataset the store handed out
+  const remember = (d: AppDataV2) => {
+    for (const k of LISTS) knownLists.add(d[k])
+  }
 
   /** False (and suspends the store) if the synced membership says this session's household is no longer ours. */
   function checkMembership(rows: Rows): boolean {
@@ -147,6 +197,8 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
   function assemble(rows: Rows): AppDataV2 {
     positions.clear()
     present.clear()
+    linkedTo.clear()
+    for (const r of rows.people ?? []) if (typeof r.linked_user_id === 'string' && r.linked_user_id) linkedTo.set(r.id, r.linked_user_id)
     for (const [table, list] of Object.entries(rows)) {
       present.set(table, new Set(list.map((r) => r.id)))
       const known = new Map<string, number>()
@@ -159,6 +211,29 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
     const linked = (rows.people ?? []).find((r) => r.linked_user_id === userId)?.id
     const primaryPersonId = choice && ids.has(choice) ? choice : linked && ids.has(linked) ? linked : (base.people[0]?.id ?? '')
     return migrateLedgerData({ ...base, primaryPersonId })
+  }
+
+  /** "Set as me" as one-column UPDATEs: `first` before the diff's writes, `last` after (see header). */
+  function linkOps(before: AppDataV2, after: AppDataV2, imported: boolean): { first: Op[]; last: Op[] } {
+    const none = { first: [], last: [] }
+    const target = after.primaryPersonId
+    if (!target || !after.people.some((p) => p.id === target)) return none
+    if (!imported) {
+      if (target === before.primaryPersonId) return none
+      const old = before.primaryPersonId
+      if (before.people.some((p) => p.id === old) && !after.people.some((p) => p.id === old)) return none // my person was deleted
+    }
+    const mine = [...linkedTo].find(([, uid]) => uid === userId)?.[0]
+    if (mine === target) return none
+    const owner = linkedTo.get(target)
+    if (owner && owner !== userId && mine) {
+      log.info('[powersync] Set as me: that person is linked to someone else — switched view only')
+      return none
+    }
+    const first: Op[] = mine ? [{ kind: 'update', table: 'people', id: mine, set: { linked_user_id: null } }] : []
+    if (mine) linkedTo.delete(mine)
+    linkedTo.set(target, userId)
+    return { first, last: [{ kind: 'update', table: 'people', id: target, set: { linked_user_id: userId } }] }
   }
 
   /** null when the household was lost (see checkMembership). */
@@ -176,11 +251,21 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
     get suspended() {
       return suspended
     },
+    get importMap() {
+      return importMap
+    },
+    get linkedPersonId() {
+      return [...linkedTo].find(([, uid]) => uid === userId)?.[0] ?? null
+    },
 
     async load() {
       await gate
       const data = await read()
-      if (data) shadow = data
+      if (data) {
+        shadow = data
+        remember(data)
+        deliveries.add(data)
+      }
       return data
     },
 
@@ -199,18 +284,33 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
         shadow = next // our own delivery coming back: nothing to write
         return
       }
+      if (deliveries.has(next)) return // an older delivery, already superseded: nothing to write
       if (!shadow) {
         log.error('[powersync] save() before load() — ignored')
         return
       }
       try {
-        if (next.primaryPersonId !== shadow.primaryPersonId && next.primaryPersonId) writeChoice(next.primaryPersonId)
-        const ops = diffRows(toRows(shadow, ctx), toRows(next, ctx), positions, present)
+        let target = next
+        const imported = isImport(next, knownLists)
+        if (imported) {
+          const fresh = regenerateIds(next)
+          target = fresh.data
+          importMap = fresh.map
+          nextDeliveryWholesale = true
+          log.info(`[powersync] import: ${fresh.map.size} ids regenerated (the 35 fixed categories kept)`)
+        } else if (importMap) {
+          target = applyIdMap(next, importMap)
+        }
+        if (target.primaryPersonId !== shadow.primaryPersonId && target.primaryPersonId) writeChoice(target.primaryPersonId)
+        const link = linkOps(shadow, target, imported)
+        const ops = [...link.first, ...diffRows(toRows(shadow, ctx), toRows(target, ctx), positions, present), ...link.last]
         for (const op of ops) {
           if (op.kind === 'insert') (present.get(op.table) ?? present.set(op.table, new Set()).get(op.table)!).add(op.row.id)
           if (op.kind === 'delete') present.get(op.table)?.delete(op.id)
         }
-        shadow = next
+        remember(next)
+        remember(target)
+        shadow = target
         if (ops.length === 0) return
         writeVersion++
         writeChain = writeChain
@@ -239,9 +339,12 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
         // change that save makes will call us again.
         if (cancelled || version !== writeVersion) return
         lastDelivered = data
+        deliveries.add(data)
+        remember(data)
         shadow = data
-        const wholesale = first
+        const wholesale = first || nextDeliveryWholesale
         first = false
+        nextDeliveryWholesale = false
         onExternalChange(data, wholesale)
       }
       const unsubscribe = db.onChange(() => void deliver())

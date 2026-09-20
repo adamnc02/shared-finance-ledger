@@ -194,10 +194,12 @@ export function buildTransferTransaction(
   amount: number,
   date: string,
   primaryPersonId: string,
-  options?: { note?: string; followsPayday?: boolean; sourceType?: Transaction['sourceType']; sourceId?: string },
+  // `id`: Salary Sort passes a deterministic one so two devices creating the same payday's
+  // transfer converge on one row rather than two (PROMPT-11, MIGRATION-LESSONS §36).
+  options?: { note?: string; followsPayday?: boolean; sourceType?: Transaction['sourceType']; sourceId?: string; id?: string },
 ): Transaction {
   return {
-    id: nanoid(8),
+    id: options?.id ?? nanoid(8),
     date,
     amount,
     // 'out' when personal is the source (or isn't involved at all — see
