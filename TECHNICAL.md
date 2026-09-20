@@ -1508,8 +1508,11 @@ blocked while anything still points at it.
 ## 34. Testing: the verify suite
 
 **The house testing idiom** is `scripts/verify-*.ts` — 141 plain `tsx` executables printing ✓/✗,
-each with a header explaining the real bug it prevents. Several read the real backup files in
+each with a header explaining the real bug it prevents. Several read the fixtures in
 `scripts/fixtures/`. **Write one alongside any change to `src/lib/`.**
+
+> 🚨 **Some verify scripts read real backups from OUTSIDE this repo, by absolute path** — see the
+> warning in §44. They are not in git and there is no second copy.
 
 ```bash
 npx tsc -b                 # must be clean
