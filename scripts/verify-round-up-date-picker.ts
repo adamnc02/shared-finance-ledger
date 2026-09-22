@@ -44,7 +44,8 @@ import { readFileSync } from 'node:fs'
 import { applyRoundUpChange, roundUpEnabledOn, roundUpFields } from '../src/lib/roundUp'
 import { recentAndUpcomingPaydayDates } from '../src/lib/salaryLedger'
 import { hasSalaryConfigured } from '../src/lib/household'
-import type { PayCycleConfig, Person, Transaction } from '../src/types/ledger'
+import { defaultLedgerData, migrateLedgerData } from '../src/lib/ledgerStorage'
+import type { AppDataV2, PayCycleConfig, Person, Transaction } from '../src/types/ledger'
 
 let failures = 0
 function check(label: string, actual: unknown, expected: unknown) {
@@ -170,7 +171,19 @@ const context = read('src/context/LedgerContext.tsx')
 // guard verbatim, on purpose, so a bare `includes` would find it.
 check('setRoundUp no longer bails silently on a missing pay cycle', /\n\s*if \(!payCycle\) return prev/.test(context), false)
 check('...it creates the default config instead, like updatePayCycle', /setRoundUp[\s\S]{0,1600}\?\? defaultPayCycleConfig\(personId\)/.test(context), true)
-check('...and migrateLedgerData still does not backfill, which is why', read('src/lib/ledgerStorage.ts').includes('payCycles: data.payCycles ?? []'), true)
+// Asserted as BEHAVIOUR, not as source text. It used to match the literal
+// `payCycles: data.payCycles ?? []`, which broke the moment PROMPT-15 mapped
+// over that array to default `overdraftAmount` — a change that does not touch
+// this invariant at all. The invariant is "a person with no PayCycleConfig row
+// still has none after a migrate", and that is what is checked now.
+{
+  const noCycle = migrateLedgerData({
+    ...defaultLedgerData(),
+    people: [{ id: 'p1', name: 'Nobody', color: '#888' }],
+    payCycles: [],
+  } as AppDataV2)
+  check('...and migrateLedgerData still does not backfill a missing pay cycle, which is why', noCycle.payCycles.length === 0, true)
+}
 
 // 🚨 The payday change KEEPS its occurrence picker.
 check('a PAYDAY change still picks a real payday', salary.includes('occurrences={paydayOccurrences}'), true)

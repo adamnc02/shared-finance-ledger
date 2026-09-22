@@ -215,7 +215,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
     push('pots', {
       id: p.id, ...h, person_id: p.personId, name: p.name, opening_balance: p.openingBalance, opening_date: p.openingDate, active: p.active,
       color: up(p.color), category_icon: up(p.categoryIcon), category_icon_color: up(p.categoryIconColor),
-      is_coin_jar: up(p.isCoinJar), position: i,
+      is_coin_jar: up(p.isCoinJar), overdraft_amount: p.overdraftAmount, position: i,
     }),
   )
 
@@ -250,6 +250,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
       id: pc.personId, ...h, person_id: pc.personId, opening_balance: pc.openingBalance, opening_balance_date: pc.openingBalanceDate,
       payday_day_of_month: pc.paydayDayOfMonth, payday_adjust_for_non_working_day: pc.paydayAdjustForNonWorkingDay,
       cycle_start_day_of_month: pc.cycleStartDayOfMonth, cycle_start_follows_payday: up(pc.cycleStartFollowsPayday),
+      overdraft_amount: pc.overdraftAmount,
       follows_income_source_type: pc.followsIncomeSource?.type ?? null,
       follows_pension_id: pc.followsIncomeSource?.type === 'pension' ? idUp(pc.followsIncomeSource.pensionId) : null,
       payday_history: jsonUp(pc.paydayHistory), pay_schedule_kind: pc.paySchedule?.kind ?? null,
@@ -316,7 +317,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
   })
 
   if (data.jointAccount) {
-    push('joint_account', { id: ctx.householdId, ...h, opening_balance: data.jointAccount.openingBalance, opening_balance_date: data.jointAccount.openingBalanceDate })
+    push('joint_account', { id: ctx.householdId, ...h, opening_balance: data.jointAccount.openingBalance, opening_balance_date: data.jointAccount.openingBalanceDate, overdraft_amount: data.jointAccount.overdraftAmount })
   }
 
   data.transactions.forEach((t, i) =>
@@ -412,7 +413,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
     obj<Pot>({
       id: r.id, personId: S(r.person_id), name: S(r.name), openingBalance: N(r.opening_balance), openingDate: S(r.opening_date), active: B(r.active),
       color: S(r.color), categoryIcon: s(r.category_icon), categoryIconColor: s(r.category_icon_color),
-      isCoinJar: b(r.is_coin_jar),
+      isCoinJar: b(r.is_coin_jar), overdraftAmount: N(r.overdraft_amount),
     }),
   )
 
@@ -453,6 +454,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
       personId: S(r.person_id), openingBalance: N(r.opening_balance), openingBalanceDate: S(r.opening_balance_date),
       paydayDayOfMonth: N(r.payday_day_of_month), paydayAdjustForNonWorkingDay: B(r.payday_adjust_for_non_working_day),
       cycleStartDayOfMonth: N(r.cycle_start_day_of_month), cycleStartFollowsPayday: b(r.cycle_start_follows_payday),
+      overdraftAmount: N(r.overdraft_amount),
       followsIncomeSource: src === 'pension' ? { type: 'pension', pensionId: S(r.follows_pension_id) } : src === 'salary' ? { type: 'salary' } : undefined,
       paydayHistory: j(r.payday_history),
       paySchedule: kind ? { kind: kind as 'four_weekly', anchorPayDate: S(r.pay_schedule_anchor) } : undefined,
@@ -508,7 +510,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
 
   const joint = rows.joint_account?.[0]
   const jointAccount: JointAccountConfig | null = joint
-    ? { openingBalance: N(joint.opening_balance), openingBalanceDate: S(joint.opening_balance_date) }
+    ? { openingBalance: N(joint.opening_balance), openingBalanceDate: S(joint.opening_balance_date), overdraftAmount: N(joint.overdraft_amount) }
     : null
 
   const transactions: Transaction[] = sorted(rows.transactions).map((r) =>

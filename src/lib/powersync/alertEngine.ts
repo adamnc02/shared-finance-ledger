@@ -44,12 +44,12 @@ export const ALERT_TABLES: string[] = SYNCED_TABLES.filter((t) => t.household).m
 export { fromRows } from './mapping'
 export type { Row, Rows, Value } from './mapping'
 export { migrateLedgerData } from '../ledgerStorage'
-export { findShortfalls, shortfallDedupeKey, shortfallMessage, watchedAccounts, cycleBalanceSeries } from '../shortfall'
-export type { Shortfall, WatchedAccount, WatchedAccountKind } from '../shortfall'
+export { findShortfalls, shortfallDedupeKey, shortfallMessage, watchedAccounts, cycleBalanceSeries, cameOutOfOverdraftSince, isSunday } from '../shortfall'
+export type { Shortfall, Severity, WatchedAccount, WatchedAccountKind } from '../shortfall'
 
 import { fromRows, type Rows } from './mapping'
 import { migrateLedgerData } from '../ledgerStorage'
-import { findShortfalls, shortfallDedupeKey, shortfallMessage, type Shortfall } from '../shortfall'
+import { cameOutOfOverdraftSince, findShortfalls, isSunday, shortfallDedupeKey, shortfallMessage, type Severity, type Shortfall } from '../shortfall'
 import type { AppDataV2 } from '../../types/ledger'
 
 /**
@@ -81,36 +81,80 @@ export function linkedUsers(rows: Rows): Record<string, string> {
   return out
 }
 
-/** Everything the Edge Function needs for one shortfall, in one place, so the function itself holds no rules. */
-export function alertsFor(rows: Rows, asOfDate: Date, londonDate: string): {
+/** Why an alert that was computed did not go out. Reported as counts, never as detail (§47). */
+export type Withheld = 'not-sunday' | 'still-in-overdraft'
+
+export interface AlertToSend {
   personId: string
   userId: string
   dedupeKey: string
+  severity: Severity
   title: string
   body: string
   tag: string
-}[] {
-  const { shortfalls } = shortfallsForHousehold(rows, asOfDate)
+}
+
+/**
+ * Everything the Edge Function needs, in one place, so the function itself holds no rules.
+ *
+ * 🚨 THE CADENCE LIVES HERE, NOT IN SQL (PROMPT-15 §0 Q7). The SQL gate says one thing — *"it is
+ * 20:00 in London"* — and this decides what that means per severity: the out-of-money alert is
+ * nightly, the overdraft heads-up is **Sundays only** and is suppressed while the account has not
+ * come out since the last one. Putting a weekday into `alert_households()` would split one rule
+ * across two languages, which is what this whole design avoids.
+ *
+ * `lastOverdraftAlert` maps `<kind>:<accountId>:<userId>` → the London date of the last overdraft
+ * alert sent to that person for that account. The Edge Function reads it from `notification_log`;
+ * an absent entry means "never told them", which sends.
+ *
+ * 🚨 `withheld` is returned, not swallowed. Adam's 30-minute cron test could not otherwise tell the
+ * SUPPRESSION from the DEDUPE — both produce silence — so the function reports them separately and
+ * the mechanism can be proven in half an hour instead of over two weekends.
+ */
+export function alertsFor(
+  rows: Rows,
+  asOfDate: Date,
+  londonDate: string,
+  lastOverdraftAlert: Record<string, string> = {},
+): { send: AlertToSend[]; withheld: { severity: Severity; reason: Withheld }[] } {
+  const { data, shortfalls } = shortfallsForHousehold(rows, asOfDate)
   const users = linkedUsers(rows)
-  const out = []
+  const send: AlertToSend[] = []
+  const withheld: { severity: Severity; reason: Withheld }[] = []
+  const sunday = isSunday(londonDate)
+
   for (const shortfall of shortfalls) {
     const message = shortfallMessage(shortfall)
     for (const personId of shortfall.account.personIds) {
       const userId = users[personId]
       if (!userId) continue // nobody is linked to this person: never claimed
-      out.push({
+
+      if (shortfall.severity === 'overdraft') {
+        if (!sunday) {
+          withheld.push({ severity: 'overdraft', reason: 'not-sunday' })
+          continue
+        }
+        const last = lastOverdraftAlert[`${shortfall.account.kind}:${shortfall.account.id}:${userId}`]
+        if (last && !cameOutOfOverdraftSince(data, shortfall.account, last, asOfDate)) {
+          withheld.push({ severity: 'overdraft', reason: 'still-in-overdraft' })
+          continue
+        }
+      }
+
+      send.push({
         personId,
         userId,
         dedupeKey: shortfallDedupeKey(shortfall, personId, londonDate),
+        severity: shortfall.severity,
         title: message.title,
         body: message.body,
-        // 🚨 A NEW TAG EACH DAY. The alert repeats every evening until it
-        // clears (§0b Q4), and a notification reusing a tag silently REPLACES
-        // yesterday's — which would defeat a daily nudge entirely. The London
-        // date is what makes each day's tag its own.
-        tag: `shortfall:${shortfall.account.kind}:${shortfall.account.id}:${londonDate}`,
+        // 🚨 A NEW TAG EACH DAY. A notification reusing a tag silently REPLACES
+        // yesterday's, which would defeat a daily nudge entirely. The severity
+        // is in it too, so an escalation never replaces the heads-up it
+        // supersedes on a phone that has both.
+        tag: `shortfall:${shortfall.severity}:${shortfall.account.kind}:${shortfall.account.id}:${londonDate}`,
       })
     }
   }
-  return out
+  return { send, withheld }
 }

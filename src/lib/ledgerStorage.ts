@@ -139,9 +139,16 @@ export function migrateLedgerData(data: AppDataV2): AppDataV2 {
     // gets a real, stable, non-repeating identity the first time this
     // runs rather than staying on the old collapsed-to-one-colour default.
     savingsPots: backfillSharedCardColors(data.savingsPots ?? [], data.creditCards?.length ?? 0),
-    pots: backfillSharedCardColors(data.pots ?? [], (data.creditCards?.length ?? 0) + (data.savingsPots?.length ?? 0)),
+    // PROMPT-15 — `overdraftAmount` is non-optional on the type so every
+    // construction site has to be explicit about it. Data written before the
+    // field existed has none, so it is backfilled to 0 (= no overdraft) here,
+    // which is exactly the behaviour those households had.
+    pots: backfillSharedCardColors(data.pots ?? [], (data.creditCards?.length ?? 0) + (data.savingsPots?.length ?? 0)).map((p) => ({
+      ...p,
+      overdraftAmount: p.overdraftAmount ?? 0,
+    })),
     transactions: data.transactions ?? [],
-    payCycles: data.payCycles ?? [],
+    payCycles: (data.payCycles ?? []).map((c) => ({ ...c, overdraftAmount: c.overdraftAmount ?? 0 })),
     // Absent on any backup persisted before the Salary Sorter session
     // (2026-09) — defaults to no sorts ever having been done, same as a
     // brand-new household. See SalarySort's own comment in
@@ -159,7 +166,7 @@ export function migrateLedgerData(data: AppDataV2): AppDataV2 {
     // needsJointAccountSetup (lib/jointAccountLedger.ts) picks that up on
     // next render and prompts for it, same as it would for a newly
     // created one — nothing here guesses an opening balance/date.
-    jointAccount: data.jointAccount ?? null,
+    jointAccount: data.jointAccount ? { ...data.jointAccount, overdraftAmount: data.jointAccount.overdraftAmount ?? 0 } : null,
   }
 
   // Self-heals any bill/loan/card left pointing at a person who no longer
@@ -244,6 +251,7 @@ export function defaultPayCycleConfig(personId: string): PayCycleConfig {
     paydayDayOfMonth: 28,
     paydayAdjustForNonWorkingDay: true,
     cycleStartDayOfMonth: 1,
+    overdraftAmount: 0,
   }
 }
 

@@ -24,15 +24,21 @@ export function JointAccountSetupModal({
   onSave,
   onCancel,
 }: {
-  initial?: { openingBalance: number; openingBalanceDate: string }
+  initial?: { openingBalance: number; openingBalanceDate: string; overdraftAmount?: number }
   dismissable?: boolean
-  onSave: (openingBalance: number, openingBalanceDate: string) => void
+  onSave: (openingBalance: number, openingBalanceDate: string, overdraftAmount: number) => void
   onCancel?: () => void
 }) {
   const [openingBalance, setOpeningBalance] = useState(initial ? String(initial.openingBalance) : '')
   const [openingBalanceDate, setOpeningBalanceDate] = useState(initial?.openingBalanceDate ?? todayIso())
+  // PROMPT-15 — how far below zero the joint account may go; 0 = none. Only
+  // the 8pm low-balance alert reads it.
+  const [overdraft, setOverdraft] = useState(initial?.overdraftAmount ? String(initial.overdraftAmount) : '')
 
   const amount = Number(openingBalance)
+  // Never negative: a negative overdraft would invert the alert's floor to
+  // +£500 and fire on a healthy account (PROMPT-15 §0 Q2).
+  const overdraftAmount = Math.max(0, Number(overdraft) || 0)
   const canSave = openingBalance.trim() !== '' && !Number.isNaN(amount) && !!openingBalanceDate
 
   return createPortal(
@@ -58,7 +64,11 @@ export function JointAccountSetupModal({
         <div className="flex flex-col gap-3">
           <EditField label="Opening balance (£)" type="number" value={openingBalance} onChange={setOpeningBalance} />
           <EditField label="As of date" type="date" value={openingBalanceDate} onChange={setOpeningBalanceDate} />
+          <EditField label="Overdraft (£)" type="number" value={overdraft} onChange={setOverdraft} />
         </div>
+        <p className="text-[11px] text-[var(--color-ink-faint)] mt-1.5">
+          How far below zero this account may go. Leave at 0 if it cannot. Only the 8pm low-balance alert reads it.
+        </p>
 
         {/* BUGFIX (Adam-reported, 2026-09 session) — Save/Cancel used to be
             two separate stacked full-width buttons; every other staged
@@ -68,10 +78,10 @@ export function JointAccountSetupModal({
             keeps a single full-width Save — only the dismissable "edit"
             call site (which always passes onCancel) gets the pair. */}
         {dismissable && onCancel ? (
-          <FormButtonRow onCancel={onCancel} onSave={() => onSave(amount, openingBalanceDate)} saveDisabled={!canSave} />
+          <FormButtonRow onCancel={onCancel} onSave={() => onSave(amount, openingBalanceDate, overdraftAmount)} saveDisabled={!canSave} />
         ) : (
           <div className="flex mt-4">
-            <SaveButton onClick={() => onSave(amount, openingBalanceDate)} disabled={!canSave} />
+            <SaveButton onClick={() => onSave(amount, openingBalanceDate, overdraftAmount)} disabled={!canSave} />
           </div>
         )}
       </div>

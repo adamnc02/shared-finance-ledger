@@ -50,6 +50,8 @@ export function newPot(input: { personId: string; name: string; openingBalance: 
     openingBalance: input.openingBalance,
     openingDate: input.openingDate,
     active: true,
+    // A new pot has no overdraft until someone sets one (PROMPT-15 §0 Q2).
+    overdraftAmount: 0,
     color: input.color,
   }
 }

@@ -133,107 +133,139 @@ console.log('\n4. Recipients')
   check('no account names a person who is not in the household', accounts.every((a) => a.personIds.every((id) => data.people.some((p) => p.id === id))))
 }
 
-console.log('\n4b. The message names what actually takes the account under')
+console.log('\n4b. The message: two severities, two tenses, four cause shapes')
 {
   const data = load(BACKUPS[0])
   const owner = data.people[0].id
-  const pot: Pot = { id: 'msg-pot', personId: owner, name: 'Car Fund', openingBalance: 100, openingDate: '2026-01-01', active: true, color: '#888' }
-  const base = { ...data, pots: [pot] }
-  const series = cycleBalanceSeries(base, watchedAccounts(base).find((a) => a.id === 'msg-pot')!, AS_OF)
-  const day = series[2].date
-
-  const out = (id: string, amount: number, note: string) =>
-    ({ id, type: 'transfer', direction: 'out', amount, date: day, status: 'pending', location: 'personal', note,
-       fromLocation: { type: 'pot', potId: pot.id }, toLocation: { type: 'personal', ownerId: owner } }) as AppDataV2['transactions'][number]
-
-  // ── one payment ──
-  const one: AppDataV2 = { ...base, transactions: [...data.transactions, out('c1', 300, 'Rent')] }
-  const s1 = findShortfalls(one, AS_OF).find((x) => x.account.id === 'msg-pot')!
-  check('one payment: it is named, with its own amount', s1.causes.length === 1 && s1.causes[0].label === 'Rent' && s1.causes[0].amount === 300, s1.causes)
   const messages: { title: string; body: string }[] = []
-  const m1 = shortfallMessage(s1)
-  check('…the body leads with it', m1.body.startsWith('Rent (£300.00) on '), m1.body)
-  check('…and says how far under it goes', m1.body.includes(`takes it £${s1.amount.toFixed(2)} below zero.`), m1.body)
-  check('…and whether it recovers, not when the cycle ends', /Back above zero on |but still short after that\.|Nothing more due in before /.test(m1.body), m1.body)
-  check('…with no year anywhere in it', !/20\d\d/.test(m1.body), m1.body)
-  check('the title names the account', m1.title === 'Car Fund runs short', m1.title)
+  const pot = (over: Partial<Pot> = {}): Pot => ({
+    id: 'msg-pot', personId: owner, name: 'Car Fund', openingBalance: 100, openingDate: '2026-01-01',
+    active: true, color: '#888', overdraftAmount: 0, ...over,
+  })
+  const base = { ...data, pots: [pot()] }
+  const series = cycleBalanceSeries(base, watchedAccounts(base).find((a) => a.id === 'msg-pot')!, AS_OF)
+  const ASOF_ISO = '2026-09-15'
+  const future = series.find((p) => p.date > ASOF_ISO)!.date
+  const past = series.find((p) => p.date < ASOF_ISO)!.date
+  check('the fixture has days on both sides of "today"', past < ASOF_ISO && future > ASOF_ISO, [past, ASOF_ISO, future])
 
-  // ── several payments ──
-  const many: AppDataV2 = { ...base, transactions: [...data.transactions, out('c1', 300, 'Rent'), out('c2', 120, 'Council Tax'), out('c3', 45, 'Broadband')] }
-  const s2 = findShortfalls(many, AS_OF).find((x) => x.account.id === 'msg-pot')!
-  check('several payments: all counted', s2.causes.length === 3, s2.causes)
-  check('…biggest first', s2.causes[0].amount === 300 && s2.causes[2].amount === 45, s2.causes.map((c) => c.amount))
-  const m2 = shortfallMessage(s2)
-  check('…the body totals them', m2.body.startsWith('3 payments totalling £465.00 on '), m2.body)
-  check('…and the total is the sum of the named ones, not the dip', m2.body.includes('£465.00') && m2.body.includes(`£${s2.amount.toFixed(2)} below zero`), m2.body)
+  const out = (id: string, amount: number, date: string, note: string) =>
+    ({ id, type: 'transfer', direction: 'out', amount, date, status: 'pending', location: 'personal', note,
+       fromLocation: { type: 'pot', potId: 'msg-pot' }, toLocation: { type: 'personal', ownerId: owner } }) as AppDataV2['transactions'][number]
 
-  // ── already under before anything was due ──
-  const opening: Pot = { ...pot, id: 'msg-pot-2', name: 'Overdrawn', openingBalance: -50 }
-  const none = { ...data, pots: [opening] }
-  const s3 = findShortfalls(none, AS_OF).find((x) => x.account.id === 'msg-pot-2')!
-  check('an account already under on day one blames no payment', s3.causes.length === 0, s3.causes)
-  const m3 = shortfallMessage(s3)
-  check('…and the body says so without inventing a cause', m3.body.startsWith('Projected to be £50.00 below zero on '), m3.body)
-
-  // ── money in that DOES clear it ──
-  {
-    const inDay = series[5].date
-    const withIncome: AppDataV2 = {
-      ...base,
-      transactions: [
-        ...data.transactions,
-        out('c1', 300, 'Rent'),
-        { id: 'in1', type: 'transfer', direction: 'in', amount: 500, date: inDay, status: 'pending', location: 'personal', note: 'Payday',
-          fromLocation: { type: 'personal', ownerId: owner }, toLocation: { type: 'pot', potId: pot.id } } as AppDataV2['transactions'][number],
-      ],
-    }
-    const si = findShortfalls(withIncome, AS_OF).find((x) => x.account.id === 'msg-pot')!
-    check('£500 against a £200 hole: it recovers, and the day is named', si.recoversOn === inDay, [si.recoversOn, inDay])
-    const mi = shortfallMessage(si)
-    check('…the body says it comes back', mi.body.endsWith(`Back above zero on ${formatDayMonth(inDay)}.`), mi.body)
-    check('…and no longer mentions the cycle end', !mi.body.includes('Cycle ends'), mi.body)
+  const build = (p: Pot, txs: AppDataV2['transactions']) => {
+    const d: AppDataV2 = { ...data, pots: [p], transactions: [...data.transactions, ...txs] }
+    return findShortfalls(d, AS_OF).find((x) => x.account.id === 'msg-pot')!
   }
 
-  // ── 🚨 money in that does NOT clear it — Adam, 2026-09-22 ──
+  console.log('\n   A. Into your overdraft — £500 limit, dips to −£212.40')
   {
-    // "I may have a scheduled deposit/withdrawal that might not be enough to
-    // cover the upcoming scheduled/pending payments." A £50 deposit against a
-    // £200 hole is money in and still short. Saying "next money in on the
-    // 15th" here would read as relief and be false.
-    const inDay = series[5].date
-    const notEnough: AppDataV2 = {
-      ...base,
-      transactions: [
-        ...data.transactions,
-        out('c1', 300, 'Rent'),
-        { id: 'in1', type: 'transfer', direction: 'in', amount: 50, date: inDay, status: 'pending', location: 'personal', note: 'Small top-up',
-          fromLocation: { type: 'personal', ownerId: owner }, toLocation: { type: 'pot', potId: pot.id } } as AppDataV2['transactions'][number],
-      ],
-    }
-    const sn = findShortfalls(notEnough, AS_OF).find((x) => x.account.id === 'msg-pot')!
-    check('money IS due in', sn.nextMoneyIn?.date === inDay && sn.nextMoneyIn?.amount === 50, sn.nextMoneyIn)
-    check('🚨 …but it never recovers, and the walk knows that', sn.recoversOn === null, sn.recoversOn)
-    const mn = shortfallMessage(sn)
-    check('…so the body says the money arrives AND that it is not enough', mn.body.endsWith(`£50.00 in on ${formatDayMonth(inDay)}, but still short after that.`), mn.body)
-    check('🚨 …and never claims it comes back', !mn.body.includes('Back above zero'), mn.body)
-
-    // The control: the version that reported the money-in date alone.
-    check('the control: "next money in" alone would have read as relief here', sn.nextMoneyIn !== null && sn.recoversOn === null)
-    messages.push(mn)
+    const s1 = build(pot({ overdraftAmount: 500 }), [out('c1', 312.4, future, 'Rent')])
+    check("severity is 'overdraft' — inside the limit", s1.severity === 'overdraft', s1.severity)
+    check('the amount is measured from ZERO, not the limit', s1.amount === 212.4, s1.amount)
+    const m = shortfallMessage(s1)
+    check('title says "runs short"', m.title === 'Car Fund runs short', m.title)
+    check('body says "into your £500 overdraft"', m.body.includes('takes you £212.40 into your £500 overdraft'), m.body)
+    messages.push(m)
   }
 
-  // ── nothing due in at all ──
-  check('with nothing due in, the body says so plainly', shortfallMessage(s1).body.includes('Nothing more due in before'), shortfallMessage(s1).body)
+  console.log('\n   B. Not enough money — £500 limit, £212.40 short')
+  {
+    const s2 = build(pot({ overdraftAmount: 500 }), [out('c1', 812.4, future, 'Rent')])
+    check("severity is 'shortfall' — past the limit", s2.severity === 'shortfall', s2.severity)
+    check('🚨 the amount is how much you are SHORT BY, not the balance', s2.amount === 212.4, s2.amount)
+    const m = shortfallMessage(s2)
+    check('title states the problem outright', m.title === 'Car Fund: not enough money', m.title)
+    check('body says "short, even with your £500 overdraft"', m.body.includes('leaves you £212.40 short, even with your £500 overdraft'), m.body)
+    check('🚨 it never describes an impossible balance', !m.body.includes('into your £500 overdraft'), m.body)
+    messages.push(m)
+  }
 
-  // ── the joint account's title ──
-  const joint = watchedAccounts(data).find((a) => a.kind === 'joint')
-  if (joint) {
-    const m4 = shortfallMessage({ account: joint, date: '2026-09-20', amount: 10, cycleStart: '2026-09-01', cycleEnd: '2026-09-30', causes: [], nextMoneyIn: null, recoversOn: null })
-    check('the joint title reads as a title, not mid-sentence prose', m4.title === 'Your joint account runs short', m4.title)
+  console.log('\n   C. Not enough money — no overdraft')
+  {
+    const s3 = build(pot(), [out('c1', 312.4, future, 'Rent')])
+    check("🚨 severity is 'shortfall', NOT 'overdraft' — there is no buffer to go into", s3.severity === 'shortfall', s3.severity)
+    check('the amount is how much you are short by', s3.amount === 212.4, s3.amount)
+    const m = shortfallMessage(s3)
+    check('title states the problem outright', m.title === 'Car Fund: not enough money', m.title)
+    check('body says simply "short"', m.body.includes('leaves you £212.40 short.'), m.body)
+    check('…and never mentions an overdraft', !m.body.includes('overdraft'), m.body)
+    messages.push(m)
+
+    // THE CONTROL. The tempting rule — "below zero means you're in your
+    // overdraft" — classifies this as a heads-up, downgrading a real
+    // out-of-money alert on an account with no buffer at all.
+    const naiveSeverity = (limit: number, balance: number) => (balance < 0 ? 'overdraft' : 'ok')
+    check('the control: "below zero = overdraft" calls this a heads-up…', naiveSeverity(0, -212.4) === 'overdraft')
+    check("…which is NOT what the real rule says", s3.severity === 'shortfall' && naiveSeverity(0, -212.4) !== s3.severity)
+  }
+
+  console.log('\n   D. Cause shapes')
+  {
+    const many = build(pot({ overdraftAmount: 500 }), [out('c1', 312.4, future, 'Rent'), out('c2', 120, future, 'Council Tax'), out('c3', 45, future, 'Broadband')])
+    check('several payments are totalled and counted', shortfallMessage(many).body.startsWith('3 payments totalling £477.40 on '), shortfallMessage(many).body)
+    check('…with the plural verb', shortfallMessage(many).body.includes('take you '), shortfallMessage(many).body)
+    messages.push(shortfallMessage(many))
+
+    const none = build(pot({ openingBalance: -50 }), [])
+    check('an account already under on day one blames no payment', none.causes.length === 0, none.causes)
+
+    // 🚨 PAST TENSE — the dip has already happened.
+    const pastDip = build(pot({ overdraftAmount: 500 }), [out('c1', 312.4, past, 'Rent')])
+    check('a dip before today is flagged as past', pastDip.isPast === true, [pastDip.date, ASOF_ISO])
+    const mp = shortfallMessage(pastDip)
+    check("…and reads in the past tense: \"You've been…since\"", mp.body.startsWith("You've been £212.40 into your £500 overdraft since "), mp.body)
+    check('…and still names the day it started, which seeds the suppression history', mp.body.includes(formatDayMonth(past)), mp.body)
+    messages.push(mp)
+
+    const futureDip = build(pot({ overdraftAmount: 500 }), [out('c1', 312.4, future, 'Rent')])
+    check('a dip today or later is NOT past', futureDip.isPast === false)
+  }
+
+  console.log('\n   E. Relief shapes')
+  {
+    const inDay = series.find((p) => p.date > future)!.date
+    const income = (amount: number) =>
+      ({ id: 'in1', type: 'transfer', direction: 'in', amount, date: inDay, status: 'pending', location: 'personal', note: 'Payday',
+         fromLocation: { type: 'personal', ownerId: owner }, toLocation: { type: 'pot', potId: 'msg-pot' } }) as AppDataV2['transactions'][number]
+
+    const recovers = build(pot({ overdraftAmount: 500 }), [out('c1', 312.4, future, 'Rent'), income(500)])
+    check('enough money in: it recovers', recovers.recoversOn === inDay, [recovers.recoversOn, inDay])
+    check('…and the body names the day', shortfallMessage(recovers).body.endsWith(`Next scheduled money in on ${formatDayMonth(inDay)}.`), shortfallMessage(recovers).body)
+
+    const notEnough = build(pot({ overdraftAmount: 500 }), [out('c1', 812.4, future, 'Rent'), income(50)])
+    check('🚨 money in but not enough: it does NOT claim recovery', notEnough.recoversOn === null, notEnough.recoversOn)
+    check('…and says so explicitly', shortfallMessage(notEnough).body.endsWith("but you'll still be short after that."), shortfallMessage(notEnough).body)
+    messages.push(shortfallMessage(notEnough))
+
+    const nothing = build(pot({ overdraftAmount: 500 }), [out('c1', 312.4, future, 'Rent')])
+    check('nothing due in: it says so', shortfallMessage(nothing).body.includes('Nothing more due in before '), shortfallMessage(nothing).body)
+  }
+
+  console.log('\n   F. recoversOn uses the SEVERITY\'s floor, not always zero')
+  {
+    const inDay = series.find((p) => p.date > future)!.date
+    const income = (amount: number) =>
+      ({ id: 'in1', type: 'transfer', direction: 'in', amount, date: inDay, status: 'pending', location: 'personal', note: 'Top-up',
+         fromLocation: { type: 'personal', ownerId: owner }, toLocation: { type: 'pot', potId: 'msg-pot' } }) as AppDataV2['transactions'][number]
+    // Past the £500 limit, then £400 in: back WITHIN the limit but still below zero.
+    const s6 = build(pot({ overdraftAmount: 500 }), [out('c1', 812.4, future, 'Rent'), income(400)])
+    check("'shortfall' recovers when back within the LIMIT, not above zero", s6.recoversOn === inDay, s6.recoversOn)
+    check('…which is the earlier, correct date', s6.severity === 'shortfall')
+  }
+
+  console.log('\n   G. The joint account title')
+  {
+    const joint = watchedAccounts(data).find((a) => a.kind === 'joint')
+    if (joint) {
+      const base2 = { account: joint, date: '2026-09-20', isPast: false, amount: 10, cycleStart: '2026-09-01', cycleEnd: '2026-09-30', causes: [], nextMoneyIn: null, recoversOn: null }
+      check('overdraft title', shortfallMessage({ ...base2, severity: 'overdraft' }).title === 'Your joint account runs short')
+      check('not-enough title', shortfallMessage({ ...base2, severity: 'shortfall' }).title === 'Your joint account: not enough money')
+    }
   }
 
   console.log('\n   — what the phone actually shows —')
-  for (const m of [m1, m2, m3, ...messages]) console.log(`     ${m.title}\n     ${m.body}`)
+  for (const m of messages) console.log(`     ${m.title}\n     ${m.body}`)
 }
 
 console.log('\n5. The dedupe key carries the London date')

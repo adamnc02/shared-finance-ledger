@@ -289,7 +289,7 @@ interface LedgerContextValue {
   // Upserts AppDataV2.jointAccount — used both by the non-dismissable
   // first-time setup flow (JointAccountSetupModal) and by the Wallet
   // page's own "edit" affordance once it exists.
-  setJointAccountOpening: (openingBalance: number, openingBalanceDate: string) => void
+  setJointAccountOpening: (openingBalance: number, openingBalanceDate: string, overdraftAmount?: number) => void
   // Hand-logged from the Transactions page's "Joint" pill — two-sided
   // bookkeeping, same shape as logSavingsDeposit/logSavingsWithdrawal:
   // one call materializes the real Transaction that both the depositing
@@ -1140,8 +1140,16 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
     setDataState((prev) => removePensionFromData(prev, id))
   }
 
-  const setJointAccountOpening: LedgerContextValue['setJointAccountOpening'] = (openingBalance, openingBalanceDate) => {
-    setDataState((prev) => ({ ...prev, jointAccount: { openingBalance, openingBalanceDate } }))
+  const setJointAccountOpening: LedgerContextValue['setJointAccountOpening'] = (openingBalance, openingBalanceDate, overdraftAmount) => {
+    setDataState((prev) => ({
+      ...prev,
+      // The overdraft survives a re-setup of the opening balance: it is a fact
+      // about the account, not about the reconciliation point.
+      // The overdraft survives a re-setup of the opening balance when the
+      // caller does not pass one — it is a fact about the account, not about
+      // the reconciliation point. First-time setup (AppGuards) passes none.
+      jointAccount: { openingBalance, openingBalanceDate, overdraftAmount: overdraftAmount ?? prev.jointAccount?.overdraftAmount ?? 0 },
+    }))
   }
 
   // SUPERSEDED (2026-09-04 session) — thin wrapper over logTransfer. The
@@ -1196,6 +1204,9 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
         openingDate: effectiveFrom,
         active: true,
         color: pickNextSharedCardColor(prev),
+        // A Coin Jar never gets an overdraft: its field is hidden on the form
+        // and it is not watched for shortfalls at all (PROMPT-15 §0 Q4).
+        overdraftAmount: 0,
         isCoinJar: true,
       }
       return { ...prev, payCycles, pots: [...prev.pots, jar] }

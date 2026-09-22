@@ -103,8 +103,9 @@ try {
     const alertsBundle = bundled.alertsFor(rows, AS_OF, LONDON_DATE)
     const alertsSource = alertsFor(rows, AS_OF, LONDON_DATE)
     check(`${name}: the same alerts, keys and messages included`, JSON.stringify(alertsBundle) === JSON.stringify(alertsSource))
-    check(`${name}: every dedupe key carries the London date`, alertsBundle.every((a) => a.dedupeKey.endsWith(`:${LONDON_DATE}`)))
-    check(`${name}: every tag carries it too — a reused tag replaces yesterday's silently`, alertsBundle.every((a) => a.tag.endsWith(`:${LONDON_DATE}`)))
+    check(`${name}: every dedupe key carries the London date`, alertsBundle.send.every((a) => a.dedupeKey.endsWith(`:${LONDON_DATE}`)))
+    check(`${name}: every dedupe key carries the severity too`, alertsBundle.send.every((a) => a.dedupeKey.startsWith(`shortfall:${a.severity}:`)))
+    check(`${name}: every tag carries the date — a reused tag replaces yesterday's silently`, alertsBundle.send.every((a) => a.tag.endsWith(`:${LONDON_DATE}`)))
   }
 
   console.log('\n3b. …and the comparison is not vacuous')
@@ -125,7 +126,7 @@ try {
     const fromSource = shortfallsForHousehold(rows, AS_OF).shortfalls
     check('the forced dip is found at all', fromSource.some((s) => s.account.id === 'bundle-dip'), fromSource.map((s) => s.account.id).join(','))
     check('the bundle finds exactly the same ones', JSON.stringify(fromBundle) === JSON.stringify(fromSource), `${fromBundle.length} vs ${fromSource.length}`)
-    const alerts = bundled.alertsFor(rows, AS_OF, LONDON_DATE)
+    const alerts = bundled.alertsFor(rows, AS_OF, LONDON_DATE).send
     check('and it turns into at least one addressed alert', alerts.length > 0 && alerts.every((a) => a.userId && a.title && a.body), alerts.length)
   }
 
@@ -135,10 +136,10 @@ try {
     const rows = toRows(data, { householdId: HH })
     const linkedAll = { ...rows, people: rows.people.map((r, i) => ({ ...r, linked_user_id: `user-${i}` })) }
     const linkedNone = { ...rows, people: rows.people.map((r) => ({ ...r, linked_user_id: null })) }
-    check('with nobody linked, no alert is produced at all (§0b Q8)', bundled.alertsFor(linkedNone, AS_OF, LONDON_DATE).length === 0)
+    check('with nobody linked, no alert is produced at all (§0b Q8)', bundled.alertsFor(linkedNone, AS_OF, LONDON_DATE).send.length === 0)
     const users = bundled.linkedUsers(linkedAll)
     check('linkedUsers maps person id → user id', Object.keys(users).length === data.people.length, users)
-    check('every alert names a user that mapping produced', bundled.alertsFor(linkedAll, AS_OF, LONDON_DATE).every((a) => users[a.personId] === a.userId))
+    check('every alert names a user that mapping produced', bundled.alertsFor(linkedAll, AS_OF, LONDON_DATE).send.every((a) => users[a.personId] === a.userId))
   }
 } finally {
   rmSync(tmp, { force: true })
