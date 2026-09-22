@@ -1,4 +1,14 @@
-# Shared Ledger — household finance PWA, synced across two phones
+# My Ledger — household finance PWA, synced across two phones
+
+> **The app is called "My Ledger" (renamed 2026-09-22, from "Shared Ledger").** The repo, the
+> Supabase schema and the PowerSync app id keep their old names — only the display name changed.
+> It lives in **four** places, and all four must agree: `index.html`'s `<title>` and
+> `apple-mobile-web-app-title`, `public/manifest.webmanifest`'s `name`/`short_name`, and
+> `public/sw.js`'s fallback notification title.
+>
+> 🚨 **iOS reads the name from the INSTALLED copy**, both for the home-screen label and for the
+> "from …" suffix on a push notification. An already-installed phone keeps showing the old name
+> until the home-screen icon is deleted and re-added — that is iOS, not a bug here.
 
 > A two-person household's money, on both people's phones, offline-first: net salary (UK PAYE),
 > bills and recurring transactions, loans with a genuine amortisation engine, credit cards with

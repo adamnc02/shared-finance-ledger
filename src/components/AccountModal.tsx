@@ -542,7 +542,7 @@ function Card({ children }: { children: ReactNode }) {
 const CONFIRM_TEXT: Record<Confirm['kind'], { title: string; body: string; go: string; danger?: boolean }> = {
   delete1: {
     title: 'Delete your ledger data?',
-    body: "This deletes your data in Shared Ledger: if you're the only member of your household, every person, bill, loan, card, pot and transaction in it. If someone else is in your household, their shared data stays and only your own part goes. Your login is not deleted.",
+    body: "This deletes your data in My Ledger: if you're the only member of your household, every person, bill, loan, card, pot and transaction in it. If someone else is in your household, their shared data stays and only your own part goes. Your login is not deleted.",
     go: 'Continue',
     danger: true,
   },
@@ -759,7 +759,7 @@ function NotificationsCard() {
     on: 'This device gets an alert at 8pm on any day one of your accounts is projected to dip below zero.',
     off: 'This device is not registered, so it will not get alerts.',
     ask: "You'll be asked to allow notifications.",
-    denied: 'Notifications are turned off for this app and it cannot ask again. Turn them on in iOS Settings → Notifications → Shared Ledger, then come back.',
+    denied: 'Notifications are turned off for this app and it cannot ask again. Turn them on in iOS Settings → Notifications → My Ledger, then come back.',
     'needs-install': 'On iPhone and iPad, notifications only work from the Home Screen app. Share → Add to Home Screen, then open it from there.',
     unsupported: 'This browser cannot show notifications, so this device will not get alerts.',
   }

@@ -154,7 +154,7 @@ export async function turnOnHere(): Promise<void> {
   if (permission !== 'granted') {
     throw new Error(
       permission === 'denied'
-        ? 'Notifications were turned off. Shared Ledger cannot ask again — turn them on in Settings → Notifications → Shared Ledger.'
+        ? 'Notifications were turned off. My Ledger cannot ask again — turn them on in Settings → Notifications → My Ledger.'
         : 'No answer was given, so nothing was turned on. Tap again when you are ready.',
     )
   }

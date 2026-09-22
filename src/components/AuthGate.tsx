@@ -96,7 +96,7 @@ export function AuthGate() {
     >
       <div className="w-full max-w-[360px] mx-auto">
         <div className="font-display text-3xl font-extrabold text-center tracking-wide text-[var(--color-ink)] mb-8">
-          Shared Ledger
+          My Ledger
         </div>
 
         <div className="space-y-2 mb-5">

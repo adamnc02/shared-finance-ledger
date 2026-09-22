@@ -1,5 +1,5 @@
 /*
- * Shared Ledger's service worker — push notifications and nothing else.
+ * My Ledger's service worker — push notifications and nothing else.
  *
  * 🚨 A SEPARATE REGISTRATION FROM LISTLY'S, and it has to be. A push
  * subscription belongs to a service worker registration, which is per SCOPE:
@@ -13,11 +13,11 @@
  * build: the cached index.html keeps loading the cached bundle, and no deploy
  * reaches the phone. With no fetch handler this worker never sees a request,
  * so every load goes to the network exactly as it did before it existed
- * (PROMPT-14 Part 7). Shared Ledger is offline-first through PowerSync's local
+ * (PROMPT-14 Part 7). My Ledger is offline-first through PowerSync's local
  * database, not through a cache — it has no need of one.
  *
  * `skipWaiting` + `clients.claim` so a changed sw.js takes over at once
- * rather than waiting for every Shared Ledger window to close, which on an installed
+ * rather than waiting for every My Ledger window to close, which on an installed
  * iPhone app can be days.
  *
  * Plain JS in public/ on purpose: it is served as-is at /shared-finance-ledger/sw.js, with
@@ -37,7 +37,7 @@ self.addEventListener('push', (event) => {
   } catch {
     data = {}
   }
-  const title = typeof data.title === 'string' && data.title ? data.title : 'Shared Ledger'
+  const title = typeof data.title === 'string' && data.title ? data.title : 'My Ledger'
   event.waitUntil(
     self.registration.showNotification(title, {
       body: typeof data.body === 'string' ? data.body : 'You have a low balance coming up.',
@@ -48,14 +48,14 @@ self.addEventListener('push', (event) => {
   )
 })
 
-// Tapping the notification opens Shared Ledger on the right tab. An open Shared Ledger
+// Tapping the notification opens My Ledger on the right tab. An open My Ledger
 // window is reused rather than a second one opened — a second window would
 // fight the first for PowerSync's on-device database, which on iOS only one
 // can hold.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const target = new URL(event.notification.data?.url || self.registration.scope, self.registration.scope)
-  // Only ever somewhere inside Shared Ledger.
+  // Only ever somewhere inside My Ledger.
   const url = target.href.startsWith(self.registration.scope) ? target.href : self.registration.scope
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {

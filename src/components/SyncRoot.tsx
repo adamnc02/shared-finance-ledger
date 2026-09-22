@@ -69,7 +69,7 @@ export default function SyncRoot({ children }: { children: (store: LedgerStore, 
 
 function Gate({ children }: { children: (store: LedgerStore, extras: ReactNode) => ReactNode }) {
   const { session } = useAuth()
-  if (session === undefined) return <FullScreen title="Shared Ledger" line="Checking sign-in…" />
+  if (session === undefined) return <FullScreen title="My Ledger" line="Checking sign-in…" />
   if (session === null) return <AuthGate />
   return (
     <SignedIn key={session.user.id} userId={session.user.id} email={session.user.email ?? ''}>
@@ -197,7 +197,7 @@ function SignedIn({ userId, email, children }: { userId: string; email: string; 
 
   return (
     <SyncControlsContext.Provider value={controls}>
-      {phase.kind === 'starting' && <FullScreen title="Shared Ledger" line={phase.line} spinner>{floatingAccount}</FullScreen>}
+      {phase.kind === 'starting' && <FullScreen title="My Ledger" line={phase.line} spinner>{floatingAccount}</FullScreen>}
       {phase.kind === 'error' && (
         <FullScreen title="Couldn't start syncing" line={phase.message}>
           <button onClick={() => setAttempt((a) => a + 1)} className="mt-6 px-5 py-2.5 rounded-2xl text-sm font-semibold text-[var(--color-surface)] bg-[var(--color-ink)]">
