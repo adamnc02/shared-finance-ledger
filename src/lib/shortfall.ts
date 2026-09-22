@@ -82,16 +82,28 @@ export interface Shortfall {
    */
   causes: { label: string; amount: number }[]
   /**
-   * The first day AFTER the dip that anything comes INTO this account, or null if nothing does
-   * before the cycle ends. This is what tells you how long you have to survive, which the cycle
-   * end only accidentally did — and for a pot it did not even do that, because a pot borrows its
-   * owner's cycle and the boundary means nothing to it.
+   * The first day AFTER the dip that anything comes INTO this account, with how much, or null if
+   * nothing does before the cycle ends.
    *
    * 🚨 Deliberately ANY incoming amount, not just salary. A transfer in from savings pays a bill
    * exactly as well as a payday does, and calling only salary "income" would tell someone nothing
    * is coming when £300 lands tomorrow.
    */
-  nextMoneyIn: string | null
+  nextMoneyIn: { date: string; amount: number } | null
+  /**
+   * The first day after the dip the balance is back at or above the floor, or null if it never is
+   * before the cycle ends.
+   *
+   * 🚨 MONEY ARRIVING IS NOT THE SAME AS RECOVERING, and conflating them is how this alert would
+   * start lying reassuringly. Adam, 2026-09-22: *"I may have a scheduled deposit/withdrawal that
+   * might not be enough to cover the upcoming scheduled/pending payments"*. A £50 deposit against
+   * £500 of payments is money in and still short — so the message leads with THIS, and mentions
+   * the deposit only to say it does not clear it.
+   *
+   * Free to compute, because the day-by-day walk this is read from already exists: the engine is
+   * not anchored to the cycle boundary, it visits every day.
+   */
+  recoversOn: string | null
 }
 
 /** Every account this household watches, in a stable order. */
@@ -213,12 +225,17 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
       .map((t) => ({ label: label(t, data), amount: Math.round(-c.sign(t) * 100) / 100 }))
       .sort((a, b) => b.amount - a.amount)
 
-    // The next day money arrives, from the same list again.
-    const nextMoneyIn =
-      c.transactions
-        .filter((t) => t.date > dip.date && c.include(t) && c.sign(t) > 0)
-        .map((t) => t.date)
-        .sort()[0] ?? null
+    // The next day money arrives, from the same list again, with how much
+    // arrives that day in total.
+    const incoming = c.transactions.filter((t) => t.date > dip.date && c.include(t) && c.sign(t) > 0)
+    const nextInDate = incoming.map((t) => t.date).sort()[0] ?? null
+    const nextMoneyIn = nextInDate
+      ? { date: nextInDate, amount: Math.round(incoming.filter((t) => t.date === nextInDate).reduce((sum, t) => sum + c.sign(t), 0) * 100) / 100 }
+      : null
+
+    // Whether it actually recovers — read straight off the same walk, which
+    // visits every day and is not anchored to the cycle boundary.
+    const recoversOn = series.find((p) => p.date > dip.date && p.projectedBalance >= 0)?.date ?? null
 
     out.push({
       account,
@@ -228,6 +245,7 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
       cycleEnd: toIso(cycle.end),
       causes,
       nextMoneyIn,
+      recoversOn,
     })
   }
   return out
@@ -264,12 +282,22 @@ export function shortfallMessage(shortfall: Shortfall): { title: string; body: s
           // naming one would be a lie.
           `Projected to be ${short} below zero on ${on}.`
 
-  // When relief arrives, which is the actionable half. "Cycle ends" only
-  // accidentally answered this for a personal account (its cycle end IS
-  // usually payday) and answered nothing at all for a pot, which borrows its
-  // owner's cycle. Adam, 2026-09-22: "change cycle end to be before next
-  // scheduled income".
-  const relief = shortfall.nextMoneyIn ? `Next money in on ${formatDayMonth(shortfall.nextMoneyIn)}.` : `No more money in before the cycle ends ${ends}.`
+  // Whether it RECOVERS — the actionable half, and three genuinely different
+  // answers. "Cycle ends" only accidentally addressed this for a personal
+  // account (its cycle end is usually payday) and addressed nothing at all for
+  // a pot, which borrows its owner's cycle.
+  //
+  // 🚨 The middle case is the one that matters and the one that was missing.
+  // Adam, 2026-09-22: "I may have a scheduled deposit/withdrawal that might
+  // not be enough to cover the upcoming scheduled/pending payments". Saying
+  // "next money in on the 15th" when that money does not clear the shortfall
+  // reads as relief and is not — the alert would be lying reassuringly, which
+  // is worse than not sending it.
+  const relief = shortfall.recoversOn
+    ? `Back above zero on ${formatDayMonth(shortfall.recoversOn)}.`
+    : shortfall.nextMoneyIn
+      ? `£${shortfall.nextMoneyIn.amount.toFixed(2)} in on ${formatDayMonth(shortfall.nextMoneyIn.date)}, but still short after that.`
+      : `Nothing more due in before ${ends}.`
 
   return {
     title: `${possessive(shortfall.account)} runs short`,

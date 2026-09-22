@@ -150,10 +150,11 @@ console.log('\n4b. The message names what actually takes the account under')
   const one: AppDataV2 = { ...base, transactions: [...data.transactions, out('c1', 300, 'Rent')] }
   const s1 = findShortfalls(one, AS_OF).find((x) => x.account.id === 'msg-pot')!
   check('one payment: it is named, with its own amount', s1.causes.length === 1 && s1.causes[0].label === 'Rent' && s1.causes[0].amount === 300, s1.causes)
+  const messages: { title: string; body: string }[] = []
   const m1 = shortfallMessage(s1)
   check('…the body leads with it', m1.body.startsWith('Rent (£300.00) on '), m1.body)
   check('…and says how far under it goes', m1.body.includes(`takes it £${s1.amount.toFixed(2)} below zero.`), m1.body)
-  check('…and when money next arrives, not when the cycle ends', /Next money in on |No more money in before the cycle ends /.test(m1.body), m1.body)
+  check('…and whether it recovers, not when the cycle ends', /Back above zero on |but still short after that\.|Nothing more due in before /.test(m1.body), m1.body)
   check('…with no year anywhere in it', !/20\d\d/.test(m1.body), m1.body)
   check('the title names the account', m1.title === 'Car Fund runs short', m1.title)
 
@@ -174,7 +175,7 @@ console.log('\n4b. The message names what actually takes the account under')
   const m3 = shortfallMessage(s3)
   check('…and the body says so without inventing a cause', m3.body.startsWith('Projected to be £50.00 below zero on '), m3.body)
 
-  // ── when money next comes in ──
+  // ── money in that DOES clear it ──
   {
     const inDay = series[5].date
     const withIncome: AppDataV2 = {
@@ -187,25 +188,52 @@ console.log('\n4b. The message names what actually takes the account under')
       ],
     }
     const si = findShortfalls(withIncome, AS_OF).find((x) => x.account.id === 'msg-pot')!
-    check('the next money-in date is found', si.nextMoneyIn === inDay, [si.nextMoneyIn, inDay])
-    check('…and it is AFTER the dip, never the dip day itself', si.nextMoneyIn! > si.date)
+    check('£500 against a £200 hole: it recovers, and the day is named', si.recoversOn === inDay, [si.recoversOn, inDay])
     const mi = shortfallMessage(si)
-    check('…and the body names it', mi.body.endsWith(`Next money in on ${formatDayMonth(inDay)}.`), mi.body)
+    check('…the body says it comes back', mi.body.endsWith(`Back above zero on ${formatDayMonth(inDay)}.`), mi.body)
     check('…and no longer mentions the cycle end', !mi.body.includes('Cycle ends'), mi.body)
-
-    // Nothing coming in at all is the more alarming case, and must say so.
-    check('with nothing due in, the body says so plainly', shortfallMessage(s1).body.includes('No more money in before the cycle ends'), shortfallMessage(s1).body)
   }
+
+  // ── 🚨 money in that does NOT clear it — Adam, 2026-09-22 ──
+  {
+    // "I may have a scheduled deposit/withdrawal that might not be enough to
+    // cover the upcoming scheduled/pending payments." A £50 deposit against a
+    // £200 hole is money in and still short. Saying "next money in on the
+    // 15th" here would read as relief and be false.
+    const inDay = series[5].date
+    const notEnough: AppDataV2 = {
+      ...base,
+      transactions: [
+        ...data.transactions,
+        out('c1', 300, 'Rent'),
+        { id: 'in1', type: 'transfer', direction: 'in', amount: 50, date: inDay, status: 'pending', location: 'personal', note: 'Small top-up',
+          fromLocation: { type: 'personal', ownerId: owner }, toLocation: { type: 'pot', potId: pot.id } } as AppDataV2['transactions'][number],
+      ],
+    }
+    const sn = findShortfalls(notEnough, AS_OF).find((x) => x.account.id === 'msg-pot')!
+    check('money IS due in', sn.nextMoneyIn?.date === inDay && sn.nextMoneyIn?.amount === 50, sn.nextMoneyIn)
+    check('🚨 …but it never recovers, and the walk knows that', sn.recoversOn === null, sn.recoversOn)
+    const mn = shortfallMessage(sn)
+    check('…so the body says the money arrives AND that it is not enough', mn.body.endsWith(`£50.00 in on ${formatDayMonth(inDay)}, but still short after that.`), mn.body)
+    check('🚨 …and never claims it comes back', !mn.body.includes('Back above zero'), mn.body)
+
+    // The control: the version that reported the money-in date alone.
+    check('the control: "next money in" alone would have read as relief here', sn.nextMoneyIn !== null && sn.recoversOn === null)
+    messages.push(mn)
+  }
+
+  // ── nothing due in at all ──
+  check('with nothing due in, the body says so plainly', shortfallMessage(s1).body.includes('Nothing more due in before'), shortfallMessage(s1).body)
 
   // ── the joint account's title ──
   const joint = watchedAccounts(data).find((a) => a.kind === 'joint')
   if (joint) {
-    const m4 = shortfallMessage({ account: joint, date: '2026-09-20', amount: 10, cycleStart: '2026-09-01', cycleEnd: '2026-09-30', causes: [], nextMoneyIn: null })
+    const m4 = shortfallMessage({ account: joint, date: '2026-09-20', amount: 10, cycleStart: '2026-09-01', cycleEnd: '2026-09-30', causes: [], nextMoneyIn: null, recoversOn: null })
     check('the joint title reads as a title, not mid-sentence prose', m4.title === 'Your joint account runs short', m4.title)
   }
 
   console.log('\n   — what the phone actually shows —')
-  for (const m of [m1, m2, m3]) console.log(`     ${m.title}\n     ${m.body}`)
+  for (const m of [m1, m2, m3, ...messages]) console.log(`     ${m.title}\n     ${m.body}`)
 }
 
 console.log('\n5. The dedupe key carries the London date')
