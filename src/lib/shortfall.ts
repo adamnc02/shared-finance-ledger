@@ -81,6 +81,17 @@ export interface Shortfall {
    * a real case: an account that starts the cycle overdrawn has no single payment to blame.
    */
   causes: { label: string; amount: number }[]
+  /**
+   * The first day AFTER the dip that anything comes INTO this account, or null if nothing does
+   * before the cycle ends. This is what tells you how long you have to survive, which the cycle
+   * end only accidentally did — and for a pot it did not even do that, because a pot borrows its
+   * owner's cycle and the boundary means nothing to it.
+   *
+   * 🚨 Deliberately ANY incoming amount, not just salary. A transfer in from savings pays a bill
+   * exactly as well as a payday does, and calling only salary "income" would tell someone nothing
+   * is coming when £300 lands tomorrow.
+   */
+  nextMoneyIn: string | null
 }
 
 /** Every account this household watches, in a stable order. */
@@ -202,6 +213,13 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
       .map((t) => ({ label: label(t, data), amount: Math.round(-c.sign(t) * 100) / 100 }))
       .sort((a, b) => b.amount - a.amount)
 
+    // The next day money arrives, from the same list again.
+    const nextMoneyIn =
+      c.transactions
+        .filter((t) => t.date > dip.date && c.include(t) && c.sign(t) > 0)
+        .map((t) => t.date)
+        .sort()[0] ?? null
+
     out.push({
       account,
       date: dip.date,
@@ -209,6 +227,7 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
       cycleStart: toIso(cycle.start),
       cycleEnd: toIso(cycle.end),
       causes,
+      nextMoneyIn,
     })
   }
   return out
@@ -245,9 +264,16 @@ export function shortfallMessage(shortfall: Shortfall): { title: string; body: s
           // naming one would be a lie.
           `Projected to be ${short} below zero on ${on}.`
 
+  // When relief arrives, which is the actionable half. "Cycle ends" only
+  // accidentally answered this for a personal account (its cycle end IS
+  // usually payday) and answered nothing at all for a pot, which borrows its
+  // owner's cycle. Adam, 2026-09-22: "change cycle end to be before next
+  // scheduled income".
+  const relief = shortfall.nextMoneyIn ? `Next money in on ${formatDayMonth(shortfall.nextMoneyIn)}.` : `No more money in before the cycle ends ${ends}.`
+
   return {
     title: `${possessive(shortfall.account)} runs short`,
-    body: `${cause} Cycle ends ${ends}.`,
+    body: `${cause} ${relief}`,
   }
 }
 

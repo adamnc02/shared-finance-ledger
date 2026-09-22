@@ -33,6 +33,7 @@
 
 import { readFileSync } from 'node:fs'
 import { parseLedgerBackupJson } from '../src/lib/ledgerStorage'
+import { formatDayMonth } from '../src/lib/format'
 import { buildPersonalTrendSeries } from '../src/lib/projection'
 import { cycleBalanceSeries, findShortfalls, shortfallDedupeKey, shortfallMessage, watchedAccounts } from '../src/lib/shortfall'
 import type { AppDataV2, Pot } from '../src/types/ledger'
@@ -152,6 +153,7 @@ console.log('\n4b. The message names what actually takes the account under')
   const m1 = shortfallMessage(s1)
   check('…the body leads with it', m1.body.startsWith('Rent (£300.00) on '), m1.body)
   check('…and says how far under it goes', m1.body.includes(`takes it £${s1.amount.toFixed(2)} below zero.`), m1.body)
+  check('…and when money next arrives, not when the cycle ends', /Next money in on |No more money in before the cycle ends /.test(m1.body), m1.body)
   check('…with no year anywhere in it', !/20\d\d/.test(m1.body), m1.body)
   check('the title names the account', m1.title === 'Car Fund runs short', m1.title)
 
@@ -172,10 +174,33 @@ console.log('\n4b. The message names what actually takes the account under')
   const m3 = shortfallMessage(s3)
   check('…and the body says so without inventing a cause', m3.body.startsWith('Projected to be £50.00 below zero on '), m3.body)
 
+  // ── when money next comes in ──
+  {
+    const inDay = series[5].date
+    const withIncome: AppDataV2 = {
+      ...base,
+      transactions: [
+        ...data.transactions,
+        out('c1', 300, 'Rent'),
+        { id: 'in1', type: 'transfer', direction: 'in', amount: 500, date: inDay, status: 'pending', location: 'personal', note: 'Payday',
+          fromLocation: { type: 'personal', ownerId: owner }, toLocation: { type: 'pot', potId: pot.id } } as AppDataV2['transactions'][number],
+      ],
+    }
+    const si = findShortfalls(withIncome, AS_OF).find((x) => x.account.id === 'msg-pot')!
+    check('the next money-in date is found', si.nextMoneyIn === inDay, [si.nextMoneyIn, inDay])
+    check('…and it is AFTER the dip, never the dip day itself', si.nextMoneyIn! > si.date)
+    const mi = shortfallMessage(si)
+    check('…and the body names it', mi.body.endsWith(`Next money in on ${formatDayMonth(inDay)}.`), mi.body)
+    check('…and no longer mentions the cycle end', !mi.body.includes('Cycle ends'), mi.body)
+
+    // Nothing coming in at all is the more alarming case, and must say so.
+    check('with nothing due in, the body says so plainly', shortfallMessage(s1).body.includes('No more money in before the cycle ends'), shortfallMessage(s1).body)
+  }
+
   // ── the joint account's title ──
   const joint = watchedAccounts(data).find((a) => a.kind === 'joint')
   if (joint) {
-    const m4 = shortfallMessage({ account: joint, date: '2026-09-20', amount: 10, cycleStart: '2026-09-01', cycleEnd: '2026-09-30', causes: [] })
+    const m4 = shortfallMessage({ account: joint, date: '2026-09-20', amount: 10, cycleStart: '2026-09-01', cycleEnd: '2026-09-30', causes: [], nextMoneyIn: null })
     check('the joint title reads as a title, not mid-sentence prose', m4.title === 'Your joint account runs short', m4.title)
   }
 
