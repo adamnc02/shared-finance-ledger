@@ -701,14 +701,29 @@ function NotificationsCard() {
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
 
   const refresh = async () => {
+    // 🚨 The server half can legitimately be missing or unreachable: before the
+    // alerts migration is applied, offline, or if RLS refuses. When it is, this
+    // device is certainly NOT registered — so say that, with the reason, rather
+    // than leaving the card on "Checking…" for ever. Resolving `state` is what
+    // makes the difference between a card that explains itself and one that
+    // looks broken.
+    let list: Device[] = []
+    let failed: string | null = null
     try {
-      const list = await listDevices()
-      setDevices(list)
+      list = await listDevices()
+    } catch (err) {
+      failed = errorText(err)
+    }
+    setDevices(list)
+    try {
       setHereId(await thisDeviceId())
       setState(await pushState(list.map((d) => d.id)))
     } catch (err) {
-      setMessage({ text: errorText(err), error: true })
+      setHereId(null)
+      setState('unsupported')
+      failed ??= errorText(err)
     }
+    setMessage(failed === null ? null : { text: failed, error: true })
   }
 
   useEffect(() => {

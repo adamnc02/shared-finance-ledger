@@ -33,7 +33,9 @@
 //     taps fix it, and calling it unsupported hides that;
 //  6. a local subscription the server does not know about reads OFF, because
 //     it alerts nobody;
-//  7. turning off deletes only THIS device's row, in the source.
+//  7. a missing or unreachable server half resolves a state and says why,
+//     rather than parking the card on "Checking…" for ever;
+//  8. turning off deletes only THIS device's row, in the source.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -113,7 +115,23 @@ console.log('\n6. A subscription the server does not know about alerts nobody')
   check('…and so does one the alert job pruned as dead', pruned === 'off', pruned)
 }
 
-console.log('\n7. Turning off touches only this device')
+console.log('\n7. A missing or unreachable server half explains itself')
+{
+  // The card is rendered inside the Account modal the moment it opens, and the
+  // server half can legitimately be absent: before the alerts migration is
+  // applied, offline, or if RLS refuses. Leaving `state` null in that case
+  // parks the card on "Checking notifications on this device…" for ever, which
+  // reads as broken rather than as "not set up yet" — and that is exactly the
+  // state the deployed test build sits in until the migration lands.
+  const src = readFileSync(resolve(import.meta.dirname, '../src/components/AccountModal.tsx'), 'utf8')
+  const refresh = src.slice(src.indexOf('const refresh = async'), src.indexOf('useEffect(() => {\n      void refresh()'))
+  check('a failed device list still resolves a state', /setState\('unsupported'\)/.test(refresh), refresh.slice(0, 200))
+  check('…and still shows the reason it failed', /setMessage\(failed === null \? null : \{ text: failed, error: true \}\)/.test(refresh))
+  check('the list is emptied rather than left stale', /setDevices\(list\)/.test(refresh))
+  check("a device cannot read 'on' off a failed load — the list it is judged against is empty", /let list: Device\[\] = \[\]/.test(refresh))
+}
+
+console.log('\n8. Turning off touches only this device')
 {
   const push = readFileSync(resolve(import.meta.dirname, '../src/lib/powersync/push.ts'), 'utf8')
   check("turnOffHere deletes by THIS device's derived id", /turnOffHere[\s\S]{0,400}\.delete\(\)\.eq\('id', await idFor\(sub\.endpoint\)\)/.test(push))
