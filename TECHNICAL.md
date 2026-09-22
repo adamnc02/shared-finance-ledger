@@ -2095,6 +2095,48 @@ rule catches.
 | Every active `Pot` where `isCoinJar !== true` | A Coin Jar. One emptying is it working |
 | The joint account | Credit cards. A balance owed is not a balance held |
 
+### The floor, and the two severities (PROMPT-15)
+
+`overdraftAmount` on `PayCycleConfig`, `JointAccountConfig` and `Pot` is **how far below zero that
+account may go** — positive, `0` = none, **not** effective-dated (§1.32b), and read by nothing but
+this alert. A `numeric not null default 0` column on each of the three tables, with a CHECK
+forbidding a negative, because hand-editing a row is a documented workflow (§1.30) and a negative
+would invert the floor to +£500.
+
+🚨 **A balance cannot pass its floor — the bank declines the payment.** So the two severities
+describe different things and take different numbers:
+
+| Severity | Describes | `amount` means |
+|---|---|---|
+| `'overdraft'` | A state that really happens | How far **below zero** |
+| `'shortfall'` | A state that **cannot** happen | How much you are **SHORT BY** |
+
+With `overdraftAmount: 0` there is no `'overdraft'` severity at all — below zero IS running out.
+
+**Three separate lines honour the floor** and the third is the one that gets missed: the dip test,
+the `amount`, and **`recoversOn`** — back above zero for the heads-up, back within the limit for
+out-of-money.
+
+### Cadence: nightly vs Sundays
+
+Out-of-money repeats every evening. The overdraft heads-up fires **Sundays only** and is suppressed
+while the cleared balance has not reached £0 since the last one — **self-clearing**, so someone who
+lives in their overdraft goes quiet without turning anything off.
+
+🚨 **Both rules live in the ENGINE, not in SQL.** `alert_households()` keeps saying one thing —
+*"it is 20:00 in London"* — and `alertsFor()` derives the weekday and applies the suppression, where
+the severity is known. A weekday in the SQL would split one rule across two languages.
+
+🚨 **The dedupe key carries the severity** —
+`shortfall:<severity>:<kind>:<account_id>:<user_id>:<london_date>`. Not for deduping (the date does
+that) but so `last_overdraft_alerts()` can find the last **overdraft** alert rather than the last
+alert of any kind.
+
+🚨 **`alertsFor` returns `{ send, withheld }`** and the Edge Function reports `suppressed` and
+`claimed` separately. The suppression and the dedupe both produce silence, so one counter would let
+a 30-minute-cron test pass whether or not the suppression existed. The suppression is evaluated
+**before** the claim, so a withheld alert never reaches the dedupe and reports honestly.
+
 **Recipients:** the account's owner; joint has two owners. That single sentence is the whole rule,
 and a `Pot` is never joint, so a pot alert has exactly one recipient.
 

@@ -204,7 +204,31 @@ clears.
 🚨 **It is the dip, not the end-of-cycle balance.** An account can end the cycle perfectly healthy
 and still bounce a direct debit on the 12th, and that is the case this exists for.
 
-**Watched:** each person's current account, every Pot that is not a Coin Jar, and the joint account.
+### Overdrafts, and the two kinds of alert
+
+Each account — your current account, the joint account, and **any pot** — can be given an
+**Overdraft**: how far below zero it is allowed to go. Leave it at 0 if it cannot. It is edited
+where that account already is: the pay-cycle cog, the pot's own form, the joint account's.
+
+> **Why pots have one:** you might use pots the way Monzo means them, or you might use one to stand
+> in for a separate bank account. The app does not decide which of those is right. (A Coin Jar is
+> the exception — it has no overdraft and is never watched.)
+
+With a limit set, there are **two** alerts rather than one:
+
+| | When | How often |
+|---|---|---|
+| **"runs short"** | You'll dip into your overdraft, but stay inside it | **Sunday evenings**, and it goes quiet while you stay in it |
+| **"not enough money"** | You'll go past your limit — the payment won't go through | **Every evening** until it clears |
+
+With no overdraft set, only the second exists: dipping below zero *is* running out of money.
+
+🚨 **The Sunday one is self-clearing.** If you live in your overdraft it stops telling you, without
+you turning anything off — and starts again the moment your balance gets back to zero or above. So
+the alert you do get means something.
+
+**Watched:** each person's current account, every Pot that is not a Coin Jar, and the joint account
+— each against **its own** overdraft.
 **Not watched:** savings pots, Coin Jars (one emptying is it working) and credit cards (a balance
 owed is not a balance held). **Who is told:** the account's owner — and joint has two owners.
 
