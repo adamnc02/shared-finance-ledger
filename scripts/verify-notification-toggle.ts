@@ -35,10 +35,12 @@
 //     it alerts nobody;
 //  7. a missing or unreachable server half resolves a state and says why,
 //     rather than parking the card on "Checking…" for ever;
-//  8. turning off deletes only THIS device's row, in the source.
+//  8. turning off deletes only THIS device's row, in the source;
+//  9. the VAPID public key the app subscribes with is the one the Edge
+//     Function signs with — a mismatch is a silent 403 on every push.
 
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, resolve } from 'node:path'
 import { decidePushState, type DeviceFacts, type PushState } from '../src/lib/powersync/pushState'
 
 let failures = 0
@@ -138,6 +140,37 @@ console.log('\n8. Turning off touches only this device')
   check('…and unsubscribes the browser too, so the state cannot lie afterwards', /turnOffHere[\s\S]{0,500}sub\.unsubscribe\(\)/.test(push))
   check('the row id is DERIVED from the endpoint, so registering twice updates one row (§36)', /crypto\.subtle\.digest\('SHA-256'/.test(push))
   check('signing out unregisters this device first', /forgetThisDevice\(\)/.test(readFileSync(resolve(import.meta.dirname, '../src/components/AccountModal.tsx'), 'utf8')))
+}
+
+console.log('\n9. The key the app subscribes with IS the key the function signs with')
+{
+  // 🚨 THE FAILURE THIS PREVENTS IS COMPLETELY SILENT IN THE APP. A push
+  // subscription is bound to the VAPID public key it was created with. If the
+  // app subscribes with key A and `ledger-alerts` signs with key B, the push
+  // service rejects every send with 403 — and the phone shows nothing at all,
+  // because a notification that was never delivered looks exactly like a cycle
+  // with no shortfall in it. The toggle would say "on", the device list would
+  // look right, and no alert would ever arrive.
+  //
+  // It is a live risk rather than a theoretical one: the function hardcodes
+  // the key (it is public by definition) while the app reads it from an env
+  // file, so the two are edited in different places, in different repos.
+  //
+  // Reading the other repo by absolute path is the same convention the real
+  // backups and the engine bundle already use (TECHNICAL.md §44).
+  const fnPath = '/Users/adamcox/Documents/GitHub/silver-octo-invention/supabase/functions/ledger-alerts/index.ts'
+  const envPath = ['.env.production', '.env.sync'].map((f) => resolve(import.meta.dirname, '..', f)).find(existsSync)
+
+  check('the Edge Function is where it is expected to be', existsSync(fnPath), fnPath)
+  check('this repo has a committed env file for the sync build', envPath !== undefined)
+
+  if (existsSync(fnPath) && envPath) {
+    const fnKey = /const VAPID_PUBLIC_KEY =\s*'([^']+)'/.exec(readFileSync(fnPath, 'utf8'))?.[1]
+    const envKey = /^VITE_VAPID_PUBLIC_KEY=(.+)$/m.exec(readFileSync(envPath, 'utf8'))?.[1]?.trim()
+    check('the function declares a VAPID public key', !!fnKey && fnKey.length > 80, fnKey?.slice(0, 12))
+    check(`${basename(envPath)} sets VITE_VAPID_PUBLIC_KEY — a build without it cannot register`, !!envKey, envKey?.slice(0, 12))
+    check('🚨 they are the SAME key', !!fnKey && fnKey === envKey, `function ${fnKey?.slice(0, 16)}… vs env ${envKey?.slice(0, 16)}…`)
+  }
 }
 
 console.log(failures === 0 ? '\nAll checks passed.\n' : `\n${failures} check(s) FAILED.\n`)
