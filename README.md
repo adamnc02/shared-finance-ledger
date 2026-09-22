@@ -164,8 +164,9 @@ turns that into `people.linked_user_id`:
 
 ### Backup & Restore
 
-**One pair of buttons, in the Account modal, and nowhere else in this app.** The Wallet page's
-Backup card is deliberately empty here: two doors to something that replaces the whole household is
+**One pair of buttons, in the Account modal, and nowhere else in this app.** The Wallet page shows
+**no Backup card at all** — not an empty one: the slot renders `null`, so there is no card, no
+heading and no gap where one used to be. Two doors to something that replaces the whole household is
 one too many. (`personal-ledger` keeps its Wallet buttons exactly where they have always been.)
 
 Each button asks one follow-up question:
@@ -323,3 +324,74 @@ Everything in `personal-ledger`'s "Known limitations", plus:
 | `silver-octo-invention/docs/` | The Supabase schema, RLS and functions, per app |
 | `listly/docs/LEDGER-INTEGRATION.md` | What Listly depends on in this schema |
 | `Downloads/App Development & Bug Tracking/shared-finance-ledger/` | Build plan, app knowledge, prompts, UAT scripts |
+
+
+## What each button does
+
+Plain English, for when you are looking at the app rather than the code. All of these live in the
+**Account** modal (the person icon in the Wallet header). The Wallet page itself has **no Backup
+card in this app** — see Backup & Restore above for why.
+
+### Back Up Now → **Cloud**
+
+Uploads a copy of the **whole household** to your own private folder in Supabase Storage.
+
+- One file per day: doing it twice today replaces today's rather than making a second.
+- The newest **30** are kept; older ones are pruned.
+- This already happens **once a day on its own**. The button is for "I am about to do something
+  risky and want today's copy to be current".
+- Greyed out, with the reason shown, while the device is offline.
+
+### Back Up Now → **This device**
+
+The **same JSON**, saved to the phone instead.
+
+- No network at all, so it still works when syncing is the thing that is broken — which is exactly
+  when you want it.
+- 🚨 **It does not also upload to the cloud.** You were asked which one, and the answer is honoured
+  literally. The daily automatic snapshot already covers "always have a cloud copy".
+
+### Restore → **Cloud** → tap a date
+
+Fetches that day's copy and **replaces the whole household with it — on every device, and for
+everyone in it**. Anything either of you added since that backup is gone.
+
+The confirmation names the date and says what it is replacing.
+
+### Restore → **A file**
+
+The same thing, from a file you pick. It behaves differently depending on where the file came from,
+and the confirmation tells you which case you are in:
+
+| The file | What happens |
+|---|---|
+| **This household's own export** — you backed up, edited the JSON, brought it back | Treated as a **patch**. Only the rows you actually changed are written. No new ids, nobody has to say who they are again, and the other phone sees one small update. If you deleted rows out of the file, it tells you **how many will be deleted** |
+| **A file from anywhere else** | A full replace, with a fresh id for every row — exactly as it always was |
+
+That first case is what makes hand-editing cheap: **Back Up Now → This device**, edit the JSON,
+**Restore → A file**. The decision rule for when to do that instead of editing a row in Supabase
+directly is in `APP-KNOWLEDGE.md` §1.30.
+
+### Force Sync
+
+Drops the connection to PowerSync and reconnects.
+
+- ✅ **It is safe.** It deletes nothing, changes no data, and cannot lose anything.
+- It does **not** re-download your ledger from scratch.
+- It does **not** push anything that was not already queued to go — the queue uploads on its own.
+
+Use it when the line above it says *Offline* when it should not, or *last synced* is stuck at an old
+time.
+
+### Three things worth knowing
+
+1. **Restore is not a merge.** Except the "this household's own file" case above, it throws away
+   what is there.
+2. **Restore reaches the other person's phone too**, not just yours.
+3. **Restore is refused until first sync finishes.** Restoring into a half-synced copy would compare
+   against rows that have not arrived yet and delete what it could not see, so the card says
+   "available once your household has synced" instead.
+
+> **Not on this list, and not the same thing:** *Delete my app data*, at the bottom of the same
+> modal. That erases your ledger data server-side and keeps your login. It is not a backup
+> operation and nothing above will bring it back except a restore from a copy you already had.
