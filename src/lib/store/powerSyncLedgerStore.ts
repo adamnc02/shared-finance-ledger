@@ -50,6 +50,14 @@
 // store — nothing is written or delivered again — and onHouseholdLost()
 // tells the boot sequence to clear the local copy and start over.
 //
+// A RE-IMPORT OF THIS HOUSEHOLD'S OWN FILE IS A PATCH (PROMPT-14 Part 4).
+// If any id in the incoming data is one this store already holds, the file
+// came from here and was edited, so the ids are kept and diffRows writes only
+// what actually changed — the workflow behind "export, edit the JSON,
+// re-import" (APP-KNOWLEDGE). Everything else below still applies to a
+// genuinely foreign file. isSameHouseholdPatch names the two id classes that
+// must NOT count as evidence.
+//
 // IMPORTS GET FRESH IDS (PROMPT-10 Part 3, MIGRATION-LESSONS §31). A save
 // whose lists are ALL new to the store (setData with parsed JSON: Wallet →
 // Backup's restore, a cloud restore, the empty-household import; see
@@ -76,7 +84,7 @@ import { migrateLedgerData } from '../ledgerStorage'
 import type { LedgerStore } from './LedgerStore'
 import { fromRows, toRows, type Rows } from '../powersync/mapping'
 import { diffRows, type Op, type Positions } from '../powersync/writes'
-import { applyIdMap, regenerateIds } from '../powersync/importIds'
+import { applyIdMap, FIXED_CATEGORY_IDS, regenerateIds } from '../powersync/importIds'
 
 /** Every list in AppDataV2. */
 const LISTS = [
@@ -92,6 +100,131 @@ const LISTS = [
  */
 export function isImport(next: AppDataV2, known: WeakSet<object>): boolean {
   return LISTS.every((k) => !known.has(next[k]))
+}
+
+/**
+ * PROMPT-14 Part 4 — is this file a PATCH of the data this store already holds, rather than a
+ * foreign import?
+ *
+ * `isImport` regenerates ids because two households importing one backup would collide (§31). But
+ * a file exported from THIS household and hand-edited is not a foreign import — it is a patch of
+ * rows the store already has. Paying the full price for it means every row deleted and reinserted,
+ * Part 5's re-link, and a wholesale delivery, to change one number.
+ *
+ * So: if ANY id in the incoming data is one the store currently holds, it is a patch. Skip
+ * `regenerateIds` and let `diffRows` do its ordinary narrow work — one field edited, one column
+ * written, and Ella sees one narrow update.
+ *
+ * 🚨 TWO ID CLASSES MUST BE EXCLUDED, and forgetting either makes this return true for a genuinely
+ * foreign backup — which is the 23505-and-silently-discarded failure §31 exists to prevent:
+ *
+ *   - **the 35 fixed category ids.** `regenerateIds` deliberately KEEPS them, so every household
+ *     on earth has the same ones. They prove nothing about provenance.
+ *   - **`auto:` and `sort:` ids.** They are DERIVED from the ids inside them, so if one matches,
+ *     the person or source id inside it matches too and is already doing the work. Excluding them
+ *     costs nothing and removes a whole class of false positives.
+ *
+ * After `erase_my_data()` nothing matches, so it correctly falls back to a full import.
+ */
+export function isSameHouseholdPatch(next: AppDataV2, shadow: AppDataV2): boolean {
+  const own = new Set<string>()
+  collectOwnIds(shadow, own)
+  const incoming = new Set<string>()
+  collectOwnIds(next, incoming)
+  for (const id of incoming) if (own.has(id)) return true
+  return false
+}
+
+/**
+ * How many rows this household currently holds that the incoming file does NOT — the rows a patch
+ * will DELETE.
+ *
+ * 🚨 The foot-gun this exists for: a hand-trimmed backup with rows removed still reads as a patch,
+ * and the diff does exactly what it is told. So the confirm says how many rows will be deleted, not
+ * only how many are being replaced (PROMPT-14 Part 4, guard rails).
+ */
+export function rowsRemovedByPatch(next: AppDataV2, shadow: AppDataV2): number {
+  const incoming = new Set<string>()
+  collectOwnIds(next, incoming)
+  const own = new Set<string>()
+  collectOwnIds(shadow, own)
+  let removed = 0
+  for (const id of own) if (!incoming.has(id)) removed++
+  return removed
+}
+
+/** Every id in the data that actually identifies THIS household's rows (see the exclusions above). */
+function collectOwnIds(data: AppDataV2, out: Set<string>) {
+  for (const list of LISTS) {
+    for (const row of data[list] as ReadonlyArray<{ id?: unknown }>) {
+      const id = row?.id
+      if (typeof id !== 'string' || !id) continue
+      if (FIXED_CATEGORY_IDS.has(id)) continue
+      if (id.startsWith('auto:') || id.startsWith('sort:')) continue
+      out.add(id)
+    }
+  }
+}
+
+/** The one op shape "Set as me" and Part 5's re-link both write: one column, one row. */
+export type LinkUpdate = Extract<Op, { kind: 'update' }> & { set: { linked_user_id: string } }
+
+/**
+ * 🚨 PROMPT-14 Part 5 — a restore must not silently reassign who everyone is.
+ *
+ * An import deletes every `people` row and inserts a fresh one (regenerateIds, §31), and
+ * `linked_user_id` is a server-only column `toRows` never writes — so every OTHER member's link
+ * dies with their old row. `linkOps` re-links only the person doing the restore. On Ella's next
+ * sync, `assemble` walks choice → linked → people[0]: her stored choice is a dead id and there is
+ * no linked row, so **she silently becomes whoever sorts first, and her pay cycle flips**. That is
+ * the §23 failure `verify-first-sync-gate.ts` exists to prevent, arriving through a door it does
+ * not watch.
+ *
+ * So: carry each pre-restore link across to the incoming person **with the same name** (§0 Q4a).
+ *
+ * 🚨 Ambiguous or missing → DO NOT GUESS. No match, or more than one, leaves that member
+ * unlinked, and their device asks "which person are you?" on its next boot (§0 Q4b, the flow a
+ * fresh join already uses). "Just take the first match" is the same silent reassignment wearing a
+ * different hat — it is the bug, not a simplification of the fix.
+ *
+ * Names are compared trimmed and case-insensitively, because a restore of a hand-edited file is
+ * exactly where "Ella" becomes "ella".
+ *
+ * @param linked   person id → linked_user_id, as the DATABASE holds it right now (pre-restore)
+ * @param before   the data those ids belong to (the shadow), for looking a person's name up
+ * @param after    the incoming data, AFTER regenerateIds — the ids that will exist
+ * @param exclude  a person id already being linked by linkOps (the restorer's own): never touched here
+ */
+export function relinkOps(
+  linked: ReadonlyMap<string, string>,
+  before: AppDataV2,
+  after: AppDataV2,
+  myUserId: string,
+  exclude: string | null,
+): { ops: LinkUpdate[]; unresolved: string[] } {
+  const ops: LinkUpdate[] = []
+  const unresolved: string[] = []
+  const namesBefore = new Map(before.people.map((p) => [p.id, p.name]))
+  const byName = new Map<string, string[]>()
+  for (const p of after.people) {
+    const key = p.name.trim().toLowerCase()
+    byName.set(key, [...(byName.get(key) ?? []), p.id])
+  }
+  for (const [personId, userId] of linked) {
+    if (userId === myUserId) continue // linkOps owns mine
+    const name = namesBefore.get(personId)
+    if (name === undefined) {
+      unresolved.push(userId)
+      continue
+    }
+    const matches = (byName.get(name.trim().toLowerCase()) ?? []).filter((id) => id !== exclude)
+    if (matches.length !== 1) {
+      unresolved.push(userId)
+      continue
+    }
+    ops.push({ kind: 'update', table: 'people', id: matches[0], set: { linked_user_id: userId } })
+  }
+  return { ops, unresolved }
 }
 
 /** What the store needs from the database; the real one wraps PowerSync (powerSyncAdapter.ts), tests pass a fake. */
@@ -130,6 +263,12 @@ export interface PowerSyncLedgerStore extends LedgerStore {
   readonly importMap: ReadonlyMap<string, string> | null
   /** The person row linked to the signed-in user ("Set as me"), as of the last read. */
   readonly linkedPersonId: string | null
+  /**
+   * This device had chosen a person and that person no longer exists (PROMPT-14 Part 5). After a
+   * restore that could not re-link by name, this is how the boot sequence knows to ASK rather than
+   * let `assemble` fall back to people[0].
+   */
+  readonly staleChoice: boolean
 }
 
 export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): PowerSyncLedgerStore {
@@ -154,6 +293,7 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
   let importMap: Map<string, string> | null = null // the last import's old → new ids
   let nextDeliveryWholesale = false
   const linkedTo = new Map<string, string>() // person id → linked_user_id, as the database holds it
+  let staleChoice = false // a choice is stored on this device and that person is gone (Part 5)
   const knownLists = new WeakSet<object>() // every list the store has delivered, loaded or saved (isImport)
   const deliveries = new WeakSet<AppDataV2>() // every dataset the store handed out
   const remember = (d: AppDataV2) => {
@@ -209,6 +349,7 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
     const ids = new Set(base.people.map((p) => p.id))
     const choice = readChoice()
     const linked = (rows.people ?? []).find((r) => r.linked_user_id === userId)?.id
+    staleChoice = choice !== null && !ids.has(choice)
     const primaryPersonId = choice && ids.has(choice) ? choice : linked && ids.has(linked) ? linked : (base.people[0]?.id ?? '')
     return migrateLedgerData({ ...base, primaryPersonId })
   }
@@ -257,6 +398,9 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
     get linkedPersonId() {
       return [...linkedTo].find(([, uid]) => uid === userId)?.[0] ?? null
     },
+    get staleChoice() {
+      return staleChoice
+    },
 
     async load() {
       await gate
@@ -291,19 +435,42 @@ export function createPowerSyncLedgerStore(opts: PowerSyncLedgerStoreOptions): P
       }
       try {
         let target = next
-        const imported = isImport(next, knownLists)
+        const setDataCall = isImport(next, knownLists)
+        // Part 4: setData with a file this household exported is a PATCH, not
+        // a foreign import. Same code path, minus the id churn.
+        const patch = setDataCall && isSameHouseholdPatch(next, shadow)
+        const imported = setDataCall && !patch
         if (imported) {
           const fresh = regenerateIds(next)
           target = fresh.data
           importMap = fresh.map
           nextDeliveryWholesale = true
           log.info(`[powersync] import: ${fresh.map.size} ids regenerated (the 35 fixed categories kept)`)
+        } else if (patch) {
+          // No remap: the file already carries this household's own ids, which
+          // is exactly what makes it a patch. Still wholesale, because whole
+          // lists were replaced and pages must resync (APP-KNOWLEDGE §1.6).
+          nextDeliveryWholesale = true
+          log.info('[powersync] re-import of this household\'s own file: patched, ids kept (PROMPT-14 Part 4)')
         } else if (importMap) {
           target = applyIdMap(next, importMap)
         }
         if (target.primaryPersonId !== shadow.primaryPersonId && target.primaryPersonId) writeChoice(target.primaryPersonId)
+        // linkOps mutates linkedTo, so take the database's view first.
+        const linkedBeforeImport = new Map(linkedTo)
         const link = linkOps(shadow, target, imported)
-        const ops = [...link.first, ...diffRows(toRows(shadow, ctx), toRows(target, ctx), positions, present), ...link.last]
+        // Part 5: an import kills every other member's link, because their row
+        // is deleted and reborn. Carry each one across by name, in the same
+        // narrow one-column shape, AFTER the diff has done the deleting (the
+        // (household, linked_user_id) unique index).
+        const relink = imported ? relinkOps(linkedBeforeImport, shadow, target, userId, link.last[0]?.kind === 'update' ? link.last[0].id : null) : { ops: [] as LinkUpdate[], unresolved: [] as string[] }
+        if (relink.unresolved.length > 0) {
+          log.warn(
+            `[powersync] restore: ${relink.unresolved.length} household member(s) could not be re-linked by name — their device will ask which person they are (PROMPT-14 Part 5)`,
+          )
+        }
+        for (const op of relink.ops) linkedTo.set(op.id, op.set.linked_user_id)
+        const ops = [...link.first, ...diffRows(toRows(shadow, ctx), toRows(target, ctx), positions, present), ...link.last, ...relink.ops]
         for (const op of ops) {
           if (op.kind === 'insert') (present.get(op.table) ?? present.set(op.table, new Set()).get(op.table)!).add(op.row.id)
           if (op.kind === 'delete') present.get(op.table)?.delete(op.id)

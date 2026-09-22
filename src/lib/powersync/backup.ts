@@ -12,11 +12,14 @@
 // (DECISIONS Q9): never offered at sign-in.
 
 import type { AppDataV2 } from '../../types/ledger'
-import { parseLedgerBackupJson } from '../ledgerStorage'
+import { parseLedgerBackupJson, serialiseLedgerBackup } from '../ledgerStorage'
 import { toLocalIsoDate } from '../date'
 import { supabase } from '../supabaseClient'
 
 export const BACKUP_BUCKET = 'shared-finance-ledger-backups'
+
+/** How many daily snapshots survive a prune (PROMPT-14 §0 Q5). */
+export const SNAPSHOTS_KEPT = 30
 
 export interface SnapshotInfo {
   name: string
@@ -28,7 +31,7 @@ const today = () => toLocalIsoDate(new Date())
 export async function uploadSnapshot(userId: string, data: AppDataV2): Promise<void> {
   const { error } = await supabase.storage
     .from(BACKUP_BUCKET)
-    .upload(`${userId}/${today()}.json`, JSON.stringify(data, null, 2), { contentType: 'application/json', upsert: true })
+    .upload(`${userId}/${today()}.json`, serialiseLedgerBackup(data), { contentType: 'application/json', upsert: true })
   if (error) throw error
 }
 
@@ -43,6 +46,29 @@ export async function downloadSnapshot(userId: string, name: string): Promise<Ap
   const { data, error } = await supabase.storage.from(BACKUP_BUCKET).download(`${userId}/${name}`)
   if (error) throw error
   return parseLedgerBackupJson(await data.text())
+}
+
+/**
+ * Keep the newest `keep` daily snapshots, delete the rest (PROMPT-14 §0 Q5, Adam 2026-09-22:
+ * "keep the last 30"). Nothing pruned anything before this, so a long-lived household grew a
+ * file a day forever.
+ *
+ * 🚨 This is deliberately NOT removeAllSnapshots with an argument. That function is Delete my
+ * app data's, it takes no filter, and one refactor joining the two is a household with no
+ * restore point. Keep them separate even though they look similar.
+ *
+ * Newest is decided by NAME (the yyyy-mm-dd the snapshot is FOR), never by position in a
+ * listing or by created_at: an upsert the same day keeps the original created_at, so sorting
+ * by it would prune the wrong file.
+ */
+export async function pruneSnapshots(userId: string, keep = SNAPSHOTS_KEPT): Promise<number> {
+  const list = await listSnapshots(userId) // newest first, by name
+  const stale = list.slice(keep)
+  if (stale.length === 0) return 0
+  const { error } = await supabase.storage.from(BACKUP_BUCKET).remove(stale.map((s) => `${userId}/${s.name}`))
+  if (error) throw error
+  console.info(`[backup] pruned ${stale.length} snapshot(s), kept ${keep}`)
+  return stale.length
 }
 
 /** Every file in this user's folder (Delete my app data removes them first: SQL can't). */
@@ -66,6 +92,7 @@ export async function maybeUploadDailySnapshot(userId: string, data: AppDataV2):
     if (list.some((s) => s.name === `${today()}.json`)) return
     await uploadSnapshot(userId, data)
     console.info('[backup] daily snapshot uploaded')
+    await pruneSnapshots(userId)
   } catch (err) {
     console.warn('[backup] daily snapshot failed, will retry next load:', err)
   }

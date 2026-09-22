@@ -45,6 +45,8 @@ import { AuthGate } from './AuthGate'
 import { AccountModal } from './AccountModal'
 import { DuplicatePersonBanner } from './DuplicatePersonBanner'
 import { HeaderAccessoryContext } from './HeaderAccessory'
+import { BackupPlacementContext } from './BackupSection'
+import { registerServiceWorker } from '../lib/powersync/push'
 import { SyncControlsContext, type SyncControls } from './syncControls'
 import { LegacyDataMigration } from './LegacyDataMigration'
 import { LEDGER_STREAM, POWERSYNC_DB_FILENAME, powerSyncConnector, powerSyncDb } from '../lib/powersync/database'
@@ -99,6 +101,13 @@ function SignedIn({ userId, email, children }: { userId: string; email: string; 
     })()
   }
 
+  // Registered on EVERY boot, not only when alerts are on, so a changed
+  // sw.js reaches every device on its next launch. It has no fetch handler and
+  // caches nothing (public/sw.js), so it cannot pin an old build — the failure
+  // mode that makes service workers dangerous in a PWA. A failure is logged,
+  // never thrown: alerts are a feature, not the app.
+  useEffect(() => registerServiceWorker(), [])
+
   useEffect(() => {
     let cancelled = false
     let unsubscribe: (() => void) | undefined
@@ -148,10 +157,16 @@ function SignedIn({ userId, email, children }: { userId: string; email: string; 
         if (cancelled || !current) return
         restartLine.current = 'Syncing your household…'
         if (current.people.length === 0) return setPhase({ kind: 'empty', store, current })
-        // Just joined, brought nothing, and no row is linked to me yet: ask
-        // which person is me once, rather than leaving the partner's
-        // dashboard showing (it resolves to the first person otherwise).
-        if (justJoined(userId) && store.linkedPersonId === null) {
+        // No row is linked to me, and either I have just joined (bringing
+        // nothing) or the person this device had chosen is gone. Ask which
+        // person is me once, rather than leaving the partner's dashboard
+        // showing — it resolves to the first person otherwise.
+        //
+        // The stale-choice half is PROMPT-14 Part 5's fallback (§0 Q4b): a
+        // restore whose incoming names were ambiguous cannot re-link this
+        // device, and silently becoming whoever sorts first (with their pay
+        // cycle) is the exact §23 failure the restore must not cause.
+        if (store.linkedPersonId === null && (justJoined(userId) || store.staleChoice)) {
           return setPhase({ kind: 'claim', store, current })
         }
         setPhase({ kind: 'ready', store })
@@ -210,16 +225,21 @@ function SignedIn({ userId, email, children }: { userId: string; email: string; 
         </>
       )}
       {phase.kind === 'ready' && (
+        // 'account' claims the Wallet page's Backup slot away, so the only
+        // door to a whole-household replace is the Account modal (PROMPT-14
+        // §0 Q2). The offline apps provide nothing and keep the Wallet card.
         <HeaderAccessoryContext.Provider value={<AccountButton />}>
-          <LedgerErrorBoundary>
-            {children(
-              phase.store,
-              <>
-                <DuplicatePersonBanner userId={userId} />
-                <DailyBackup userId={userId} />
-              </>,
-            )}
-          </LedgerErrorBoundary>
+          <BackupPlacementContext.Provider value="account">
+            <LedgerErrorBoundary>
+              {children(
+                phase.store,
+                <>
+                  <DuplicatePersonBanner userId={userId} />
+                  <DailyBackup userId={userId} />
+                </>,
+              )}
+            </LedgerErrorBoundary>
+          </BackupPlacementContext.Provider>
         </HeaderAccessoryContext.Provider>
       )}
     </SyncControlsContext.Provider>

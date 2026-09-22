@@ -64,8 +64,9 @@ live apps. **§36–§44 are the sync layer, which exists only here.**
 40. [`powerSyncLedgerStore`](#40-powersyncledgerstore)
 41. [Boot, auth and the rescue](#41-boot-auth-and-the-rescue)
 42. [Households, link codes and "Set as me"](#42-households-link-codes-and-set-as-me)
-43. [Imports, ids and cloud backup](#43-imports-ids-and-cloud-backup)
+43. [Imports, ids, patches and Backup & Restore](#43-imports-ids-patches-and-backup--restore)
 44. [The divergence register, and the other apps on this project](#44-the-divergence-register-and-the-other-apps-on-this-project)
+45. [Low-balance alerts](#45-low-balance-alerts-prompt-14-part-7)
 
 ---
 
@@ -1268,8 +1269,13 @@ Key internals:
   for every ordinary pot, which is what keeps the toggle off every other pot's form; it reads the
   **jar owner's** pay cycle, not the primary person's — and the switch takes a plain date (§13),
   so a jar owner with no salary configured can still turn round-ups on.
-- **`BackupSection`** — `downloadLedgerBackup` / `parseLedgerBackupJson`, restored through
-  `setData` (so it is store-agnostic).
+- **`WalletBackupSlot`** (`src/components/BackupSection.tsx`, PROMPT-14 Part 1) — the Backup card
+  used to be declared inline here. It is now a **shared** component behind a placement slot, because
+  `src/pages/**` may not diverge and this app shows Backup & Restore in the Account modal instead.
+  The slot renders the card by default and renders **nothing** under a `'account'` provider, which
+  `SyncRoot` supplies — so the difference between the apps is which one renders a provider, not
+  which one compiles a file. It still restores through `setData`, so it stays store-agnostic, and
+  its confirm is the app's own portalled `ConfirmModal` rather than `window.confirm`.
 - Several rows use a **`SavedFlash`** pulse; a brand-new pension or pot flashes on *mount* rather
   than at save time, and the Joint Account card watches for the account appearing, because its
   first creation goes through `AppGuards`' modal and there is no click handler on this page to
@@ -1914,7 +1920,7 @@ The button only changes `primaryPersonId` — shared code, unchanged from the of
 
 ---
 
-## 43. Imports, ids and cloud backup
+## 43. Imports, ids, patches and Backup & Restore
 
 ### Every import regenerates ids
 
@@ -1932,18 +1938,58 @@ the `@<household>` suffix) and gives everything else a new id.
 > `followsIncomeSource.pensionId`, `interestDestination.*` and anything added later.
 > `auto:<dedupeKey>` ids are **re-derived** from the remapped transaction (§10).
 
-### Cloud backup
+### …unless the file is this household's own (PROMPT-14 Part 4)
+
+`isSameHouseholdPatch` in `powerSyncLedgerStore.ts`. If **any** id in the incoming data is one the
+store already holds, the file came from here and was edited: the ids are kept and `diffRows` does
+its ordinary narrow work. One field edited is one `UPDATE` of one column — no id churn, no identity
+reset, one narrow update on the other phone.
+
+🚨 **Two id classes must never count as evidence**, and dropping either would call a genuinely
+foreign backup a patch — the collision above, through the front door:
+
+- the **35 fixed category ids**, which `regenerateIds` keeps on purpose so every household has them;
+- **`auto:` and `sort:` ids**, which are derived from the ids inside them, so a match there is
+  already being reported by the person or source id it contains.
+
+A hand-trimmed file (rows deleted by hand) still reads as a patch and the diff deletes the missing
+rows. That is correct — and it is why the confirm says how many rows will be **deleted**
+(`rowsRemovedByPatch`), not only how many replaced.
+
+### A restore must not reassign who everyone is (PROMPT-14 Part 5)
+
+`linked_user_id` is a **server-only column `toRows` never writes**, so a full import deletes every
+other member's link along with their row. `linkOps` re-links only the person doing the restore.
+Their next read then walks choice → linked → `people[0]`: a dead choice, no linked row, and they
+**silently become whoever sorts first, with that person's pay cycle**.
+
+`relinkOps` carries each pre-restore link across to the incoming person with the **same name**
+(trimmed, case-insensitive), as narrow one-column updates after the diff has done its deleting.
+🚨 **Ambiguous or missing is never guessed:** no match, or more than one, leaves that member
+unlinked, the store reports `staleChoice`, and `SyncRoot` asks "which person are you?" on that
+device's next boot — the flow a fresh join already uses.
+
+### Backup & Restore
 
 `src/lib/powersync/backup.ts`. One snapshot a day, automatically, to a private bucket at
 `<user id>/<yyyy-mm-dd>.json` (the bucket's policies limit each user to their own folder). A second
-backup the same day replaces it. Plus **Back Up Now** in the Account modal.
+backup the same day replaces it. **The newest 30 are kept** — `pruneSnapshots`, deliberately a
+separate function from `removeAllSnapshots`, which is Delete my app data's and takes no filter.
 
-A snapshot is **the same JSON as the Wallet page's download** — the app's own `AppDataV2` — so
-either can be restored anywhere. Restoring goes through the app's normal restore (`setData`), which
-the store treats as an import: fresh ids, and a full replace of the household.
+Since PROMPT-14 there is **one** Backup & Restore, in the Account modal, each button opening one
+follow-up step (cloud / this device, cloud / a file). Both restore routes converge on one
+`restoreFrom(source)` so they cannot drift, and both are gated on the ledger being present — which
+`SyncRoot` only provides after first sync, because restoring into a half-populated shadow would diff
+against rows that have not arrived and **delete what it cannot see**.
+
+A snapshot is **the same bytes as the Wallet page's download**: both write paths call
+`serialiseLedgerBackup` and both read paths call `parseLedgerBackupJson`. That used to be true by
+coincidence — two call sites that happened to agree — and `verify-backup-format-parity.ts` now holds
+it as an invariant.
 
 > **Restore replaces the WHOLE HOUSEHOLD on every device**, so it is always a deliberate action
-> behind a warning that says so, and is **never offered at sign-in**.
+> behind a warning that names the source and says what it replaces, and is **never offered at
+> sign-in**.
 
 ---
 
@@ -2022,3 +2068,94 @@ the sibling repo to exist.
 > `households`, `household_members`, `ensure_household()`, the link-code functions,
 > `erase_my_data()`, or the shapes of `people` / `categories` / `pots` / `savings_pots` /
 > `joint_account`, read `listly/docs/LEDGER-INTEGRATION.md`. Every failure there is silent.**
+
+---
+
+## 45. Low-balance alerts (PROMPT-14 Part 7)
+
+At **20:00 Europe/London** every evening, one push notification per watched account whose projected
+running balance dips below zero at any point in the current pay cycle — repeating each evening until
+it clears.
+
+### The rule
+
+`src/lib/shortfall.ts`, **shared with `personal-ledger`** because it is pure arithmetic over the
+existing engines and invents no maths of its own.
+
+🚨 **It is the DIP, not the end-of-cycle balance.** `cycleBalanceSeries` walks every day of the
+cycle and `findShortfalls` reports the **first** day the projected balance goes below zero. So it
+fires on an account that ends the cycle perfectly healthy — which is the entire point, because money
+that is £200 short on the 12th still bounces a direct debit on the 12th. The one-line-shorter
+end-of-cycle comparison is `verify-shortfall.ts`'s control, and it must keep missing a case the real
+rule catches.
+
+| Watched | Not watched |
+|---|---|
+| Each person's personal current account | `SavingsPot` — entirely. There are **two** pot types and only `Pot` is in scope |
+| Every active `Pot` where `isCoinJar !== true` | A Coin Jar. One emptying is it working |
+| The joint account | Credit cards. A balance owed is not a balance held |
+
+**Recipients:** the account's owner; joint has two owners. That single sentence is the whole rule,
+and a `Pot` is never joint, so a pot alert has exactly one recipient.
+
+### Where it runs, and why there is only ONE engine
+
+The `ledger-alerts` Edge Function runs **this app's own TypeScript**, bundled by
+`scripts/build-alert-engine.ts` from `src/lib/powersync/alertEngine.ts` into
+`silver-octo-invention/supabase/functions/ledger-alerts/_engine.js`.
+
+PROMPT-14 §0b Q5 originally chose to reimplement the projection in SQL and accepted a second
+implementation of pay cycles, loans, cards and round-ups as the cost. **Edge Functions are Deno**,
+and this engine is environment-free — every `verify-*` script runs it in Node — so the server runs
+the real thing instead. 🚨 **Do not move the logic "closer to the data".** That was considered and
+rejected, because the two engines would drift with nothing to say so.
+
+What replaces that risk is mechanical and loud: `verify-alert-engine-bundle.ts` fails the sweep when
+the committed bundle is no longer what `src/lib` produces, and proves behaviourally that bundle and
+source find the same shortfalls over the three real backups. **After any `src/lib` change the alert
+path can reach, run `npx tsx scripts/build-alert-engine.ts`** — the sweep will tell you if you
+forget.
+
+`ALERT_TABLES` is derived from the table registry rather than listed in the function, so it cannot
+fall out of step with the schema and compute an alert from an incomplete ledger.
+
+### The server side
+
+`20260922120000_shared_finance_ledger_alerts.sql`. Two tables — `push_subscriptions` (one row per
+**device**, id derived from the endpoint) and `notification_log` (the claim table, whose `id` **is**
+the dedupe key) — and four `service_role`-only functions. Neither table is in the `powersync`
+publication and neither may ever be: a push endpoint is a capability URL.
+
+🚨 **The gate is `= 20`, not `>= 20`.** pg_cron runs in UTC, so the job runs hourly and the SQL
+returns nothing unless it is the 20 hour in London — no drift across the clock change. The dedupe
+makes a looser gate *safe*, which is exactly why someone will loosen it.
+
+🚨 **The dedupe key carries the London date:**
+`shortfall:<kind>:<account_id>:<user_id>:<london_date>`. A shortfall is a *state*, not an event.
+Listly's keys are event-shaped and are the worked example being copied — drop the date and the alert
+fires once and never again.
+
+### The app side
+
+`src/lib/powersync/push.ts` and `pushState.ts`, plus the Account modal's card and `public/sw.js`
+(push only; **no `fetch` handler**, so the worker can never pin an old build).
+
+🚨 **The toggle branches on `Notification.permission`, never on toggle history.** Toggling the app
+switch off does not revoke the OS permission, so the ordinary second toggle is still `'granted'` and
+must just work, silently. Only `'denied'` gets the Settings instruction.
+
+🚨 **The state is per DEVICE.** It reads from whether this browser's own subscription row exists on
+the server. A user-level flag would render ON on a second phone that has never registered, and that
+phone would then receive nothing while claiming to be on.
+
+**A subscription belongs to a service-worker SCOPE; permission belongs to an ORIGIN.** So this app
+and Listly cannot share subscriptions — different registrations — but a phone that already allowed
+Listly arrives here already `'granted'` and sees **no prompt**. That is correct, not a bug.
+
+**No email path, ever.** A phone without permission receives nothing, which is why the toggle
+distinguishes five ways of being off rather than one.
+
+**There is no deposit alert**, deliberately (§0b Q7, cut 2026-09-22). The hourly cron exists to hit
+the 20:00 gate, not as an invitation.
+
+---

@@ -185,8 +185,20 @@ export function saveLedgerData(data: AppDataV2, storage?: Storage, key: string =
  * the original Blob+anchor download wherever that isn't available
  * (desktop browsers, older iOS/Android) — same resulting file either way.
  */
+/**
+ * The ONE serialisation a backup has, wherever it is going (PROMPT-14 Parts 2-3).
+ *
+ * A cloud snapshot and a downloaded file are the same bytes, which is what makes one Restore over
+ * one format possible: either can be restored through either path. That was true by coincidence —
+ * two call sites that happened to both say JSON.stringify(data, null, 2) — and a coincidence is
+ * not an invariant. Both now call this. `verify-backup-format-parity.ts` fails if either stops.
+ */
+export function serialiseLedgerBackup(data: AppDataV2): string {
+  return JSON.stringify(data, null, 2)
+}
+
 export async function downloadLedgerBackup(data: AppDataV2): Promise<void> {
-  const json = JSON.stringify(data, null, 2)
+  const json = serialiseLedgerBackup(data)
   const date = toLocalIsoDate(new Date())
   const filename = `finance-ledger-backup-${date}.json`
   const blob = new Blob([json], { type: 'application/json' })

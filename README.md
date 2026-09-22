@@ -162,21 +162,69 @@ turns that into `people.linked_user_id`:
   which is how the second person claims their row if the first tapped it before they joined;
 - `primaryPersonId` moving because my person was **deleted** → nothing is written.
 
-### Cloud backup
+### Backup & Restore
 
-One snapshot a day, automatically, to a private bucket, plus **Back Up Now**. A snapshot is the
-same JSON the Wallet page's download produces, so either can be restored anywhere.
+**One pair of buttons, in the Account modal, and nowhere else in this app.** The Wallet page's
+Backup card is deliberately empty here: two doors to something that replaces the whole household is
+one too many. (`personal-ledger` keeps its Wallet buttons exactly where they have always been.)
 
-> **Restore replaces the whole household** on every device, so it sits behind a warning that says
-> so, and goes through the app's normal restore — which the store treats as an import, with fresh
-> row ids.
+Each button asks one follow-up question:
+
+| | Cloud | This device / A file |
+|---|---|---|
+| **Back Up Now** | Uploads today's snapshot. Disabled, with the reason shown, while offline | Saves a backup file. Deliberately does **not** also upload — you were asked, and the answer is honoured |
+| **Restore** | The list of daily snapshots | The file picker |
+
+A cloud snapshot and a downloaded file are **the same bytes** — one serialiser, one parser — which
+is what makes one question over one format possible at all. Either restores through either path.
+
+One snapshot a day still happens automatically. **The newest 30 are kept**; older ones are pruned.
+
+> **Restore replaces the whole household** on every device, so it sits behind a warning that names
+> the source and says what it is replacing.
+
+**Except when it doesn't.** Re-importing a file **this household exported** is treated as a patch:
+if any id in it is one the app already holds, the ids are kept and only the rows you actually
+changed are written. That is what makes hand-editing cheap — Back Up Now → This device, edit the
+JSON, Restore → A file — and the confirm says so, including how many rows the file will **delete**
+if you trimmed it. A backup from anywhere else still gets fresh ids for every row.
+
+> 🚨 **A restore used to make the other person somebody else.** Regenerating ids deleted their
+> "this is me" link, and their phone quietly adopted whoever sorted first, with that person's pay
+> cycle. Links are now carried across by name; if the name is ambiguous, their phone **asks** rather
+> than guessing.
+
+### Low-balance alerts
+
+At **8pm** every evening, a push notification for any watched account whose **projected running
+balance dips below zero at any point in the current pay cycle** — and again each evening until it
+clears.
+
+🚨 **It is the dip, not the end-of-cycle balance.** An account can end the cycle perfectly healthy
+and still bounce a direct debit on the 12th, and that is the case this exists for.
+
+**Watched:** each person's current account, every Pot that is not a Coin Jar, and the joint account.
+**Not watched:** savings pots, Coin Jars (one emptying is it working) and credit cards (a balance
+owed is not a balance held). **Who is told:** the account's owner — and joint has two owners.
+
+**There is deliberately no deposit alert.** It reads like the obvious missing half and it is not: a
+notification every time money lands is chatter, and the shortfall alert already says the thing that
+matters.
+
+Turn it on per device, in the Account modal, with a test button beside it. **A phone without
+notification permission receives nothing at all** — there is no email fallback, and there never will
+be — so the toggle says which of the five ways of being off this device is in. On iPhone, add the
+app to the Home Screen first; notifications do not work in a Safari tab. And on a phone that already
+allows notifications for Listly, the first toggle shows no prompt and simply works, because
+permission belongs to the website rather than the app.
 
 ### The Account modal
 
 Identity and provider; **Change password** (email accounts only — an OAuth account has no app
 password); sync status and **Force Sync** (there is deliberately no pull-to-refresh); the
 **rejected-writes** line, always shown — either the list or "No changes rejected by the server ✓";
-the household invite code and Join with a code; Cloud Backup; Sign out; **Delete my app data**.
+the household invite code and Join with a code; **Backup & Restore**; **Low-balance alerts**;
+Sign out; **Delete my app data**.
 
 The button itself sits in the Wallet header through `HeaderAccessory.tsx`, a shared, empty slot
 that renders nothing unless an app fills it. **That is what keeps `Salary.tsx` identical in both
@@ -208,8 +256,13 @@ live apps** while only this one has an Account button.
   into the old household.
 - **Auto-cleared payments have deterministic ids.** Two devices clearing the same payment before
   syncing used to make two rows and double the household balance.
-- **Every import regenerates ids.** The same backup imported into two households would otherwise
-  collide on every row id, and those writes are discarded silently.
+- **Every import regenerates ids** — unless the file is this household's own, in which case the
+  ids are kept and only what changed is written. The same backup imported into two households would
+  otherwise collide on every row id, and those writes are discarded silently.
+- **A restore re-links every other member by name.** Before, it deleted their "this is me" link
+  along with their row, and their phone silently became whoever sorted first.
+- **The 8pm alert runs the app's own projection engine**, server-side, rather than a second copy of
+  it written in SQL. The alert and the figure on your phone are the same code.
 
 ---
 

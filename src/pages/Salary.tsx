@@ -7,8 +7,7 @@ import { THREE_CYCLES_AHEAD } from '../lib/projection'
 import { findApplicableSnapshot, PAY_FREQUENCY_OPTIONS, payFrequencyLabel, nextPayDateProblem, salaryNeedsPayDate, latestSalarySnapshot, computeNetPayForPeriod, upcomingPaydays, closedPaydays, firstPaydayOnOrAfter, recentAndUpcomingPaydayDates, applyPaydayChange, type PaydayChange } from '../lib/salaryLedger'
 import { calculateBonusOnTop } from '../lib/tax'
 import { AttachBonusButton } from '../components/AttachBonusButton'
-import { downloadLedgerBackup, parseLedgerBackupJson } from '../lib/ledgerStorage'
-import { Plus, Trash2, Download, Upload, ChevronDown, ChevronUp, Settings, X, Users, CalendarClock, Info, ArrowUpDown } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, ChevronUp, Settings, X, Users, CalendarClock, Info, ArrowUpDown } from 'lucide-react'
 import type { AppDataV2, Category, Loan, PayCycleConfig, PaySchedule, Pension, Person, Pot, RecurrenceFrequency, RecurringTemplate, SavingsInterestMethod, SavingsPot, Transaction } from '../types/ledger'
 import { nanoid } from 'nanoid'
 import { DeductionModal } from '../components/DeductionModal'
@@ -42,6 +41,7 @@ import {
 } from '../lib/pensionLedger'
 import { JointAccountSetupModal } from '../components/JointAccountSetupModal'
 import { HeaderAccessory } from '../components/HeaderAccessory'
+import { WalletBackupSlot } from '../components/BackupSection'
 import { RebalanceAccountsModal, type RebalanceTarget } from '../components/RebalanceAccountsModal'
 import { formatFullDate } from '../lib/format'
 import {
@@ -56,7 +56,6 @@ import { buildExampleLedger } from '../lib/savingsInterest'
 import { newPot, potBalanceAsOf, potDepositOccurrencePreviews } from '../lib/potLedger'
 import { pickNextSharedCardColor } from '../lib/creditCards'
 import { describeSchedule, recentAndUpcomingOccurrences } from '../lib/schedule'
-import { isBillTemplate } from '../lib/bills'
 import { recentAndUpcomingLoanPaymentDates } from '../lib/ledgerLoans'
 import { locationsEqual, transferLocationLabel, transferLocationKey, buildTransferLocationOptions, type TransferLocationOption } from '../lib/transferLedger'
 import { AmountStep, LocationStep, FrequencyStep, DateStep, type TransferFrequencyChoice, resolveTransferFrequencyChoice } from '../components/TransferSteps'
@@ -2840,7 +2839,8 @@ export function Salary() {
         </div>
       </header>
 
-      <BackupSection data={data} onRestore={setData} />
+      {/* Renders here unless an app claims Backup & Restore for somewhere else (BackupSection.tsx). */}
+      <WalletBackupSlot data={data} onRestore={setData} />
 
       <CollapsibleSection
         title="Salary"
@@ -5298,79 +5298,6 @@ const DEDUCTION_TYPE_SHORT: Record<DeductionType, string> = {
   post_tax: 'post-tax',
 }
 
-
-function BackupSection({ data, onRestore }: { data: AppDataV2; onRestore: (data: AppDataV2) => void }) {
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [restored, setRestored] = useState(false)
-
-  function handleFile(file: File) {
-    setError(null)
-    setRestored(false)
-    file
-      .text()
-      .then((text) => {
-        const restoredData = parseLedgerBackupJson(text)
-        const proceed = window.confirm(
-          `This will replace everything currently in the app (${data.people.length} ${data.people.length === 1 ? 'person' : 'people'}, ${data.recurringTemplates.filter(isBillTemplate).length} bills, ${data.loans.length} loans, ${data.creditCards.length} credit cards, ${data.scenarios.length} scenarios) with the contents of this backup. This can't be undone. Continue?`,
-        )
-        if (!proceed) return
-        onRestore(restoredData)
-        setRestored(true)
-      })
-      .catch((err) => setError(err.message))
-  }
-
-  return (
-    <div className="rounded-2xl p-4 mb-6 flex items-center justify-between" style={{ background: 'var(--color-surface)' }}>
-      <div>
-        <h2 className="font-body text-sm font-semibold text-[var(--color-ink)]">Backup</h2>
-        <p className="text-xs text-[var(--color-ink-faint)] mt-0.5 max-w-[220px]">
-          Everything lives in this browser's storage — save a copy somewhere safe in case it gets cleared.
-        </p>
-        {error && (
-          <p className="text-xs mt-1" style={{ color: 'var(--color-negative)' }}>
-            {error}
-          </p>
-        )}
-        {restored && (
-          <p className="text-xs mt-1" style={{ color: 'var(--color-positive)' }}>
-            Restored.
-          </p>
-        )}
-      </div>
-      <div className="flex gap-2 shrink-0">
-        <button
-          onClick={() => downloadLedgerBackup(data)}
-          className="w-9 h-9 rounded-full flex items-center justify-center"
-          style={{ background: 'var(--color-bg-elevated)' }}
-          title="Download a full backup"
-        >
-          <Download size={16} className="text-[var(--color-ink)]" />
-        </button>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="w-9 h-9 rounded-full flex items-center justify-center"
-          style={{ background: 'var(--color-bg-elevated)' }}
-          title="Restore from a backup file"
-        >
-          <Upload size={16} className="text-[var(--color-ink)]" />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/json"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (file) handleFile(file)
-            e.target.value = ''
-          }}
-        />
-      </div>
-    </div>
-  )
-}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
