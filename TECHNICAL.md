@@ -1728,6 +1728,15 @@ writes. That is why each one has a check.
 - **Empty optional child lists come back absent**, not as `[]`.
 - **`jsonb` is canonical text locally and a JSON *value* on upload.** Send the TEXT SQLite holds
   and Postgres stores a *string*, which syncs back as one.
+- 🚨 **…and coming DOWN it has two shapes, because `fromRows` has two readers.** SQLite has no
+  json type, so PowerSync returns jsonb as **TEXT**; **PostgREST returns it already PARSED**. The
+  app reads the local database; the `ledger-alerts` Edge Function reads the server (§45). `j()`
+  handles both, plus a third state — a double-encoded value, a JSON string holding JSON, which is
+  what the connector wrote before `toServerRecord` (UAT 2026-09-19) — and `Value` admits an object
+  for that reason. **Never narrow it back to `JSON.parse(String(v))`**: that is
+  `JSON.parse("[object Object]")` on a parsed one, and it killed the live 20:00 run on 2026-09-22.
+  `verify-alert-engine-bundle.ts` §5 builds the PostgREST shape explicitly and carries the
+  control.
 - **Pot `recurringDeposit*` is not synced** (superseded).
 - **Order.** Every array-backed table has a `position`. An append gets `last + 1`; a mid-list
   insert takes the midpoint of its neighbours; **a delete never renumbers**; reads sort by
@@ -2160,6 +2169,35 @@ forget.
 
 `ALERT_TABLES` is derived from the table registry rather than listed in the function, so it cannot
 fall out of step with the schema and compute an alert from an incomplete ledger.
+
+### 🚨 What the first real run taught (2026-09-22)
+
+Both of these were invisible until the 20:00 gate was lifted for UAT, and both killed the whole run
+before a single notification was sent.
+
+1. **`42501 permission denied for table household_members`.** `service_role` could SELECT **0 of
+   30** tables in `shared_finance_ledger`: Supabase grants it the `public` schema, and a custom
+   schema gets nothing. It hid for months because **every earlier Edge Function call went through a
+   `security definer` RPC**, which runs as its owner and bypasses the caller's grants entirely —
+   `ledger-alerts` is the first function here to read tables directly, because the engine needs the
+   whole household. Fixed by `20260922200000`, which grants usage + SELECT **and sets default
+   privileges** so the next `create table` is covered.
+
+2. **`"[object Object]" is not valid JSON`** — the jsonb shape difference in §38. The engine is
+   shared with the app, which is the point; that is also what puts two wire formats through one
+   parser.
+
+🚨 **The lesson that outlives both: a gated code path is untested code, however many times the job
+has "run".** Every run for days returned `"gated":true` and stopped before the first table read, so
+"the cron has been green all week" meant nothing. Exercise a gated path deliberately — lift the
+gate, or call the function by hand — before believing it works.
+
+🚨 **And a check fed by the writer cannot find a wire-format bug.** The bundle check fed the engine
+rows built by the app's own `toRows()` and had never once seen a PostgREST response — and all three
+real backups have **empty** histories, so `j()` returned at its `if (v === '')` guard and never
+reached the broken line. Every assertion passed while testing nothing. §5 now asserts the number of
+jsonb columns it actually parsed is non-zero, so it cannot go vacuous again.
+(`MIGRATION-LESSONS` §62, §63.)
 
 ### The server side
 
