@@ -1162,9 +1162,18 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
   const setRoundUp: LedgerContextValue['setRoundUp'] = (personId, enabled, effectiveFrom) => {
     const newPotId = nanoid(8)
     setDataState((prev) => {
-      const payCycle = prev.payCycles.find((c) => c.personId === personId)
-      if (!payCycle) return prev
-      const payCycles = prev.payCycles.map((c) => (c.personId === personId ? { ...c, ...applyRoundUpChange(c, enabled, effectiveFrom) } : c))
+      // PROMPT-13a B (2026-09-22) — this read `if (!payCycle) return prev`,
+      // the same silent-skip shape as the guard B3 removed from
+      // Salary.tsx: a person with no PayCycleConfig row got no error and
+      // no switch, just a toggle that flicked back. addPerson always
+      // writes one, but `migrateLedgerData` does not backfill
+      // (`payCycles: data.payCycles ?? []`), so a restored backup can
+      // reach here without one. It is created on the spot instead, the
+      // same way `updatePayCycle` already does.
+      const payCycle = prev.payCycles.find((c) => c.personId === personId) ?? defaultPayCycleConfig(personId)
+      const payCycles = prev.payCycles.some((c) => c.personId === personId)
+        ? prev.payCycles.map((c) => (c.personId === personId ? { ...c, ...applyRoundUpChange(c, enabled, effectiveFrom) } : c))
+        : [...prev.payCycles, { ...payCycle, ...applyRoundUpChange(payCycle, enabled, effectiveFrom) }]
 
       // B4 — "Switching it on for the first time creates the Coin Jar pot
       // for that person... Until then the pot does not exist and appears

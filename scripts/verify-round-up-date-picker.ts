@@ -160,6 +160,18 @@ check('neither round-up flow passes paydays any more', /roundUp\.occurrences|occ
 check('the settings flow is no longer gated on having paydays', salary.includes('if (roundUpChanged && paydayOccurrences.length > 0)'), false)
 check('...it opens whenever the switch moved', salary.includes('if (roundUpChanged) {\n      setChoosingRoundUpFrom(true)'), true)
 
+// The same silent-skip shape, one layer down: setRoundUp used to bail with
+// `if (!payCycle) return prev` for a person with no PayCycleConfig row.
+// addPerson always writes one, but migrateLedgerData does not backfill,
+// so a restored backup can reach it without one — and the switch would
+// again do nothing, quietly.
+const context = read('src/context/LedgerContext.tsx')
+// Matched as CODE, not as text: the comment above the fix quotes the old
+// guard verbatim, on purpose, so a bare `includes` would find it.
+check('setRoundUp no longer bails silently on a missing pay cycle', /\n\s*if \(!payCycle\) return prev/.test(context), false)
+check('...it creates the default config instead, like updatePayCycle', /setRoundUp[\s\S]{0,1600}\?\? defaultPayCycleConfig\(personId\)/.test(context), true)
+check('...and migrateLedgerData still does not backfill, which is why', read('src/lib/ledgerStorage.ts').includes('payCycles: data.payCycles ?? []'), true)
+
 // 🚨 The payday change KEEPS its occurrence picker.
 check('a PAYDAY change still picks a real payday', salary.includes('occurrences={paydayOccurrences}'), true)
 check('...and is still gated on there being one to pick', salary.includes('if (paydayChanged && paydayOccurrences.length > 0)'), true)
