@@ -141,6 +141,88 @@ try {
     check('linkedUsers maps person id → user id', Object.keys(users).length === data.people.length, users)
     check('every alert names a user that mapping produced', bundled.alertsFor(linkedAll, AS_OF, LONDON_DATE).send.every((a) => users[a.personId] === a.userId))
   }
+
+  console.log('\n5. 🚨 A POSTGREST-SHAPED ROW, which is what the Edge Function actually gets')
+  {
+    // 🚨 THE GAP THIS CLOSES, found live on 2026-09-22. Everything above feeds
+    // the engine rows built by `toRows()` — app-shaped, with every jsonb column
+    // as canonical TEXT, which is what PowerSync's SQLite stores. The Edge
+    // Function does not read SQLite. It reads the server through PostgREST,
+    // and PostgREST PARSES jsonb for you. `fromRows` got an object where it
+    // expected text, did `JSON.parse(String(v))`, and the whole 20:00 run died
+    // with `"[object Object]" is not valid JSON`.
+    //
+    // It hid for a day because all three real backups have EMPTY histories, so
+    // `j()` returned at its `=== ''` guard and never reached the parse: every
+    // assertion above passed while never once exercising the line that was
+    // broken. Hence the injected history below AND the count assertion — a
+    // shape test over data with no jsonb in it proves nothing.
+    const JSONB = new Set([
+      'interest_history', 'amount_history', 'payday_history', 'round_up_history',
+      'location_history', 'monthly_payment_history', 'recurring_overpayment', 'actions',
+    ])
+    let parsedColumns = 0
+    const asPostgrest = (rows: ReturnType<typeof toRows>): ReturnType<typeof toRows> =>
+      Object.fromEntries(
+        Object.entries(rows).map(([table, list]) => [
+          table,
+          list.map((r) => {
+            const out: Record<string, unknown> = { ...r }
+            for (const [k, v] of Object.entries(r)) {
+              if (JSONB.has(k) && typeof v === 'string' && v !== '') {
+                out[k] = JSON.parse(v)
+                parsedColumns++
+              }
+            }
+            return out
+          }),
+        ]),
+      ) as ReturnType<typeof toRows>
+
+    const data = parseLedgerBackupJson(readFileSync(`${DIR}/finance-ledger-backup-2026-09-15.json`, 'utf8'))
+    const owner = data.people[0].id
+    // A payday history and a round-up history, so there is real jsonb to parse,
+    // plus the same forced dip as 3b so the comparison has shortfalls in it.
+    const withHistory = {
+      ...data,
+      payCycles: data.payCycles.map((pc, i) =>
+        i === 0
+          ? {
+              ...pc,
+              paydayHistory: [{ effectiveFrom: '2026-01-01', payday: 25 }, { effectiveFrom: '2026-06-01', payday: 28 }],
+              roundUpHistory: [{ effectiveFrom: '2026-01-01', enabled: false }, { effectiveFrom: '2026-06-01', enabled: true }],
+            }
+          : pc,
+      ),
+      pots: [{ id: 'shape-dip', personId: owner, name: 'Dip', openingBalance: -25, openingDate: '2026-01-01', active: true, color: '#888', overdraftAmount: 0 }],
+    }
+    const sqliteRows = toRows(withHistory, { householdId: HH })
+    sqliteRows.people = sqliteRows.people.map((r, i) => ({ ...r, linked_user_id: `user-${i}` }))
+    const pgRows = asPostgrest(sqliteRows)
+
+    check('the fixture really does carry jsonb — otherwise this section is vacuous', parsedColumns > 0, parsedColumns)
+    const pcRow = pgRows.pay_cycles[0] as Record<string, unknown>
+    check('and a pay cycle really arrives as a parsed ARRAY, not text', Array.isArray(pcRow.payday_history), typeof pcRow.payday_history)
+
+    // 🚨 The control: the old `j()` was `JSON.parse(String(v))`. Prove that is
+    // what threw, so nobody reinstates it believing it was fine.
+    let oldWouldThrow = false
+    try { JSON.parse(String(pcRow.payday_history)) } catch { oldWouldThrow = true }
+    check('CONTROL: `JSON.parse(String(v))` on that same value throws', oldWouldThrow)
+
+    const fromPg = bundled.shortfallsForHousehold(pgRows, AS_OF)
+    const fromSqlite = bundled.shortfallsForHousehold(sqliteRows, AS_OF)
+    check('the engine reads the PostgREST shape at all', fromPg.shortfalls.length > 0, fromPg.shortfalls.length)
+    check('🚨 and reads it IDENTICALLY to the SQLite shape', JSON.stringify(fromPg.data) === JSON.stringify(fromSqlite.data))
+    check(
+      'the payday history survived the round trip',
+      JSON.stringify(fromPg.data.payCycles[0].paydayHistory) === JSON.stringify(withHistory.payCycles[0].paydayHistory),
+      JSON.stringify(fromPg.data.payCycles[0].paydayHistory),
+    )
+    const alertsPg = bundled.alertsFor(pgRows, AS_OF, LONDON_DATE)
+    check('the same alerts either way', JSON.stringify(alertsPg) === JSON.stringify(bundled.alertsFor(sqliteRows, AS_OF, LONDON_DATE)))
+    check('and there is at least one, so that comparison is not "[] === []"', alertsPg.send.length > 0)
+  }
 } finally {
   rmSync(tmp, { force: true })
 }

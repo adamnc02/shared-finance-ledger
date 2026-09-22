@@ -62,7 +62,13 @@ import { salarySortPersonId } from '../salarySortLedger'
 import type { SalaryDeduction } from '../tax'
 import type { Scenario } from '../../types/models'
 
-export type Value = string | number | boolean | null
+// 🚨 TWO SHAPES REACH `fromRows`, and a jsonb column looks different in each.
+// PowerSync's local SQLite has no json type, so it hands back jsonb as TEXT;
+// PostgREST hands it back ALREADY PARSED, as an object or an array. The app
+// reads the local database, the ledger-alerts Edge Function reads the server
+// through PostgREST, and BOTH call `fromRows`. So a row value genuinely can be
+// an object, and saying otherwise here is what made `j()` wrong below.
+export type Value = string | number | boolean | null | Value[] | { [k: string]: Value }
 export type Row = { id: string } & Record<string, Value>
 /** Rows per Postgres table name (not the local sfl_ name). */
 export type Rows = Record<string, Row[]>
@@ -109,13 +115,22 @@ function obj<T>(entries: Record<string, unknown>): T {
 const s = (v: Value | undefined): string | undefined => (v === null || v === undefined ? undefined : String(v))
 const n = (v: Value | undefined): number | undefined => (v === null || v === undefined || v === '' ? undefined : Number(v))
 const b = (v: Value | undefined): boolean | undefined => (v === null || v === undefined ? undefined : v === true || v === 1 || v === '1' || v === 'true')
-// A jsonb value stored double-encoded (a JSON string holding JSON: what the
-// connector wrote before toServerRecord, UAT 2026-09-19) is unwrapped, with a
-// warning, rather than handing the app a string where it expects an object.
+// 🚨 A jsonb column arrives here in one of THREE states, and this is the only
+// place that knows it:
+//   1. TEXT holding JSON — PowerSync's SQLite, which has no json type. Parse.
+//   2. ALREADY PARSED — PostgREST, which parses jsonb for you. Do NOT parse:
+//      `JSON.parse(String({}))` is `JSON.parse("[object Object]")`, which
+//      throws. This is what broke ledger-alerts live on 2026-09-22, and it hid
+//      for a day because every fixture backup had an EMPTY history, so `j()`
+//      returned at the guard above and never reached the parse.
+//   3. DOUBLE-ENCODED — a JSON string holding JSON, which is what the
+//      connector wrote before toServerRecord (UAT 2026-09-19). Unwrapped with
+//      a warning rather than handing the app a string where it wants an object.
+// Never narrow this back to `JSON.parse(String(v))`. Both readers are real.
 let warnedDoubleEncoded = false
 function j<T>(v: Value | undefined): T | undefined {
   if (v === null || v === undefined || v === '') return undefined
-  let parsed: unknown = JSON.parse(String(v))
+  let parsed: unknown = typeof v === 'string' ? JSON.parse(v) : v
   if (typeof parsed === 'string' && /^\s*[[{]/.test(parsed)) {
     if (!warnedDoubleEncoded) console.warn('[powersync] a jsonb value on the server is double-encoded (stored as a string); reading it anyway')
     warnedDoubleEncoded = true

@@ -1875,7 +1875,8 @@ function PotForm({
  * text button, sitting outside this form — is now permanently part of
  * this same card, still a checklist, saved together with the name in one
  * Save action. The red inline button is gone. */
-function PotEditForm({
+/** Exported for `OverdraftField.test.tsx`, the same reason `SavingsPotForm` is. */
+export function PotEditForm({
   pot,
   templates,
   loans,
@@ -1918,7 +1919,15 @@ function PotEditForm({
   // EVERY ordinary pot (Adam, 2026-09-22: "mum might use pots as other bank
   // account, so we need to add the flexibility"), and hidden on a Coin Jar,
   // which is not watched for shortfalls at all.
-  const [overdraft, setOverdraft] = useState(String(pot.overdraftAmount || ''))
+  // 🚨 Shows "0", NOT blank — deliberately unlike the opening-balance fields
+  // beside it, which use `|| ''`. Adam lost time to exactly this on
+  // 2026-09-22: a blank field reads as "unset", so he typed 0 into it, which
+  // is the SAME value and correctly did not enable Save.
+  //
+  // For a field whose whole meaning is "0 means no overdraft", blank and 0
+  // are not interchangeable to a reader even though they are to the code —
+  // and the caption under it already promises "Leave at 0 if it cannot".
+  const [overdraft, setOverdraft] = useState(String(pot.overdraftAmount))
   // Its own flow, committed on its own, exactly as the pay cycle settings
   // version is — NOT batched into this form's Save, which governs the name
   // and the anchor pair. A dated change that shares a Save with undated
@@ -3998,7 +4007,8 @@ function SalarySetupForm({
 
 // ── Pay cycle settings — payday, weekend adjustment, cycle boundary, opening balance. Moved out of the main flow behind the settings cog, since it's set once and rarely touched. ──
 
-function PayCycleSettingsModal({
+/** Exported for `OverdraftField.test.tsx`, the same reason `SavingsPotForm` is. */
+export function PayCycleSettingsModal({
   personName,
   isPrimary,
   payday,
@@ -4090,7 +4100,15 @@ function PayCycleSettingsModal({
   const [draftSalarySortBasis, setDraftSalarySortBasis] = useState<'payday' | 'budget_cycle'>(salarySortBasis)
   const [draftOpeningBalance, setDraftOpeningBalance] = useState(String(openingBalance))
   const [draftOpeningBalanceDate, setDraftOpeningBalanceDate] = useState(openingBalanceDate)
-  const [draftOverdraft, setDraftOverdraft] = useState(String(overdraftAmount || ''))
+  // 🚨 Shows "0", NOT blank — deliberately unlike the opening-balance fields
+  // beside it, which use `|| ''`. Adam lost time to exactly this on
+  // 2026-09-22: a blank field reads as "unset", so he typed 0 into it, which
+  // is the SAME value and correctly did not enable Save.
+  //
+  // For a field whose whole meaning is "0 means no overdraft", blank and 0
+  // are not interchangeable to a reader even though they are to the code —
+  // and the caption under it already promises "Leave at 0 if it cannot".
+  const [draftOverdraft, setDraftOverdraft] = useState(String(overdraftAmount))
   const [draftRoundUp, setDraftRoundUp] = useState(roundUpEnabled)
   // PROMPT-13 B4 — set while a round-up switch waits for its
   // effective-from date. Kept separate from `choosingPaydayFrom` so the
