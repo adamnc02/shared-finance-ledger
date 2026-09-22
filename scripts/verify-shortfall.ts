@@ -34,7 +34,7 @@
 import { readFileSync } from 'node:fs'
 import { parseLedgerBackupJson } from '../src/lib/ledgerStorage'
 import { buildPersonalTrendSeries } from '../src/lib/projection'
-import { cycleBalanceSeries, findShortfalls, shortfallDedupeKey, watchedAccounts } from '../src/lib/shortfall'
+import { cycleBalanceSeries, findShortfalls, shortfallDedupeKey, shortfallMessage, watchedAccounts } from '../src/lib/shortfall'
 import type { AppDataV2, Pot } from '../src/types/ledger'
 
 let failures = 0
@@ -130,6 +130,57 @@ console.log('\n4. Recipients')
   const joint = accounts.find((a) => a.kind === 'joint')
   check('joint names everyone in the household', !joint || (joint.personIds.length === data.people.length && data.people.every((p) => joint.personIds.includes(p.id))), joint?.personIds)
   check('no account names a person who is not in the household', accounts.every((a) => a.personIds.every((id) => data.people.some((p) => p.id === id))))
+}
+
+console.log('\n4b. The message names what actually takes the account under')
+{
+  const data = load(BACKUPS[0])
+  const owner = data.people[0].id
+  const pot: Pot = { id: 'msg-pot', personId: owner, name: 'Car Fund', openingBalance: 100, openingDate: '2026-01-01', active: true, color: '#888' }
+  const base = { ...data, pots: [pot] }
+  const series = cycleBalanceSeries(base, watchedAccounts(base).find((a) => a.id === 'msg-pot')!, AS_OF)
+  const day = series[2].date
+
+  const out = (id: string, amount: number, note: string) =>
+    ({ id, type: 'transfer', direction: 'out', amount, date: day, status: 'pending', location: 'personal', note,
+       fromLocation: { type: 'pot', potId: pot.id }, toLocation: { type: 'personal', ownerId: owner } }) as AppDataV2['transactions'][number]
+
+  // ── one payment ──
+  const one: AppDataV2 = { ...base, transactions: [...data.transactions, out('c1', 300, 'Rent')] }
+  const s1 = findShortfalls(one, AS_OF).find((x) => x.account.id === 'msg-pot')!
+  check('one payment: it is named, with its own amount', s1.causes.length === 1 && s1.causes[0].label === 'Rent' && s1.causes[0].amount === 300, s1.causes)
+  const m1 = shortfallMessage(s1)
+  check('…the body leads with it', m1.body.startsWith('Rent (£300.00) on '), m1.body)
+  check('…and says how far under it goes', m1.body.includes(`takes it £${s1.amount.toFixed(2)} below zero.`), m1.body)
+  check('…with no year anywhere in it', !/20\d\d/.test(m1.body), m1.body)
+  check('the title names the account', m1.title === 'Car Fund runs short', m1.title)
+
+  // ── several payments ──
+  const many: AppDataV2 = { ...base, transactions: [...data.transactions, out('c1', 300, 'Rent'), out('c2', 120, 'Council Tax'), out('c3', 45, 'Broadband')] }
+  const s2 = findShortfalls(many, AS_OF).find((x) => x.account.id === 'msg-pot')!
+  check('several payments: all counted', s2.causes.length === 3, s2.causes)
+  check('…biggest first', s2.causes[0].amount === 300 && s2.causes[2].amount === 45, s2.causes.map((c) => c.amount))
+  const m2 = shortfallMessage(s2)
+  check('…the body totals them', m2.body.startsWith('3 payments totalling £465.00 on '), m2.body)
+  check('…and the total is the sum of the named ones, not the dip', m2.body.includes('£465.00') && m2.body.includes(`£${s2.amount.toFixed(2)} below zero`), m2.body)
+
+  // ── already under before anything was due ──
+  const opening: Pot = { ...pot, id: 'msg-pot-2', name: 'Overdrawn', openingBalance: -50 }
+  const none = { ...data, pots: [opening] }
+  const s3 = findShortfalls(none, AS_OF).find((x) => x.account.id === 'msg-pot-2')!
+  check('an account already under on day one blames no payment', s3.causes.length === 0, s3.causes)
+  const m3 = shortfallMessage(s3)
+  check('…and the body says so without inventing a cause', m3.body.startsWith('Projected to be £50.00 below zero on '), m3.body)
+
+  // ── the joint account's title ──
+  const joint = watchedAccounts(data).find((a) => a.kind === 'joint')
+  if (joint) {
+    const m4 = shortfallMessage({ account: joint, date: '2026-09-20', amount: 10, cycleStart: '2026-09-01', cycleEnd: '2026-09-30', causes: [] })
+    check('the joint title reads as a title, not mid-sentence prose', m4.title === 'Your joint account runs short', m4.title)
+  }
+
+  console.log('\n   — what the phone actually shows —')
+  for (const m of [m1, m2, m3]) console.log(`     ${m.title}\n     ${m.body}`)
 }
 
 console.log('\n5. The dedupe key carries the London date')

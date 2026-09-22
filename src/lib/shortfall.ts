@@ -46,6 +46,7 @@ import { potSignedAmount } from './potLedger'
 import { computeJointAccountProjection, jointAccountSignedAmount } from './jointAccountLedger'
 import { buildDailyBalanceSeries, daysBetweenInclusive, isLedgerTransaction, signedAmount } from './runningBalance'
 import { toLocalIsoDate as toIso } from './date'
+import { formatDayMonth } from './format'
 import type { AppDataV2, Transaction } from '../types/ledger'
 
 export type WatchedAccountKind = 'personal' | 'pot' | 'joint'
@@ -74,6 +75,12 @@ export interface Shortfall {
   amount: number
   cycleStart: string
   cycleEnd: string
+  /**
+   * What is going OUT of this account on `date` — the payments that take it under, newest-first by
+   * size. Empty when the balance was already below zero before anything was due that day, which is
+   * a real case: an account that starts the cycle overdrawn has no single payment to blame.
+   */
+  causes: { label: string; amount: number }[]
 }
 
 /** Every account this household watches, in a stable order. */
@@ -112,31 +119,60 @@ export function watchedAccounts(data: AppDataV2): WatchedAccount[] {
  * The projected running balance for one watched account, for every day of its current pay cycle.
  * Exported so a check can assert the walk itself rather than only its verdict.
  */
-export function cycleBalanceSeries(data: AppDataV2, account: WatchedAccount, asOfDate: Date): { date: string; balance: number }[] {
+/**
+ * Everything one watched account's cycle is made of: the days, the transactions the projection
+ * produced for it, and the sign function that decides which way each one moves THIS account.
+ *
+ * Extracted because the alert needs two things from one walk — the day the balance goes under, and
+ * what is due on that day. Deriving them separately would be two chances to disagree about which
+ * transactions belong to the account.
+ */
+function accountCycle(
+  data: AppDataV2,
+  account: WatchedAccount,
+  asOfDate: Date,
+): { days: string[]; openingBalance: number; transactions: Transaction[]; sign: (t: Transaction) => number; include: (t: Transaction) => boolean } | null {
   const [cycle] = horizonCycles(data, account.cyclePersonId, 'current_cycle', asOfDate)
   const days = daysBetweenInclusive(cycle.start, cycle.end)
 
   if (account.kind === 'personal') {
     const payCycle = data.payCycles.find((c) => c.personId === account.id)
-    if (!payCycle) return []
+    if (!payCycle) return null
     const projection = computeProjectionToDate(data, account.id, payCycle, cycle.end, asOfDate)
-    return points(buildDailyBalanceSeries(payCycle.openingBalance, projection.transactions, days, signedAmount, isLedgerTransaction))
+    return { days, openingBalance: payCycle.openingBalance, transactions: projection.transactions, sign: signedAmount, include: isLedgerTransaction }
   }
 
   if (account.kind === 'pot') {
     const pot = (data.pots ?? []).find((p) => p.id === account.id)
-    if (!pot) return []
+    if (!pot) return null
     const projection = computePotProjection(data, pot, 'current_cycle', asOfDate)
-    const sign = (t: Transaction) => potSignedAmount(t, pot.id)
-    return points(buildDailyBalanceSeries(pot.openingBalance, projection.transactions, days, sign))
+    return { days, openingBalance: pot.openingBalance, transactions: projection.transactions, sign: (t) => potSignedAmount(t, pot.id), include: () => true }
   }
 
   const projection = computeJointAccountProjection(data, 'current_cycle', asOfDate)
-  if (!projection) return []
-  return points(buildDailyBalanceSeries(projection.openingBalance, projection.transactions, days, jointAccountSignedAmount))
+  if (!projection) return null
+  return { days, openingBalance: projection.openingBalance, transactions: projection.transactions, sign: jointAccountSignedAmount, include: () => true }
 }
 
-const points = (series: { date: string; projectedBalance: number }[]) => series.map((p) => ({ date: p.date, balance: p.projectedBalance }))
+/**
+ * The projected running balance for one watched account, for every day of its current pay cycle.
+ * Exported so a check can assert the walk itself rather than only its verdict.
+ */
+export function cycleBalanceSeries(data: AppDataV2, account: WatchedAccount, asOfDate: Date): { date: string; balance: number }[] {
+  const c = accountCycle(data, account, asOfDate)
+  if (!c) return []
+  return buildDailyBalanceSeries(c.openingBalance, c.transactions, c.days, c.sign, c.include).map((p) => ({ date: p.date, balance: p.projectedBalance }))
+}
+
+/**
+ * What a row is called, using the app's OWN convention — `note`, then the category's name, then
+ * the bare type — the same fallback chain Home.tsx renders a ledger row with. Deliberately not a
+ * prettier label invented here: a notification that names a bill differently from the screen you
+ * open to look at it is worse than one that says nothing.
+ */
+function label(t: Transaction, data: AppDataV2): string {
+  return t.note || data.categories.find((c) => c.id === t.categoryId)?.name || t.type
+}
 
 /**
  * Every watched account whose projected running balance dips below zero at some point in the
@@ -150,29 +186,82 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
   const out: Shortfall[] = []
   for (const account of watchedAccounts(data)) {
     const [cycle] = horizonCycles(data, account.cyclePersonId, 'current_cycle', asOfDate)
-    const series = cycleBalanceSeries(data, account, asOfDate)
+    const c = accountCycle(data, account, asOfDate)
+    if (!c) continue
+    const series = buildDailyBalanceSeries(c.openingBalance, c.transactions, c.days, c.sign, c.include)
     // The FIRST day it goes under, not the worst day and not the last: the
     // question being answered is "when does the money run out".
-    const dip = series.find((p) => p.balance < 0)
+    const dip = series.find((p) => p.projectedBalance < 0)
     if (!dip) continue
+
+    // What is leaving the account THAT DAY. Taken from the same transaction
+    // list the balance was walked from, so the alert can never name a payment
+    // that did not contribute to the number beside it.
+    const causes = c.transactions
+      .filter((t) => t.date === dip.date && c.include(t) && c.sign(t) < 0)
+      .map((t) => ({ label: label(t, data), amount: Math.round(-c.sign(t) * 100) / 100 }))
+      .sort((a, b) => b.amount - a.amount)
+
     out.push({
       account,
       date: dip.date,
-      amount: Math.round(-dip.balance * 100) / 100,
+      amount: Math.round(-dip.projectedBalance * 100) / 100,
       cycleStart: toIso(cycle.start),
       cycleEnd: toIso(cycle.end),
+      causes,
     })
   }
   return out
 }
 
-/** The notification a shortfall becomes. Nothing here is logged server-side (§47): it is built and sent, never stored. */
+/**
+ * The notification a shortfall becomes. Nothing here is logged server-side (§47): it is built and
+ * sent, never stored.
+ *
+ * 🚨 IT LEADS WITH THE CAUSE, not the number. "Rent (£850.00) on 12 October takes it £212.40 below
+ * zero" is something you can act on; "projected to go £212.40 below zero" leaves you to open the
+ * app and work out why. Adam, 2026-09-22, asking for exactly this: *"is it possible to state what
+ * the next bill is and it's value, or show x bills totalling x amount are due out on x date"*.
+ *
+ * The year is deliberately absent (`formatDayMonth`): the dip is always inside the current pay
+ * cycle, so the year is noise on a lock screen.
+ *
+ * Three shapes, because one payment, several payments and none are genuinely different situations
+ * and a single generic sentence would misdescribe two of them.
+ */
 export function shortfallMessage(shortfall: Shortfall): { title: string; body: string } {
-  const on = shortfall.date
+  const on = formatDayMonth(shortfall.date)
+  const ends = formatDayMonth(shortfall.cycleEnd)
+  const short = `£${shortfall.amount.toFixed(2)}`
+  const { causes } = shortfall
+
+  const cause =
+    causes.length === 1
+      ? `${causes[0].label} (£${causes[0].amount.toFixed(2)}) on ${on} takes it ${short} below zero.`
+      : causes.length > 1
+        ? `${causes.length} payments totalling £${total(causes).toFixed(2)} on ${on} take it ${short} below zero.`
+        : // Already under before anything was due that day — an account that
+          // starts the cycle overdrawn. There is no payment to blame, and
+          // naming one would be a lie.
+          `Projected to be ${short} below zero on ${on}.`
+
   return {
-    title: `${shortfall.account.name} runs short`,
-    body: `Projected to go £${shortfall.amount.toFixed(2)} below zero on ${on}, before the cycle ends ${shortfall.cycleEnd}.`,
+    title: `${possessive(shortfall.account)} runs short`,
+    body: `${cause} Cycle ends ${ends}.`,
   }
+}
+
+const total = (causes: { amount: number }[]) => Math.round(causes.reduce((sum, c) => sum + c.amount, 0) * 100) / 100
+
+/**
+ * "Adam's account", "Car Fund", "Your joint account".
+ *
+ * The joint account is the only one that needs this: its stored name is lower-case prose ("the
+ * joint account") because it reads correctly mid-sentence, and a notification TITLE is neither
+ * mid-sentence nor lower-case — "the joint account runs short" in bold reads like a typo.
+ */
+function possessive(account: WatchedAccount): string {
+  return account.kind === 'joint' ? 'Your joint account' : account.name
 }
 
 /**
