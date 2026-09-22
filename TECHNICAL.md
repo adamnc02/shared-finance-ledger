@@ -1,4 +1,14 @@
-# Shared Ledger — Technical Documentation
+# My Ledger — Technical Documentation
+
+> **The app is called "My Ledger" (renamed 2026-09-22, from "Shared Ledger").** The repo, the
+> Supabase schema and the PowerSync app id keep their old names — only the display name changed.
+> It lives in **four** places, and all four must agree: `index.html`'s `<title>` and
+> `apple-mobile-web-app-title`, `public/manifest.webmanifest`'s `name`/`short_name`, and
+> `public/sw.js`'s fallback notification title.
+>
+> 🚨 **iOS reads the name from the INSTALLED copy**, both for the home-screen label and for the
+> "from …" suffix on a push notification. An already-installed phone keeps showing the old name
+> until the home-screen icon is deleted and re-added — that is iOS, not a bug here.
 
 Implementation-level reference for `shared-finance-ledger`. README.md stays user-facing; this
 document is how it is built, and — more importantly — **why**, because most of the non-obvious
@@ -2083,8 +2093,8 @@ the sibling repo to exist.
 ## 45. Low-balance alerts (PROMPT-14 Part 7)
 
 At **20:00 Europe/London** every evening, one push notification per watched account whose projected
-running balance dips below zero at any point in the current pay cycle — repeating each evening until
-it clears.
+running balance dips below zero **between tomorrow and the end of the current pay cycle** —
+repeating each evening until it clears.
 
 ### The rule
 
@@ -2097,6 +2107,38 @@ fires on an account that ends the cycle perfectly healthy — which is the entir
 that is £200 short on the 12th still bounces a direct debit on the 12th. The one-line-shorter
 end-of-cycle comparison is `verify-shortfall.ts`'s control, and it must keep missing a case the real
 rule catches.
+
+🚨 **THE SEARCH STARTS TOMORROW — the walk does not.** Adam, 2026-09-22: *"ignore today, look from
+tomorrow and report the first dip."* An alert sent at 20:00 is a heads-up about what is coming;
+today has happened and there is nothing left to do about it.
+
+The distinction is the whole trick, and getting it wrong is silent:
+
+- The series is built over the **whole cycle**, so tomorrow's day-end carries the opening balance
+  and every payment already gone out.
+- Only the **search** is narrowed — `series.filter((p) => p.date > todayIso)`.
+- **Rebuilding the series from tomorrow instead would drop all of that history** and report an
+  account as healthy because its past vanished. `verify-shortfall.ts` pins the figure as well as
+  the date for exactly this reason, and carries a control proving the whole series still dips on
+  the earlier day.
+
+Two consequences, both deliberate:
+
+- **A dip that has already recovered is no longer an alert.** It used to fire every evening about a
+  day that was over and fixed.
+- **There is no past tense any more.** `isPast` and *"You've been £212.40 into your £500 overdraft
+  since 14 September"* are gone, because the reported day can no longer be in the past. An account
+  that is already under and stays under alerts about **tomorrow**, with no payment to blame:
+  *"You'll be £212.40 into your £500 overdraft on 16 September."*
+
+🚨 **Money arriving BEFORE the dip is named.** `nextMoneyIn` only looks *after* the dip, so a
+deposit landing between tomorrow and the dip was invisible and the message fell through to *"Nothing
+more due in before 29 September"* — literally true, and read as "nothing is coming" when £100 had
+come and simply was not enough (Adam, 2026-09-22, on a real alert). `moneyInBefore` carries it, and
+the body says so: *"…leaves you £31.66 short, **despite £100.00 due in on 23 September**. Nothing
+**else** due in before 29 September."* The "else" is load-bearing — "more" contradicts the clause
+that just named some. It is already inside the figure; naming it only explains why the figure is
+what it is.
 
 | Watched | Not watched |
 |---|---|

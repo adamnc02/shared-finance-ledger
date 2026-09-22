@@ -139,13 +139,23 @@ console.log('\n4. Told, and still in it since → SILENT')
 console.log('\n5. Told, but it came out since → sends again')
 {
   const { data, rows, pot, userId } = household(500, -100)
-  // A cleared deposit that takes it back above zero, after the last alert.
+  // A cleared deposit that takes it back above zero, after the last alert —
+  // and then a payment that puts it back under AFTER today.
+  //
+  // 🚨 BOTH LEGS ARE REQUIRED, and the second one only since 2026-09-22, when
+  // the search window moved to start tomorrow ("ignore today, look from
+  // tomorrow and report the first dip"). Recovery alone now means there is
+  // nothing to alert about at all — correctly — so a fixture with only the
+  // deposit tests nothing about the cadence. It is the account that came out
+  // and went back in that the "sends again" rule is about.
   const recovered: AppDataV2 = {
     ...data,
     transactions: [
       ...data.transactions,
       { id: 'rec', type: 'transfer', direction: 'in', amount: 400, date: '2026-09-09', status: 'cleared', location: 'personal',
         fromLocation: { type: 'personal', ownerId: OWNER }, toLocation: { type: 'pot', potId: 'od-pot' } } as AppDataV2['transactions'][number],
+      { id: 'back-under', type: 'transfer', direction: 'out', amount: 400, date: '2026-09-15', status: 'pending', location: 'personal',
+        fromLocation: { type: 'pot', potId: 'od-pot' }, toLocation: { type: 'personal', ownerId: OWNER } } as AppDataV2['transactions'][number],
     ],
   }
   const account = watchedAccounts(recovered).find((a) => a.id === 'od-pot')!

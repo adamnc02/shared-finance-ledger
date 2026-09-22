@@ -98,14 +98,19 @@ export interface Shortfall {
   /**
    * The FIRST day in the cycle the projected running balance passes this severity's floor.
    *
-   * 🚨 It can be in the PAST. The walk starts at the cycle start, not today, and the first dip is
-   * load-bearing: it is what seeds PROMPT-15's suppression history (Adam, 2026-09-22 — *"get the
-   * first notification, as this sets the history check for the 2nd notification"*). `isPast` is
-   * what the message branches on.
+   * 🚨 IT IS ALWAYS IN THE FUTURE — the search window starts TOMORROW. Adam, 2026-09-22:
+   * *"ignore today, look from tomorrow and report the first dip"*. An alert sent at 20:00 is a
+   * heads-up about what is coming; by then today has happened and there is nothing to do about it.
+   *
+   * 🚨 The BALANCE still carries everything before today — only the SEARCH is narrowed. The walk
+   * is built over the whole cycle, so tomorrow's day-end includes every payment that has already
+   * gone out. Rebuilding the series from tomorrow instead would silently drop the opening balance
+   * and every cleared payment, and report an account as healthy because its history vanished.
+   *
+   * It stays load-bearing for PROMPT-15's suppression history (Adam, 2026-09-22 — *"get the first
+   * notification, as this sets the history check for the 2nd notification"*).
    */
   date: string
-  /** True when `date` has already happened, so the message reads in the past tense. */
-  isPast: boolean
   /**
    * A positive number of pounds, meaning **different things** by severity:
    * `'overdraft'` → how far below zero you go. `'shortfall'` → how much you are SHORT BY.
@@ -128,6 +133,17 @@ export interface Shortfall {
    * is coming when £300 lands tomorrow.
    */
   nextMoneyIn: { date: string; amount: number } | null
+  /**
+   * Money arriving BETWEEN tomorrow and the dip — already absorbed into the figure, and mentioned
+   * so the alert does not read as "nothing is coming".
+   *
+   * 🚨 THIS IS THE ONE THE OLD MESSAGE LIED ABOUT. `nextMoneyIn` only looks AFTER the dip, so a
+   * deposit landing before it was invisible and the message fell through to "Nothing more due in
+   * before X" — literally true, and read as "nothing is coming" when £100 had come and simply was
+   * not enough (Adam, 2026-09-22, on a real alert). `date` is null when it spans several days, so
+   * the message can say "before then" rather than naming an arbitrary one of them.
+   */
+  moneyInBefore: { date: string | null; amount: number } | null
   /**
    * The first day after the dip the balance is back at or above the floor, or null if it never is
    * before the cycle ends.
@@ -253,7 +269,14 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
     const [cycle] = horizonCycles(data, account.cyclePersonId, 'current_cycle', asOfDate)
     const c = accountCycle(data, account, asOfDate)
     if (!c) continue
+    // 🚨 The series covers the WHOLE cycle — every day-end carries everything
+    // before it, including today's payments and the opening balance.
     const series = buildDailyBalanceSeries(c.openingBalance, c.transactions, c.days, c.sign, c.include)
+    // …but the SEARCH starts tomorrow (Adam, 2026-09-22: "ignore today, look
+    // from tomorrow and report the first dip"). Narrowing the search, never
+    // the walk, is the whole trick: filter the transactions instead and the
+    // balance loses its history.
+    const horizon = series.filter((p) => p.date > todayIso)
     const limit = account.overdraftAmount
 
     // TWO floors, and the more severe one wins (PROMPT-15 §0 Q6).
@@ -261,8 +284,8 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
     // 🚨 `'overdraft'` only exists when there IS an arranged buffer. With no
     // limit, dipping below zero IS running out of money — getting this wrong
     // downgrades a real alert into a heads-up.
-    const pastLimit = series.find((p) => p.projectedBalance < -limit)
-    const belowZero = limit > 0 ? series.find((p) => p.projectedBalance < 0) : undefined
+    const pastLimit = horizon.find((p) => p.projectedBalance < -limit)
+    const belowZero = limit > 0 ? horizon.find((p) => p.projectedBalance < 0) : undefined
     const hit = pastLimit ?? belowZero
     if (!hit) continue
     const severity: Severity = pastLimit ? 'shortfall' : 'overdraft'
@@ -292,16 +315,27 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
     // zero. A different line from the dip test, and easy to miss.
     const recoversOn = series.find((p) => p.date > hit.date && p.projectedBalance >= floor)?.date ?? null
 
+    // Money landing between tomorrow and the dip. Already inside `amount` —
+    // this is only so the message can say it did not cover it.
+    const inBefore = c.transactions.filter((t) => t.date > todayIso && t.date < hit.date && c.include(t) && c.sign(t) > 0)
+    const inBeforeDates = [...new Set(inBefore.map((t) => t.date))]
+    const moneyInBefore = inBefore.length
+      ? {
+          date: inBeforeDates.length === 1 ? inBeforeDates[0] : null,
+          amount: Math.round(inBefore.reduce((sum, t) => sum + c.sign(t), 0) * 100) / 100,
+        }
+      : null
+
     out.push({
       account,
       severity,
       date: hit.date,
-      isPast: hit.date < todayIso,
       amount,
       cycleStart: toIso(cycle.start),
       cycleEnd: toIso(cycle.end),
       causes,
       nextMoneyIn,
+      moneyInBefore,
       recoversOn,
     })
   }
@@ -339,13 +373,22 @@ export function shortfallMessage(shortfall: Shortfall): { title: string; body: s
         ? `${money} short, even with your £${limit.toFixed(2).replace(/\.00$/, '')} overdraft`
         : `${money} short`
 
-  const cause = shortfall.isPast
-    ? `You've been ${place} since ${on}.`
-    : causes.length === 1
-      ? `${causes[0].label} (£${causes[0].amount.toFixed(2)}) on ${on} ${severity === 'overdraft' ? 'takes' : 'leaves'} you ${place}.`
+  // 🚨 "…despite £100 due in on 23 September". Money that landed before the dip
+  // is already inside `place`'s figure; saying so is what stops the alert
+  // reading as "nothing is coming" when something came and fell short.
+  const m = shortfall.moneyInBefore
+  const despite = m
+    ? m.date
+      ? `, despite £${m.amount.toFixed(2)} due in on ${formatDayMonth(m.date)}`
+      : `, despite £${m.amount.toFixed(2)} due in before then`
+    : ''
+
+  const cause =
+    causes.length === 1
+      ? `${causes[0].label} (£${causes[0].amount.toFixed(2)}) on ${on} ${severity === 'overdraft' ? 'takes' : 'leaves'} you ${place}${despite}.`
       : causes.length > 1
-        ? `${causes.length} payments totalling £${total(causes).toFixed(2)} on ${on} ${severity === 'overdraft' ? 'take' : 'leave'} you ${place}.`
-        : `You'll be ${place} on ${on}.`
+        ? `${causes.length} payments totalling £${total(causes).toFixed(2)} on ${on} ${severity === 'overdraft' ? 'take' : 'leave'} you ${place}${despite}.`
+        : `You'll be ${place} on ${on}${despite}.`
 
   // 🚨 "You're fine" is carried by the ABSENCE of the middle shape. Weaker
   // than an explicit "back above zero", and a deliberate trade for brevity —
@@ -355,7 +398,10 @@ export function shortfallMessage(shortfall: Shortfall): { title: string; body: s
     ? `Next scheduled money in on ${formatDayMonth(shortfall.recoversOn)}.`
     : shortfall.nextMoneyIn
       ? `£${shortfall.nextMoneyIn.amount.toFixed(2)} in on ${formatDayMonth(shortfall.nextMoneyIn.date)}, but you'll still be short after that.`
-      : `Nothing more due in before ${ends}.`
+      : despite
+        ? // "more" would contradict the clause that just named some.
+          `Nothing else due in before ${ends}.`
+        : `Nothing more due in before ${ends}.`
 
   return {
     // The TITLE carries the severity; the body's structure does not. The

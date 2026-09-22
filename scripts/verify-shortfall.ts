@@ -52,6 +52,7 @@ const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-fina
 const BACKUPS = ['finance-ledger-backup-2026-09-15.json', 'finance-ledger-backup-2026-09-15-mum.json', 'finance-ledger-backup-2026-09-17-mum.json']
 const load = (name: string) => parseLedgerBackupJson(readFileSync(`${DIR}/${name}`, 'utf8'))
 const AS_OF = new Date(2026, 8, 15) // 2026-09-15, the date the first backup was exported
+const AS_OF_ISO = '2026-09-15'
 
 console.log('\n1. What is watched, over the three real backups')
 for (const name of BACKUPS) {
@@ -99,7 +100,15 @@ console.log('\n2. CONTROL — the dip, not the end-of-cycle balance')
 
   const found = findShortfalls(withDip, AS_OF).filter((s) => s.account.id === 'dip-pot')
   check('the dip rule catches it', found.length === 1, found.map((f) => [f.date, f.amount]))
-  check('…and names the FIRST day it goes under, not the worst or the last', found[0]?.date === series.find((p) => p.balance < 0)!.date, [found[0]?.date, series.find((p) => p.balance < 0)?.date])
+  // 🚨 The dip here starts EARLY in the cycle, before today. The search window
+  // begins tomorrow (Adam, 2026-09-22: "ignore today, look from tomorrow and
+  // report the first dip"), so what is reported is the first day FROM TOMORROW
+  // that is still under — not the day it originally went under, and not the
+  // worst or the last.
+  const firstFromTomorrow = series.find((p) => p.date > AS_OF_ISO && p.balance < 0)!.date
+  check('…and names the first day FROM TOMORROW that it is under', found[0]?.date === firstFromTomorrow, [found[0]?.date, firstFromTomorrow])
+  check('…which is NOT the day it originally went under', found[0]?.date !== series.find((p) => p.balance < 0)!.date, [found[0]?.date, series.find((p) => p.balance < 0)?.date])
+  check('…nor the day it recovers', found[0]?.date !== late, [found[0]?.date, late])
   check('…and how far under it goes, to the penny', found[0]?.amount === Math.round(-series.find((p) => p.balance < 0)!.balance * 100) / 100, [found[0]?.amount, series.find((p) => p.balance < 0)?.balance])
 
   // THE CONTROL. This is the "simplification" that must not pass.
@@ -153,10 +162,14 @@ console.log('\n4b. The message: two severities, two tenses, four cause shapes')
     ({ id, type: 'transfer', direction: 'out', amount, date, status: 'pending', location: 'personal', note,
        fromLocation: { type: 'pot', potId: 'msg-pot' }, toLocation: { type: 'personal', ownerId: owner } }) as AppDataV2['transactions'][number]
 
-  const build = (p: Pot, txs: AppDataV2['transactions']) => {
-    const d: AppDataV2 = { ...data, pots: [p], transactions: [...data.transactions, ...txs] }
-    return findShortfalls(d, AS_OF).find((x) => x.account.id === 'msg-pot')!
-  }
+  const incomeOn = (id: string, amount: number, date: string, note: string) =>
+    ({ id, type: 'transfer', direction: 'in', amount, date, status: 'pending', location: 'personal', note,
+       fromLocation: { type: 'personal', ownerId: owner }, toLocation: { type: 'pot', potId: 'msg-pot' } }) as AppDataV2['transactions'][number]
+
+  const dataFor = (p: Pot, txs: AppDataV2['transactions']): AppDataV2 => ({ ...data, pots: [p], transactions: [...data.transactions, ...txs] })
+  /** May legitimately find nothing — used where "no alert" is the assertion. */
+  const buildMaybe = (p: Pot, txs: AppDataV2['transactions']) => findShortfalls(dataFor(p, txs), AS_OF).find((x) => x.account.id === 'msg-pot')
+  const build = (p: Pot, txs: AppDataV2['transactions']) => buildMaybe(p, txs)!
 
   console.log('\n   A. Into your overdraft — £500 limit, dips to −£212.40')
   {
@@ -210,16 +223,57 @@ console.log('\n4b. The message: two severities, two tenses, four cause shapes')
     const none = build(pot({ openingBalance: -50 }), [])
     check('an account already under on day one blames no payment', none.causes.length === 0, none.causes)
 
-    // 🚨 PAST TENSE — the dip has already happened.
+    // 🚨 THE WINDOW STARTS TOMORROW. Adam, 2026-09-22: "ignore today, look from
+    // tomorrow and report the first dip". An alert sent at 20:00 is a heads-up
+    // about what is coming; today has already happened.
     const pastDip = build(pot({ overdraftAmount: 500 }), [out('c1', 312.4, past, 'Rent')])
-    check('a dip before today is flagged as past', pastDip.isPast === true, [pastDip.date, ASOF_ISO])
+    check('a dip in the past is reported on TOMORROW, never on the day it happened', pastDip.date > ASOF_ISO, [pastDip.date, ASOF_ISO])
+    check('…and the balance still carries it, so the figure is unchanged', pastDip.amount === 212.4, pastDip.amount)
     const mp = shortfallMessage(pastDip)
-    check("…and reads in the past tense: \"You've been…since\"", mp.body.startsWith("You've been £212.40 into your £500 overdraft since "), mp.body)
-    check('…and still names the day it started, which seeds the suppression history', mp.body.includes(formatDayMonth(past)), mp.body)
+    check('…and it reads in the future tense, because that is when you can still act', mp.body.startsWith("You'll be £212.40 into your £500 overdraft on "), mp.body)
     messages.push(mp)
 
-    const futureDip = build(pot({ overdraftAmount: 500 }), [out('c1', 312.4, future, 'Rent')])
-    check('a dip today or later is NOT past', futureDip.isPast === false)
+    // 🚨 CONTROL for the narrowed search: the WHOLE series — what it searched
+    // before — still goes under on the past day. So the difference really is
+    // the window, not the data. If this stops differing, it has been widened.
+    const pd = dataFor(pot({ overdraftAmount: 500 }), [out('c1', 312.4, past, 'Rent')])
+    const whole = cycleBalanceSeries(pd, watchedAccounts(pd).find((a) => a.id === 'msg-pot')!, AS_OF)
+    // severity here is 'overdraft' (inside the £500 limit), so the old search
+    // was `projectedBalance < 0` over the whole series.
+    check('CONTROL: the whole series DOES dip on the past day, which the old search reported',
+      whole.find((p) => p.balance < 0)?.date === past, whole.find((p) => p.balance < 0)?.date)
+
+    // 🚨 And a dip that has already RECOVERED is no longer an alert at all.
+    // Under the old rule this fired every evening about a day that was over.
+    const recovered = buildMaybe(pot({ overdraftAmount: 0, openingBalance: 100 }), [out('c1', 150, past, 'Blip'), incomeOn('r1', 200, past, 'Top-up')])
+    check('a past dip that has since recovered produces NO alert', recovered === undefined, recovered?.date)
+  }
+
+  console.log('\n   D2. 🚨 Money arriving BEFORE the dip is named, not hidden')
+  {
+    // Adam, 2026-09-22, on a real alert: the joint account had £100 in the day
+    // before the dip, and the message still ended "Nothing more due in before
+    // 29 September" — which read as "nothing is coming".
+    const later = series.find((p) => p.date > future)!.date
+    const s = build(pot({ overdraftAmount: 0 }), [incomeOn('i1', 100, future, 'Transfer in'), out('c1', 400, later, 'Rent')])
+    check('moneyInBefore is populated', s.moneyInBefore?.amount === 100, s.moneyInBefore)
+    check('…and names the day it lands', s.moneyInBefore?.date === future, s.moneyInBefore)
+    const m = shortfallMessage(s)
+    check('🚨 the body says "despite £100.00 due in on …"', m.body.includes(`despite £100.00 due in on ${formatDayMonth(future)}`), m.body)
+    check('🚨 …and says "Nothing ELSE", which "Nothing more" would contradict', m.body.includes('Nothing else due in before '), m.body)
+    messages.push(m)
+
+    // CONTROL: with no money in beforehand, neither phrase appears.
+    const plain = build(pot({ overdraftAmount: 0 }), [out('c1', 400, later, 'Rent')])
+    const mp2 = shortfallMessage(plain)
+    check('CONTROL: without it, no "despite" clause', !mp2.body.includes('despite'), mp2.body)
+    check('CONTROL: …and it goes back to "Nothing more due in"', mp2.body.includes('Nothing more due in before '), mp2.body)
+
+    // Several days of money in: no single date to name, so it says "before then".
+    const spread = build(pot({ overdraftAmount: 0 }), [incomeOn('i1', 60, future, 'One'), incomeOn('i2', 40, series.find((p) => p.date > future)!.date, 'Two'), out('c1', 400, later, 'Rent')])
+    if (spread.moneyInBefore && spread.moneyInBefore.date === null) {
+      check('several days in: it says "before then" rather than naming one', shortfallMessage(spread).body.includes('due in before then'), shortfallMessage(spread).body)
+    }
   }
 
   console.log('\n   E. Relief shapes')
@@ -258,7 +312,7 @@ console.log('\n4b. The message: two severities, two tenses, four cause shapes')
   {
     const joint = watchedAccounts(data).find((a) => a.kind === 'joint')
     if (joint) {
-      const base2 = { account: joint, date: '2026-09-20', isPast: false, amount: 10, cycleStart: '2026-09-01', cycleEnd: '2026-09-30', causes: [], nextMoneyIn: null, recoversOn: null }
+      const base2 = { account: joint, date: '2026-09-20', amount: 10, cycleStart: '2026-09-01', cycleEnd: '2026-09-30', causes: [], nextMoneyIn: null, moneyInBefore: null, recoversOn: null }
       check('overdraft title', shortfallMessage({ ...base2, severity: 'overdraft' }).title === 'Your joint account runs short')
       check('not-enough title', shortfallMessage({ ...base2, severity: 'shortfall' }).title === 'Your joint account: not enough money')
     }
