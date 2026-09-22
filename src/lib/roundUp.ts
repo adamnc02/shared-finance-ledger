@@ -76,7 +76,27 @@ export function roundUpEnabledOn(payCycle: PayCycleConfig | undefined, dateIso: 
   rules.push({ enabled: (payCycle.roundUpEnabled ?? false) && currentFrom !== null, from: currentFrom, until: null })
 
   for (const rule of rules) {
-    const startsOk = rule.from === null || dateIso >= rule.from
+    // 🚨 A RULE WITH NO RESOLVABLE START GOVERNS NOTHING (§1.19f).
+    //
+    // This clause used to read `rule.from === null || dateIso >= rule.from`,
+    // so a rule with no start matched every date before its `until` — i.e. it
+    // governed from the beginning of time, which is the exact failure the
+    // comment above warns about. Switching rounding off would then have
+    // declared every historic card expense rounded.
+    //
+    // It cannot be reached from the UI: `applyRoundUpChange` always writes a
+    // `from`, and the current rule is already forced to `enabled: false` when
+    // its start is missing. It IS reachable from a restored backup, a
+    // hand-edited file, or any future writer of `roundUpHistory` — and the
+    // safe reading of malformed data is "do not round", the same rule applied
+    // to an enabled switch with no effective-from.
+    //
+    // 🚩 Found on 2026-09-22 by the SQL/TypeScript parity test written for
+    // Listly's round-ups, not by a person: `round_up_state_for` refused such a
+    // rule, this function honoured it, and the two disagreed. PROMPT-13a
+    // Part C. That test now asserts they AGREE, so this cannot be reverted
+    // quietly.
+    const startsOk = rule.from !== null && dateIso >= rule.from
     const endsOk = rule.until === null || dateIso < rule.until
     if (startsOk && endsOk) return rule.enabled
   }
