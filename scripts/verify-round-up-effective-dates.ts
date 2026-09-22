@@ -132,5 +132,63 @@ const replaced = { ...on, ...applyRoundUpChange(on, false, '2026-03-01') }
 check('no zero-width history entry is written', replaced.roundUpHistory, undefined)
 check('the new rule simply governs from that date', [roundUpEnabledOn(replaced, '2026-03-01'), roundUpEnabledOn(replaced, '2026-05-01')], [false, false])
 
+console.log('\n── §1.19f: a rule with NO START governs nothing (PROMPT-13a Part C) ──')
+// 🚨 The bug this prevents. A history entry with no `from` — from a restored
+// backup, a hand-edited file, or any future writer of roundUpHistory — used to
+// match every date before its `until`, i.e. govern from the beginning of time.
+// Switching rounding off would then have declared every historic card expense
+// rounded, retroactively, which is exactly what §1.19f exists to stop.
+//
+// Unreachable from the UI (`applyRoundUpChange` always writes a `from`), and
+// found by the SQL/TypeScript parity test written for Listly rather than by a
+// person: the database refused such a rule and this function honoured it.
+const noStart = {
+  ...on,
+  roundUpEnabled: false,
+  roundUpEffectiveFrom: '2026-08-01',
+  roundUpHistory: [{ enabled: true, from: undefined as unknown as string, until: '2026-08-01', nextRuleFrom: '2026-08-01' }],
+}
+check('a null-start rule does not round the beginning of time', roundUpEnabledOn(noStart, '2020-01-01'), false)
+check('...nor the day before its own until', roundUpEnabledOn(noStart, '2026-07-31'), false)
+check('...and the real rule after it still governs', roundUpEnabledOn(noStart, '2026-08-02'), false)
+// The control: the clause as it was, which must disagree — otherwise the
+// three checks above are passing for some other reason.
+const asItWas = (dateIso: string) => {
+  const rules = [
+    { enabled: true, from: null as string | null, until: '2026-08-01' },
+    { enabled: false, from: '2026-08-01', until: null as string | null },
+  ]
+  for (const r of rules) {
+    const startsOk = r.from === null || dateIso >= r.from
+    const endsOk = r.until === null || dateIso < r.until
+    if (startsOk && endsOk) return r.enabled
+  }
+  return false
+}
+check('CONTROL: the old clause WOULD have rounded 2020', asItWas('2020-01-01'), true)
+// And nothing legitimate changed: a rule that HAS a start behaves as before.
+const withStart = {
+  ...on,
+  roundUpEnabled: false,
+  roundUpEffectiveFrom: '2026-08-01',
+  roundUpHistory: [{ enabled: true, from: '2026-06-01', until: '2026-08-01', nextRuleFrom: '2026-08-01' }],
+}
+check('a rule WITH a start is unaffected — before it', roundUpEnabledOn(withStart, '2026-05-31'), false)
+check('...inside it', roundUpEnabledOn(withStart, '2026-07-01'), true)
+check('...and after it', roundUpEnabledOn(withStart, '2026-08-02'), false)
+// The chained fallback still works: an entry with no `from` of its own takes
+// the PREVIOUS entry's nextRuleFrom, and only the earliest has nothing to take.
+const chained = {
+  ...on,
+  roundUpEnabled: true,
+  roundUpEffectiveFrom: '2026-09-01',
+  roundUpHistory: [
+    { enabled: true, from: '2026-06-01', until: '2026-07-01', nextRuleFrom: '2026-07-01' },
+    { enabled: false, from: undefined as unknown as string, until: '2026-09-01', nextRuleFrom: '2026-09-01' },
+  ],
+}
+check('a later entry with no from still chains from the previous rule', roundUpEnabledOn(chained, '2026-08-01'), false)
+check('...and the window before it is unaffected', roundUpEnabledOn(chained, '2026-06-15'), true)
+
 console.log(failures === 0 ? '\n✅ All round-up effective-date checks passed\n' : `\n❌ ${failures} check(s) failed\n`)
 process.exit(failures === 0 ? 0 : 1)
