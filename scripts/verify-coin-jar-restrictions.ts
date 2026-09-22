@@ -226,7 +226,10 @@ check('...and takes its effective-from through EffectiveDatedChangeFlow, like ev
 // The OWNER's switch and the OWNER's paydays — not the primary person's
 // (§0b Q5). In a two-person household Ella's jar carries Ella's switch.
 check('the pot form uses the JAR OWNER’s pay cycle, not the primary person’s', salarySrc.includes('data.payCycles.find((c) => c.personId === pot.personId)'), true)
-check('...and the owner’s own paydays', salarySrc.includes('setRoundUp(pot.personId, enabled, effectiveFrom)'), true)
+// PROMPT-13a B — the effective-from is now the jar owner's own chosen
+// DATE rather than one of their paydays, but it is still their switch
+// that gets written.
+check('...and writes back to the owner’s own switch', salarySrc.includes('setRoundUp(pot.personId, enabled, effectiveFrom)'), true)
 
 // Deleting the jar switches rounding off, so the reverted toggle tells the
 // truth. Asserted in the context, which is where it has to happen.

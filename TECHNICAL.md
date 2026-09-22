@@ -390,7 +390,7 @@ Fonts.
 | `NumberInput` | Numeric-keypad input with the app's parsing rules |
 | `EditField` / `FormButtons` / `SavedFlash` | Form primitives; `SavedFlash` is the green "Saved" pulse |
 | `ConfirmModal` / `DeleteGuardModal` / `RecurringChangeConfirmModal` | Confirmations |
-| `EffectiveDatedChangeFlow` | **The shared "which payment does this start from?" picker** — §13 |
+| `EffectiveDatedChangeFlow` | **The shared "which payment does this start from?" picker**, in either of its two date modes — §13 |
 | `PausedOccurrencesControl` | The shared pause/resume list for every schedule |
 | `SplitEditor` | The two-way joint split |
 | `TransferSteps` | The shared From/To wizard |
@@ -584,6 +584,20 @@ and savings-interest opening dates.
 - Keyed data moves with them: overrides, pauses, amount boundaries, salary overrides and sorts,
   card minimum overrides.
 - Nothing before it is re-generated.
+
+**Two date modes, and which one a caller gets is a statement about the change** (2026-09-22). The
+flow's date step is either an **occurrence list** — one button per real upcoming payment — or a
+**plain `<input type="date">` calendar (`datePicker`)**:
+
+| Mode | For | Why |
+|---|---|---|
+| `occurrences` | Anything that **re-dates something stored**: a payday, a bill's amount, a loan payment, a pension | The new rule has to take hold on a date a payment actually falls on |
+| `datePicker` | A change that **re-dates nothing** — so far, only the round-up on/off switch (§21) | Any calendar date is legitimate, including one that is not a payday |
+
+> 🚨 **Do not fold the two into one.** A payday change borrowing the calendar could be dated to a
+> day no salary is ever paid on; a round-up switch borrowing the occurrence list gets the two bugs
+> §21 records. The calendar step carries its own Continue, disabled while the field is empty,
+> because a date input — unlike a list of buttons — advances nothing by itself.
 
 **How each generator enforces "nothing before":**
 
@@ -1043,6 +1057,21 @@ for that row's own date, and the row is a card/personal/ad-hoc expense — delib
 on the amount, so it cannot blink in and out as a figure is typed, and still offered on a row that
 has already opted out, or there would be no way to opt back in.
 
+**The switch's effective-from is a DATE, not a payday** (2026-09-22). It once borrowed the pay
+cycle settings' payday picker, which it sat next to. Adam: *"it should be a date picker... which
+doesn't affect the salary."* The *rules* were always right — `roundUpEnabledOn` resolved correctly
+against whatever date was chosen — so nothing about the history, the boundaries or any stored row
+changed; only the control did. **A payday change keeps the payday picker**, because it re-dates
+stored salary; a round-up switch is instantaneous and re-dates nothing, so any date will do.
+
+> 🚨 **The borrowed picker was not just the wrong wording — it broke the switch for a person with
+> no salary configured.** The date step renders one button per occurrence, so on the Coin Jar they
+> got a sheet with no options at all; and from the pay cycle settings the toggle *silently did
+> nothing*, because `handleSave` read `if (roundUpChanged && paydayOccurrences.length > 0)` — the
+> flow never opened, `onChangeRoundUp` was never called, and the draft died on close, directly
+> beneath a comment claiming the step could not be skipped. The guard is unconditional now.
+> `verify-round-up-date-picker.ts` reproduces the old guard as its control.
+
 **The toggle's home is derived from whether the jar exists:**
 
 | State | Where the toggle is |
@@ -1237,7 +1266,8 @@ Key internals:
 - **`PotEditForm`** carries **What this pot pays** (`potEligibleItems`) and, for a Coin Jar only,
   the round-up toggle and the editable opening balance. `coinJarRoundUpProps` returns `undefined`
   for every ordinary pot, which is what keeps the toggle off every other pot's form; it reads the
-  **jar owner's** cycle and paydays, not the primary person's.
+  **jar owner's** pay cycle, not the primary person's — and the switch takes a plain date (§13),
+  so a jar owner with no salary configured can still turn round-ups on.
 - **`BackupSection`** — `downloadLedgerBackup` / `parseLedgerBackupJson`, restored through
   `setData` (so it is store-agnostic).
 - Several rows use a **`SavedFlash`** pulse; a brand-new pension or pot flashes on *mount* rather

@@ -1896,7 +1896,10 @@ function PotEditForm({
    * it lives here instead, which is where you would look for it. Deleting
    * the jar moves it back to settings and switches rounding off.
    */
-  roundUp?: { enabled: boolean; personName: string; occurrences: { date: string; isPast: boolean }[]; onChange: (enabled: boolean, effectiveFrom: string) => void }
+  // PROMPT-13a B — no `occurrences`: the switch picks a plain calendar
+  // date, so there is nothing for the caller to enumerate, and a person
+  // with no salary is no longer a dead end.
+  roundUp?: { enabled: boolean; personName: string; onChange: (enabled: boolean, effectiveFrom: string) => void }
   onCancel: () => void
   onSave: (updates: Partial<Omit<Pot, 'id' | 'personId'>>) => void
   onAssignTemplateLocation: (templateId: string, location: 'personal' | 'pot', effectiveFrom: string, potId?: string) => void
@@ -2022,11 +2025,14 @@ function PotEditForm({
   if (roundUp && choosingRoundUpFrom !== null) {
     return (
       <EffectiveDatedChangeFlow
-        occurrences={roundUp.occurrences}
+        // PROMPT-13a B (Adam, 2026-09-22) — a date, not a payday. The
+        // switch re-dates nothing, so it does not have to land on one,
+        // and this person may have no salary configured at all.
+        datePicker={{ label: 'Effective from', defaultDate: todayIso() }}
         dateStepDescription={
           choosingRoundUpFrom
-            ? `Card spending from ${roundUp.personName}'s current account will be rounded up to the next pound, with the difference coming into this Coin Jar. Which payday should that start from? Everything already logged stays exactly as it is.`
-            : `${roundUp.personName}'s card spending will stop being rounded up. Which payday should that apply from? Every round-up already logged stays exactly as it is, and this Coin Jar keeps its balance.`
+            ? `Card spending from ${roundUp.personName}'s current account will be rounded up to the next pound, with the difference coming into this Coin Jar. Which date should that start from? Everything already logged stays exactly as it is.`
+            : `${roundUp.personName}'s card spending will stop being rounded up. Which date should that apply from? Every round-up already logged stays exactly as it is, and this Coin Jar keeps its balance.`
         }
         buildChanges={() => [{ label: 'Round-ups', from: roundUp.enabled ? 'On' : 'Off', to: choosingRoundUpFrom ? 'On' : 'Off' }]}
         // A past date changes nothing already stored (B3) — only which
@@ -2099,7 +2105,7 @@ function PotEditForm({
           </label>
           <p className="text-xs text-[var(--color-ink-faint)] mt-1.5 ml-6">
             {roundUp.enabled
-              ? 'A £7.50 shop reads −£8.00 in the ledger and +£0.50 here. You’ll pick which payday a change applies from.'
+              ? 'A £7.50 shop reads −£8.00 in the ledger and +£0.50 here. You’ll pick which date a change applies from.'
               : 'Off. Everything already rounded stays as it is, and this jar keeps its balance.'}
           </p>
           <p className="text-xs text-[var(--color-ink-faint)] mt-1.5 ml-6">
@@ -2215,7 +2221,10 @@ function PotRow({
 }: {
   pot: Pot
   /** PROMPT-13 B4 — present only for a Coin Jar; passed straight through to PotEditForm, which owns the toggle. */
-  roundUp?: { enabled: boolean; personName: string; occurrences: { date: string; isPast: boolean }[]; onChange: (enabled: boolean, effectiveFrom: string) => void }
+  // PROMPT-13a B — no `occurrences`: the switch picks a plain calendar
+  // date, so there is nothing for the caller to enumerate, and a person
+  // with no salary is no longer a dead end.
+  roundUp?: { enabled: boolean; personName: string; onChange: (enabled: boolean, effectiveFrom: string) => void }
   people: Person[]
   categories: Category[]
   templates: RecurringTemplate[]
@@ -2661,7 +2670,6 @@ export function Salary() {
     return {
       enabled: cycle?.roundUpEnabled ?? false,
       personName: owner?.name ?? 'this person',
-      occurrences: cycle && owner && hasSalaryConfigured(owner) ? recentAndUpcomingPaydayDates(cycle, new Date()) : [],
       onChange: (enabled: boolean, effectiveFrom: string) => setRoundUp(pot.personId, enabled, effectiveFrom),
     }
   }
@@ -4080,7 +4088,14 @@ function PayCycleSettingsModal({
     // PROMPT-13 B4 — "Effective-from is required." The switch never
     // commits without a date, so this step cannot be skipped; the flow
     // runs after the payday one, never alongside it.
-    if (roundUpChanged && paydayOccurrences.length > 0) {
+    //
+    // 🚨 PROMPT-13a B3 — this was `&& paydayOccurrences.length > 0`, and
+    // for a person with no salary the guard was simply false: the flow was
+    // skipped, `onChangeRoundUp` was never called, and the toggle flicked
+    // silently back off on close. The comment above said the step could
+    // not be skipped while the code skipped it. It is unconditional now
+    // because the date step no longer needs a payday to offer.
+    if (roundUpChanged) {
       setChoosingRoundUpFrom(true)
       return
     }
@@ -4104,11 +4119,14 @@ function PayCycleSettingsModal({
   if (choosingRoundUpFrom) {
     return (
       <EffectiveDatedChangeFlow
-        occurrences={paydayOccurrences}
+        // PROMPT-13a B — the round-up switch's own date picker. The payday
+        // flow below keeps `occurrences`, deliberately: a payday change
+        // re-dates stored salary and must land on a real payday.
+        datePicker={{ label: 'Effective from', defaultDate: todayIso() }}
         dateStepDescription={
           draftRoundUp
-            ? `Card spending from ${personName}'s current account will be rounded up to the next pound, with the difference going into their Coin Jar. Which payday should that start from? Everything already logged stays exactly as it is.`
-            : `${personName}'s card spending will stop being rounded up. Which payday should that apply from? Every round-up already logged stays exactly as it is, and the Coin Jar keeps its balance.`
+            ? `Card spending from ${personName}'s current account will be rounded up to the next pound, with the difference going into their Coin Jar. Which date should that start from? Everything already logged stays exactly as it is.`
+            : `${personName}'s card spending will stop being rounded up. Which date should that apply from? Every round-up already logged stays exactly as it is, and the Coin Jar keeps its balance.`
         }
         buildChanges={() => [{ label: 'Round-ups', from: roundUpEnabled ? 'On' : 'Off', to: draftRoundUp ? 'On' : 'Off' }]}
         // A past date changes nothing already stored (B3) — only which
@@ -4256,8 +4274,8 @@ function PayCycleSettingsModal({
         {draftRoundUp !== roundUpEnabled && (
           <p className="text-xs text-[var(--color-ink-faint)] mt-1.5 ml-6">
             {draftRoundUp
-              ? 'You’ll pick which payday this starts from. A £7.50 shop will read −£8.00 here and +£0.50 in the Coin Jar.'
-              : 'You’ll pick which payday this stops from. Everything already rounded stays as it is, and the Coin Jar keeps its balance.'}
+              ? 'You’ll pick which date this starts from. A £7.50 shop will read −£8.00 here and +£0.50 in the Coin Jar.'
+              : 'You’ll pick which date this stops from. Everything already rounded stays as it is, and the Coin Jar keeps its balance.'}
           </p>
         )}
         <p className="text-xs text-[var(--color-ink-faint)] mt-2">
