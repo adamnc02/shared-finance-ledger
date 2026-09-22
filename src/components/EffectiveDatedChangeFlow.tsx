@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { formatFullDate } from '../lib/format'
+import { EditField } from './EditField'
 import { CancelButton, SaveButton } from './FormButtons'
 
 // 2026-09-09 — generalises the picker-first flow Bills.tsx/TransferRecurringRow
@@ -15,6 +16,13 @@ import { CancelButton, SaveButton } from './FormButtons'
 // gets a top-right ✕ that fully cancels (calls the caller's own
 // cancelEverything-style reset), and Back/Continue everywhere except the
 // final step, which becomes Cancel/Save.
+//
+// PROMPT-13a Part B (2026-09-22) — the date step now has TWO modes, and
+// which one a caller gets is a statement about the change itself: an
+// `occurrences` list for anything that RE-DATES something stored (a
+// payday, a bill, a loan payment), and a `datePicker` calendar for a
+// change that re-dates nothing and may therefore take any date at all.
+// Round-ups are the only caller of the second so far. See both props.
 export type ChangeScope = 'single' | 'all_future'
 
 export interface RecurringChangeField {
@@ -44,7 +52,8 @@ export function EffectiveDatedChangeFlow({
   scopeStep,
   /** Salary's shortcut: the date is already fixed by which pay-period row is open, so there's no visible date step — choosing a scope goes straight to confirm using this date. */
   fixedEffectiveFrom,
-  occurrences,
+  occurrences = [],
+  datePicker,
   dateStepDescription,
   buildChanges,
   affectsClearedBalance,
@@ -53,7 +62,30 @@ export function EffectiveDatedChangeFlow({
 }: {
   scopeStep?: ScopeStepConfig
   fixedEffectiveFrom?: string
-  occurrences: { date: string; isPast: boolean }[]
+  /**
+   * The occurrence list mode: one button per real upcoming payment. Right
+   * for any change that RE-DATES something stored — a payday change, a
+   * bill's amount, a loan payment — because the new rule has to take hold
+   * on a date that payment actually falls on.
+   *
+   * Mutually exclusive with `datePicker`; pass exactly one.
+   */
+  occurrences?: { date: string; isPast: boolean }[]
+  /**
+   * PROMPT-13a Part B (Adam, 2026-09-22) — the calendar mode, for a change
+   * that re-dates NOTHING: *"we just need to give roundups on/off its own
+   * date picker effective from, which doesn't affect the salary."*
+   *
+   * 🚨 A round-up switch is instantaneous (§1.19d B3) — it rewrites no
+   * stored row and moves no payment — so ANY calendar date is legitimate,
+   * including one that is not a payday. A payday change is the opposite
+   * and keeps `occurrences`; do not "tidy" the two into one mode.
+   *
+   * It also removes a dead end: the occurrence list renders one button per
+   * occurrence, so a person with NO salary configured got a sheet with no
+   * options at all and no way to switch round-ups on.
+   */
+  datePicker?: { label: string; defaultDate: string }
   /**
    * UAT 2026-09-09 (retest-bills-amount-and-location-wording) — a plain
    * string always read as forward-looking ("which payment should the new
@@ -71,6 +103,7 @@ export function EffectiveDatedChangeFlow({
   const [step, setStep] = useState<'scope' | 'date' | 'confirm'>(scopeStep ? 'scope' : fixedEffectiveFrom ? 'confirm' : 'date')
   const [scope, setScope] = useState<ChangeScope | null>(null)
   const [effectiveFrom, setEffectiveFrom] = useState<string | null>(fixedEffectiveFrom ?? null)
+  const [pickedDate, setPickedDate] = useState(datePicker?.defaultDate ?? '')
 
   const hasDateStep = !fixedEffectiveFrom
   const isFirstStep = step === 'scope' || (step === 'date' && !scopeStep)
@@ -103,6 +136,21 @@ export function EffectiveDatedChangeFlow({
             This and all future payments
           </button>
         </div>
+      </FlowSheet>
+    )
+  }
+
+  if (step === 'date' && datePicker) {
+    const description = typeof dateStepDescription === 'function' ? dateStepDescription(scope) : dateStepDescription
+    return (
+      // `final` on the sheet suppresses its own Back-only row: a calendar
+      // has no option button to advance the flow, so this step needs a
+      // Continue of its own. Empty disables it — an empty date would reach
+      // `applyRoundUpChange` as '' and read as "before every rule".
+      <FlowSheet title="Apply this change from…" onCancelAll={onCancelAll} onBack={!isFirstStep ? goBack : undefined} final>
+        <p className="text-sm text-[var(--color-ink-muted)] mb-4">{description}</p>
+        <EditField label={datePicker.label} type="date" value={pickedDate} onChange={setPickedDate} />
+        <FlowButtonRow onBack={!isFirstStep ? goBack : undefined} onCommit={() => chooseDate(pickedDate)} commitDisabled={!pickedDate} commitLabel="Continue" final />
       </FlowSheet>
     )
   }
@@ -211,7 +259,20 @@ function FlowSheet({
  * option buttons above it already advance the flow), so it's only ever
  * rendered here as the final step's Save, with Back alongside it.
  */
-function FlowButtonRow({ onBack, onCommit, final }: { onBack?: () => void; onCommit?: () => void; final?: boolean }) {
+function FlowButtonRow({
+  onBack,
+  onCommit,
+  commitLabel,
+  commitDisabled,
+  final,
+}: {
+  onBack?: () => void
+  onCommit?: () => void
+  /** "Save" everywhere except the calendar date step, which is still mid-flow and continues to the confirm screen. */
+  commitLabel?: string
+  commitDisabled?: boolean
+  final?: boolean
+}) {
   if (!final) {
     if (!onBack) return null
     return (
@@ -223,7 +284,7 @@ function FlowButtonRow({ onBack, onCommit, final }: { onBack?: () => void; onCom
   return (
     <div className="flex gap-2 mt-4">
       {onBack && <CancelButton onClick={onBack} label="Back" />}
-      <SaveButton onClick={onCommit!} label="Save" />
+      <SaveButton onClick={onCommit!} disabled={commitDisabled} label={commitLabel ?? 'Save'} />
     </div>
   )
 }
