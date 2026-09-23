@@ -272,15 +272,27 @@ function templateGroup(t: RecurringTemplate): BlockerGroup {
 }
 
 /**
- * A joint item "involves" a person when they are the named payee, or when
- * the split leaves a share for someone other than the payee (payee/
- * payeeSharePercent is a two-way split — lib/jointLedger.ts). Adam,
- * 2026-09-16: a deleted person's joint split bills must be reassigned too,
- * and the share defaults to 100% for whoever takes them over.
+ * A joint item "involves" a person, for the purpose of blocking their delete, ONLY when they are
+ * the named payee.
+ *
+ * 🚨 PROMPT-16 Part D3 (2026-09-22) — this used to be `payee === personId || payeeSharePercent <
+ * 100`, i.e. any joint bill with a split at all. `costForPerson` (lib/bills.ts) gives every
+ * NON-payee an equal slice of the remainder, so with three people a 50% split makes the third
+ * person a 25% participant in every joint bill — which is true of the model, but it made deleting
+ * a temporary third person list all NINE of Adam's real joint bills as "Temp pays 25%", each of
+ * which he then had to "Move to Adam". The move set every share to 100 (below). Nine one-column
+ * UPDATEs of `payee_share_percent`, owner untouched, no error anywhere, and his share of every
+ * joint bill doubled in every projection.
+ *
+ * The remainder needs no reassignment when a non-payee leaves: it simply falls to whoever remains,
+ * by the same formula. And when the payee leaves, taking the bill over does NOT change the split
+ * (`reassignJointSplit`). The one place 100% is right is when a single person is left, where a
+ * joint bill becomes personal — `reconcilePersonReferences`, unchanged (Adam, 2026-09-16, now
+ * narrowed to that case with his agreement on 2026-09-22). verify-delete-reassign.ts carries the
+ * control: the temporary-third-person case lists no joint bills.
  */
 function jointItemInvolvesPerson(item: { location: BillLocation; payee: string; payeeSharePercent: number }, personId: string): boolean {
-  if (item.location !== 'joint') return false
-  return item.payee === personId || item.payeeSharePercent < 100
+  return item.location === 'joint' && item.payee === personId
 }
 
 /** A pending row the user logged by hand, as opposed to one a generator owns. */
@@ -511,8 +523,9 @@ function swapPersonOnPending(transactions: Transaction[], belongs: (t: Transacti
   return transactions.map((t) => (t.status === 'pending' && belongs(t) ? swapPerson(t, from, to) : t))
 }
 
+/** The payee is leaving: `to` takes the bill over with the split AS IT WAS (see jointItemInvolvesPerson). */
 function reassignJointSplit<T extends { payee: string; payeeSharePercent: number }>(item: T, to: string): T {
-  return { ...item, payee: to, payeeSharePercent: 100 }
+  return { ...item, payee: to }
 }
 
 function reassignToPerson(data: AppDataV2, b: DeleteBlocker, from: string, to: string): AppDataV2 {

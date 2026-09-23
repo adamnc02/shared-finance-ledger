@@ -53,6 +53,16 @@ export interface LedgerStore {
    * Returns an unsubscribe function.
    */
   subscribe?(onExternalChange: (data: AppDataV2, wholesale: boolean) => void): () => void
+  /**
+   * PROMPT-16 Part A (2026-09-22) — the user explicitly said "this person is me" (Wallet → People →
+   * Set as me, or the sync app's "Which of these is you?"). Optional: the offline store has no
+   * notion of identity beyond `primaryPersonId` and ignores it. The sync store needs it because a
+   * state diff cannot tell a tap from any other save (MIGRATION-LESSONS §39): tapping the person you
+   * already view changes nothing, so a diff-based store wrote no link — and a save that happened to
+   * move the view could claim a partner's row with nobody tapping anything. `LedgerContext` calls
+   * this BEFORE it changes `primaryPersonId`, so the next `save` carrying that id is the tap.
+   */
+  setPrimaryPerson?(id: string): void
 }
 
 export function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {

@@ -164,13 +164,19 @@ nothing is asked "which of these is you?" once. A same-named person left behind 
 duplicate and is resolved by a banner, through the app's **own** delete-reassign flow — no second
 merge implementation.
 
-**"Set as me" = link + view.** The button only changes `primaryPersonId` (shared code); the store
-turns that into `people.linked_user_id`:
+**"Set as me" = link + view.** The button is an explicit tap (the context tells the store before it
+changes `primaryPersonId`); the store turns the tap into `people.linked_user_id`:
 
-- an **unlinked** row → linked to me, my previous row cleared **first** (there is a unique index);
-- a row linked to **someone else** → view only, never taken — *unless* I have no linked row at all,
-  which is how the second person claims their row if the first tapped it before they joined;
-- `primaryPersonId` moving because my person was **deleted** → nothing is written.
+- a tap on an **unlinked** row → linked to me, my previous row cleared **first** (there is a unique
+  index) — including a tap on the person you are already viewing, which used to do nothing;
+- a tap on a row linked to **someone else** → view only, never taken — *unless* I have no linked row
+  at all, which is how the second person claims their row if the first tapped it before they joined;
+- anything that is **not a tap** (a delete moving the view, a sync, an edit) → nothing is written.
+
+**Each device remembers who it showed.** If that person is gone after a restore, or now belongs to
+someone else, the device links the one unlinked person with the same name, or asks "Which of these
+is you?". A device whose link was never written but whose view was right heals itself on launch. Only
+you can write your own link — the server refuses anyone else's — so nobody can be re-linked for you.
 
 ### Backup & Restore
 
@@ -294,8 +300,11 @@ live apps** while only this one has an Account button.
 - **Every import regenerates ids** — unless the file is this household's own, in which case the
   ids are kept and only what changed is written. The same backup imported into two households would
   otherwise collide on every row id, and those writes are discarded silently.
-- **A restore re-links every other member by name.** Before, it deleted their "this is me" link
-  along with their row, and their phone silently became whoever sorted first.
+- **After a restore, every other member's device re-links itself by name, or asks.** Before, the
+  restoring phone tried to re-link them and the server refused it, so their phone silently became
+  whoever sorted first.
+- **A second device online during a restore writes nothing stale.** It used to re-create occurrences
+  the restore had deleted, or double up the ones the file was about to deliver.
 - **The 8pm alert runs the app's own projection engine**, server-side, rather than a second copy of
   it written in SQL. The alert and the figure on your phone are the same code.
 

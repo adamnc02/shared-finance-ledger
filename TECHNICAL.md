@@ -1537,8 +1537,13 @@ blocked while anything still points at it.
 - **Moves from a delete rewrite PENDING rows only** (a row cleared today included). The
   Bills/Borrowing "move to a pot" flow keeps its own cleared-rows-too behaviour, because it is
   answering a different question (§13).
-- **Joint splits:** a deleted person's joint split items move at 100% and become Personal when one
-  person is left.
+- **Joint splits (PROMPT-16 D3, 2026-09-23):** a joint item blocks a person's delete **only when
+  they are its payee**. A non-payee's share simply falls to whoever remains (`costForPerson` splits
+  the remainder among every non-payee), so it is not listed and nothing is written; taking a payee's
+  item over **keeps its split**. 100% is right only when a single person is left, where the item
+  becomes Personal. 🚨 The old rule listed every joint item with a split when a temporary third
+  person was deleted, and each "move" set the share to 100 — nine real bills, doubled, in one
+  evening, with `owner_id` untouched.
 
 **Deliberately not restricted:**
 
@@ -1841,6 +1846,28 @@ Resolved on every read, in order:
 
 It is **re-preferred on every read**, not only on the first.
 
+🚨 **The view is not evidence of the link** (PROMPT-16). A device with a stored choice shows the
+right person for ever whether or not `linked_user_id` was ever written, and low-balance alerts are
+addressed from the link alone. So the store also remembers **who this device last showed**, by
+choice or by link (`…:shown`, id + name — never the `people[0]` fallback), and on boot `SyncRoot`
+runs `identityAction`: linked → ready; my chosen row unlinked → link it (self-heal, fills an empty
+column only); the person I was showing is gone or now someone else's → link the one unlinked person
+with the same name, else **ask**; just joined or a dead choice → ask; otherwise ready.
+
+### A second device never re-creates what a restore deleted (PROMPT-16 Part G)
+
+A wholesale restore reaches the other device as several server commits: new rows first (parents
+before transactions, `TABLE_ORDER`), then the old transactions' deletes, then the old templates,
+people and pay cycles. In those windows the app's auto-clearing pass, which runs on every data
+change, materialises occurrences that either the server has just deleted or the file is about to
+deliver — orphans pointing at the previous generation, and slots filled twice. The store therefore
+tracks, for the session, every row id and occurrence slot (`dedupeKey`) that arrived **deleted**
+from the server and every parent row that **only just arrived**, and drops any derived transaction
+insert that would refill or point at one; the parent counts as settled from the next read. This
+device's own deletes and inserts are excluded, and an explicit `setData` (a restore or patch the
+user asked for) may still bring a row back. `SyncRoot` also passes `deliveryDebounceMs: 400` so a
+burst of commits is read as one state. `verify-stale-writes-during-restore.ts`, with both controls.
+
 ### The store decides what an import is
 
 `LedgerContext.setData` is shared code and says nothing about imports. So: **a save is an import
@@ -1925,17 +1952,26 @@ means **no second merge implementation**.
 
 ### "Set as me" = link + view
 
-The button only changes `primaryPersonId` — shared code, unchanged from the offline app. The
-**store** turns that into `people.linked_user_id`, as one-column UPDATEs:
+The button is an **explicit tap**: `LedgerContext.setPrimaryPerson` calls the optional
+`LedgerStore.setPrimaryPerson(id)` *before* it changes `primaryPersonId` (shared code, identical in
+the offline app, whose store ignores the call). The **store** links on that tap, and on nothing
+else, as one-column UPDATEs:
 
 | Case | What is written |
 |---|---|
-| An **unlinked** row → me | Linked, with my previous row cleared **first** (unique index) |
-| A row linked to **someone else** | View only, never taken — **unless I have no linked row at all**, which is how the second person claims their row if the first tapped it before they joined |
-| `primaryPersonId` moving because my person was **deleted** | Nothing is written |
+| A tap on an **unlinked** row, whether or not the view moved | Linked, with my previous row cleared **first** (unique index) |
+| A tap on a row linked to **someone else** | View only, never taken — **unless I have no linked row at all**, which is how the second person claims their row if the first tapped it before they joined |
+| Any save with **no tap** (a delete moving the view, a sync, an edit) | Nothing is written, whatever `primaryPersonId` did |
 | An import, or Start fresh | Links its own new "Me" |
 
-`verify-set-as-me.ts` pins all of it.
+🚨 **Before PROMPT-16 the tap was inferred from `primaryPersonId` changing** (MIGRATION-LESSONS
+§39, one field down). Tapping the person already in view wrote nothing — Adam's production row was
+never linked and his alerts were silent — and any save that moved the view could claim a partner's
+row. `verify-set-as-me.ts` pins all of it, with the controls.
+
+🚨 **A link can only be written by the user it names.** `people_enforce_self_link` refuses (42501,
+discarded by the connector) any `linked_user_id` that is not `auth.uid()`, so this device can link
+me and nobody else, and there is no SQL repair for a missing link. Unlinking is allowed for anyone.
 
 ---
 
@@ -1982,11 +2018,15 @@ other member's link along with their row. `linkOps` re-links only the person doi
 Their next read then walks choice → linked → `people[0]`: a dead choice, no linked row, and they
 **silently become whoever sorts first, with that person's pay cycle**.
 
-`relinkOps` carries each pre-restore link across to the incoming person with the **same name**
-(trimmed, case-insensitive), as narrow one-column updates after the diff has done its deleting.
-🚨 **Ambiguous or missing is never guessed:** no match, or more than one, leaves that member
-unlinked, the store reports `staleChoice`, and `SyncRoot` asks "which person are you?" on that
-device's next boot — the flow a fresh join already uses.
+🚨 **PROMPT-14's fix — the restorer re-linking every member by name (`relinkOps`) — could never
+work and is gone.** The server's `people_enforce_self_link` trigger refuses a link written by anyone
+but the user it names, so the restorer's device emitted writes the server discarded (42501), and the
+other member stayed unlinked through three live runs while the unit test passed against a fake with
+no trigger (`FakeSyncDb.actingUser` now models it). Since PROMPT-16 **each member's own device
+re-links itself**: it remembers who it last showed (§40) and on boot links the one unlinked incoming
+person with the same name (trimmed, case-insensitive), or **asks** "which person are you?".
+🚨 **Ambiguous or missing is never guessed:** a rename, or two people with the name, asks.
+`verify-restore-preserves-identity.ts`, whose control is the run that lands on the wrong person.
 
 ### Backup & Restore
 
@@ -2054,7 +2094,10 @@ and divergences that are only *planned* (those live in `BUILD-PLAN.md`).
 | `verify-mapping-nulls.ts` | Every real backup round-trips; no `''` in an FK column; every written column exists; `jsonb` never sent as a string |
 | `verify-legacy-migration.ts` | The rescue runs only on an empty household, is offered once per account, and **never writes or removes `ledger:app-data-v2:v1`** |
 | `verify-import-regenerates-ids.ts` | One backup in two households shares no row id; every reference remapped; restoring twice leaves no duplicate |
-| `verify-set-as-me.ts` | `linked_user_id` written narrowly, previous row cleared first, a partner's row never taken |
+| `verify-set-as-me.ts` | `linked_user_id` written narrowly on an explicit tap only, previous row cleared first, a partner's row never taken by an ordinary save; `identityAction` heals an unlinked chosen row and never the fallback |
+| `verify-restore-preserves-identity.ts` | After a restore the other member's device re-links itself by remembered name or asks; the restorer emits no op the server would refuse (trigger modelled) |
+| `verify-stale-writes-during-restore.ts` | A second device online during a restore re-creates nothing the server deleted and materialises nothing for parents that only just arrived (both controls) |
+| `verify-slow-operation.ts` | The boot line names a blocking tab after 10 s without aborting the clear |
 | `verify-salary-sort-sync.ts` | Two devices sorting one payday converge on one sort and one transfer; two people paid the same day get a sort each |
 
 `scripts/lib/fakeSyncDb.ts` is the in-memory stand-in for PowerSync's local database those checks

@@ -125,6 +125,9 @@ console.log('\n4. primaryPersonId is per device, and re-preferred (§23)')
   check('when the row linked to me arrives, it is re-preferred (not locked on the first)', latest.primaryPersonId === ella.id, latest.primaryPersonId)
   check('nothing about that was written', db3.log.length === 0, db3.log)
 
+  // PROMPT-16 Part A: "Set as me" is an explicit tap (setPrimaryPerson), never inferred from the
+  // view moving — LedgerContext.setPrimaryPerson does exactly these two calls.
+  s3.setPrimaryPerson(adam.id)
   s3.save({ ...latest, primaryPersonId: adam.id }, latest)
   await s3.flush()
   // PROMPT-10 (Adam, 2026-09-19): "Set as me" = link + view. The choice itself never syncs; the link

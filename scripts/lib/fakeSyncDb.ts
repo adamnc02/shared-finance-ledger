@@ -21,6 +21,16 @@ const toSqlite = (v: Value | undefined) => (v === undefined || v === null ? null
 export class FakeSyncDb implements SyncDatabase {
   tables = new Map<string, Map<string, Row>>(SYNCED_TABLES.map((t) => [t.remote, new Map()]))
   log: Statement[] = []
+  /**
+   * PROMPT-16 Part F — the server's `people_enforce_self_link` trigger, modelled. When set, any
+   * INSERT/UPDATE that puts a `linked_user_id` other than this user on a `people` row is refused
+   * as the server refuses it (42501): the column is left as it was and the statement is recorded
+   * in `rejected` instead of applied. Null (the default) means no trigger, which is how every
+   * check before PROMPT-16 ran — and how "re-link every member from the restorer's device" passed
+   * a unit test for something the server can never accept.
+   */
+  actingUser: string | null = null
+  rejected: Statement[] = []
   private listeners = new Set<() => void>()
 
   /** Puts rows in as if they had arrived by sync (no statements logged, no callbacks). */
@@ -70,6 +80,11 @@ export class FakeSyncDb implements SyncDatabase {
     for (const l of this.listeners) setTimeout(l, 0)
   }
 
+  /** The trigger: a non-null link to anyone but the acting user is refused. Unlinking (null) is always allowed. */
+  private refusesLink(table: string, value: Value | undefined): boolean {
+    return this.actingUser !== null && table === 'people' && value !== null && value !== undefined && value !== this.actingUser
+  }
+
   private tx(): WriteTx {
     const table = (local: string) => {
       if (!local.startsWith(LOCAL_PREFIX)) throw new Error(`write to a non-sfl table: ${local}`)
@@ -98,6 +113,10 @@ export class FakeSyncDb implements SyncDatabase {
           known(name, cols)
           const row = Object.fromEntries(cols.map((c, i) => [c, params[i] as Value])) as Row
           if (t.has(row.id)) throw new Error(`UNIQUE constraint failed: ${m[1]}.id ${row.id}`)
+          if (this.refusesLink(name, row.linked_user_id)) {
+            this.rejected.push({ kind: 'insert', table: name, id: row.id, columns: cols.filter((c) => c !== 'id') })
+            row.linked_user_id = null
+          }
           t.set(row.id, row)
           this.log.push({ kind: 'insert', table: name, id: row.id, columns: cols.filter((c) => c !== 'id') })
         } else if ((m = sql.match(/^UPDATE (\w+) SET (.*) WHERE id = \?$/))) {
@@ -107,7 +126,15 @@ export class FakeSyncDb implements SyncDatabase {
           const id = String(params[params.length - 1])
           const row = t.get(id)
           if (!row) throw new Error(`update of a missing row ${m[1]} ${id}`)
-          cols.forEach((c, i) => (row[c] = params[i] as Value))
+          const linkAt = cols.indexOf('linked_user_id')
+          if (linkAt !== -1 && this.refusesLink(name, params[linkAt] as Value)) {
+            this.rejected.push({ kind: 'update', table: name, id, columns: cols })
+            cols.forEach((c, i) => {
+              if (c !== 'linked_user_id') row[c] = params[i] as Value
+            })
+          } else {
+            cols.forEach((c, i) => (row[c] = params[i] as Value))
+          }
           this.log.push({ kind: 'update', table: name, id, columns: cols })
         } else if ((m = sql.match(/^DELETE FROM (\w+) WHERE id = \?$/))) {
           const [name, t] = table(m[1])

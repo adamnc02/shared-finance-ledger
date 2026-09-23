@@ -1,47 +1,56 @@
-// PROMPT-14 Part 5 (2026-09-22) — a restore must not silently reassign who
-// everyone is.
+// PROMPT-14 Part 5 (2026-09-22), rewritten by PROMPT-16 Part F the same day —
+// a restore must not silently reassign who everyone is.
 //
 // 🚨 THE REAL BUG, and it shipped. An import deletes every `people` row and
 // inserts a fresh one with a new id (regenerateIds, MIGRATION-LESSONS §31),
 // and `linked_user_id` is a server-only column `toRows` never writes. So the
-// restore takes every OTHER member's link with it. `linkOps` re-links only
-// the person doing the restore.
+// restore takes every OTHER member's link with it. On Ella's next sync,
+// `assemble` walks choice → linked → people[0]: no link, no (or a dead)
+// choice, so she becomes WHOEVER SORTS FIRST — Adam — with his pay cycle. No
+// error, no warning, on a phone nobody touched (§23 through another door).
 //
-// On Ella's next sync, `assemble` walks choice → linked → people[0]. Her
-// stored choice is a dead id and there is no linked row, so she becomes
-// WHOEVER SORTS FIRST — Adam — and his pay cycle with him. No error, no
-// warning, on a phone nobody touched. That is precisely the §23 failure
-// `verify-first-sync-gate.ts` was written to prevent, arriving through a door
-// that check does not watch.
+// 🚨 WHY PART 5's FIX COULD NEVER WORK, and this check passed anyway. Part 5
+// had the RESTORER's device re-link every member by name. But the server's
+// `people_enforce_self_link` trigger refuses any linked_user_id that is not
+// auth.uid() (42501, discarded by the connector): a link can only ever be
+// written by the user it belongs to. Adam's phone was writing Ella's link,
+// the server threw it away, and Ella stayed unlinked — three UAT runs on
+// 2026-09-22, the last with names matching cleanly. The unit was green
+// because FakeSyncDb had no trigger. It has one now (`actingUser`), and
+// section 2 proves the restorer emits NO op the server would refuse.
 //
-// Section 1 is the CONTROL: the old behaviour, reproduced, which must show
-// Ella landing on Adam's row. If section 1 ever goes quiet, this check has
-// stopped being able to fail and is worth nothing.
+// 🚨 AND WHY SHE WAS NOT EVEN ASKED. The boot's "which person are you?" was
+// gated on `staleChoice`, which only exists for a user who OVERRODE their
+// link. Ella was resolved BY link, so no choice was ever stored, nothing went
+// stale, and SyncRoot fell through to `ready`. The rule now: the device
+// remembers who it last showed, whatever resolved it; when that person is
+// gone or someone else's, identityAction links the ONE unlinked person with
+// the same name (run by Ella, on Ella's device — the only writer the trigger
+// allows), and ASKS otherwise. Section 1 is the control for the old fallback;
+// section 3's control is the old gate, shown walking straight past her.
 //
 // What it asserts:
-//  1. control — a restore with no re-link leaves Ella unlinked, resolving her
-//     to Adam, with Adam's pay cycle;
-//  2. a cloud restore re-links every member by name; Ella stays Ella, and her
-//     pay cycle does not flip;
-//  3. a file restore does the same — both routes converge (Part 3), so both
-//     are tested, not just the one that happens to be wired up;
-//  4. the restorer's own link still works (linkOps is not broken by this);
-//  5. the ops are NARROW: one linked_user_id column, one row each — never a
-//     whole-row rewrite (DECISIONS Q2: PowerSync's per-column conflict
-//     resolution rests on it);
-//  6. a patch of this household's own file (Part 4) needs no re-link at all,
-//     because nothing was unlinked;
-//  7. ambiguity is never guessed: two incoming people with the same name, or
-//     no match at all, leave that member unlinked and set staleChoice, which
-//     is what makes their device ASK (§0 Q4b) instead of choosing for them;
-//  8. an unchanged name that differs only in case or spacing still re-links —
-//     a restore of a hand-edited file is exactly where "Ella" becomes "ella".
+//  1. control — a restore with no re-link resolves a dead-choice device to
+//     Adam, with Adam's pay cycle (staleChoice would at least have asked);
+//  2. the restorer writes ONLY its own link (2 narrow ops), the server
+//     refuses nothing, and a write of another member's link IS refused by
+//     the modelled trigger (the fake fails the way the server does);
+//  3. 🚨 Ella, resolved by LINK and never having chosen: after Adam's
+//     restore her device is told to LINK the new Ella row by remembered
+//     name — not ready, not people[0] — and the old gate would have said
+//     ready. Acting on it links her, as her, and her pay cycle is unchanged;
+//  4. a file restore does the same (both routes converge, Part 3);
+//  5. the name is gone (a rename) or ambiguous (two Ellas) → ASK, never a guess;
+//  6. a patch of this household's own file (Part 4) needs nothing: no link
+//     op, Ella untouched;
+//  7. a device that has never shown anyone, in a one-person household, is
+//     ready — not asked a question with one answer (the trap named in F3).
 
 import { readFileSync } from 'node:fs'
 import { parseLedgerBackupJson } from '../src/lib/ledgerStorage'
 import { toRows } from '../src/lib/powersync/mapping'
 import { regenerateIds } from '../src/lib/powersync/importIds'
-import { createPowerSyncLedgerStore, relinkOps } from '../src/lib/store/powerSyncLedgerStore'
+import { createPowerSyncLedgerStore, identityAction, type PowerSyncLedgerStore } from '../src/lib/store/powerSyncLedgerStore'
 import type { AppDataV2 } from '../src/types/ledger'
 import { FakeSyncDb, deferred, memoryStorage, tick } from './lib/fakeSyncDb'
 
@@ -63,6 +72,7 @@ const raw = readFileSync(BACKUP, 'utf8')
 const silent = { error: () => {}, warn: () => {}, info: () => {} }
 
 const personNamed = (d: AppDataV2, name: string) => d.people.find((p) => p.name === name)!
+const nameOf = (d: AppDataV2, id: string) => d.people.find((p) => p.id === id)?.name ?? '(nobody)'
 /** The cycle itself, with the ids a restore legitimately changes stripped — what "her pay cycle" means to her. */
 const payCycleOf = (d: AppDataV2, personId: string) => {
   const cycle = d.payCycles.find((c) => c.personId === personId)
@@ -81,142 +91,196 @@ function seededDb(data: AppDataV2): FakeSyncDb {
   return db
 }
 
-/** A device booting against `db`, with `choice` already stored on it. */
-async function deviceView(db: FakeSyncDb, userId: string, choice: string | null) {
-  const sync = deferred()
+type Device = { storage: ReturnType<typeof memoryStorage>; userId: string }
+const device = (userId: string, choice: string | null = null): Device => {
   const storage = memoryStorage()
   if (choice) storage.setItem('k', choice)
-  const store = createPowerSyncLedgerStore({ db, householdId: HH, userId, firstSync: sync.promise, storageKey: 'k', storage, log: silent })
+  return { storage, userId }
+}
+
+/** One boot of `dev` against `db`: what SyncRoot sees after load(). */
+async function boot(db: FakeSyncDb, dev: Device) {
+  const sync = deferred()
+  const store = createPowerSyncLedgerStore({ db, householdId: HH, userId: dev.userId, firstSync: sync.promise, storageKey: 'k', storage: dev.storage, log: silent })
   sync.resolve()
-  const data = await store.load()
+  const data = (await store.load())!
   return {
-    data: data!,
-    staleChoice: store.staleChoice,
-    // SyncRoot's boot rule, verbatim, for a device that has not just joined:
-    // ask only when nothing is linked to me AND my stored choice is gone.
-    asksWhichPersonAmI: store.linkedPersonId === null && store.staleChoice,
+    store,
+    data,
+    landedOn: nameOf(data, data.primaryPersonId),
+    action: identityAction(store, data.people, false),
+    // The OLD gate (SyncRoot before PROMPT-16), verbatim: ask only when nothing is linked to me AND my stored choice is gone.
+    oldGateAsks: store.linkedPersonId === null && store.staleChoice,
   }
+}
+
+/** What SyncRoot does with a 'link' action: the explicit tap, the save, the flush — as that user. */
+async function act(db: FakeSyncDb, store: PowerSyncLedgerStore, data: AppDataV2, personId: string, userId: string) {
+  db.actingUser = userId
+  store.setPrimaryPerson(personId)
+  store.save({ ...data, primaryPersonId: personId }, data)
+  await store.flush()
+  await tick(10)
+}
+
+/** Adam restores `file` into `db` from a device that already shows his own row. */
+async function restoreBy(db: FakeSyncDb, adam: Device, file: AppDataV2) {
+  db.actingUser = ADAM_USER
+  const { store, data } = await boot(db, adam)
+  db.clearLog()
+  db.rejected = []
+  store.save(file, data) // setData with a dataset no list of which the store has seen: an import
+  await store.flush()
+  await tick(10)
+  return store
 }
 
 // 🚨 What the household holds now is deliberately NOT the file being restored.
 // Since Part 4, re-importing this household's OWN file is a patch: ids are
-// kept, so nobody's link is touched and Part 5 has nothing to do. The restore
-// that still needs Part 5 is a genuine import — an older snapshot taken before
-// an erase, a file from another device's household, anything whose ids this
-// household does not hold. So the household below is a regenerated copy, and
+// kept, so nobody's link is touched. The restore that matters is a genuine
+// import — an older snapshot, another device's household, anything whose ids
+// this household does not hold. So the household is a regenerated copy, and
 // the backup file keeps the original ids: no overlap, a real import.
 const before = regenerateIds(parseLedgerBackupJson(raw)).data
 const ellaBefore = personNamed(before, 'Ella')
 const adamBefore = personNamed(before, 'Adam')
 
-console.log('\n1. CONTROL — the old behaviour: a restore with no re-link')
+console.log('\n1. CONTROL — the old fallback: a restore with no re-link, a device with a dead choice')
 {
-  // Exactly what the diff alone produces: every old row deleted, every new row
-  // inserted, and linked_user_id written by nobody.
   const imported = regenerateIds(parseLedgerBackupJson(raw)).data
   const db = new FakeSyncDb()
   db.seed(toRows(imported, { householdId: HH }))
-  db.tables.get('people')!.get(personNamed(imported, 'Adam').id)!.linked_user_id = ADAM_USER // only the restorer's
-  const ella = await deviceView(db, ELLA_USER, ellaBefore.id) // her choice is now a dead id
-  const landedOn = ella.data.people.find((p) => p.id === ella.data.primaryPersonId)!
-  check("Ella's device lands on someone who is not Ella", landedOn.name !== 'Ella', landedOn.name)
-  check('…specifically on Adam, whoever sorts first', landedOn.name === 'Adam', landedOn.name)
-  check("…and takes Adam's pay cycle with him", payCycleOf(ella.data, landedOn.id) !== payCycleOf(before, ellaBefore.id))
-  check('the signal the fallback needs does exist: this device knows its choice is stale', ella.staleChoice === true)
-  check('…so with Part 5 she is at least ASKED rather than silently reassigned', ella.asksWhichPersonAmI === true)
+  db.tables.get('people')!.get(personNamed(imported, 'Adam').id)!.linked_user_id = ADAM_USER // only the restorer's survives
+  const ella = await boot(db, device(ELLA_USER, ellaBefore.id)) // her choice is now a dead id
+  check("Ella's device RESOLVES to someone who is not Ella (assemble's people[0] fallback, unchanged)", ella.landedOn !== 'Ella', ella.landedOn)
+  check('…specifically to Adam, whoever sorts first', ella.landedOn === 'Adam', ella.landedOn)
+  check("…and takes Adam's pay cycle with him", payCycleOf(ella.data, ella.data.primaryPersonId) !== payCycleOf(before, ellaBefore.id))
+  check('a dead choice was the ONE signal the old gate had', ella.store.staleChoice === true && ella.oldGateAsks === true)
+  check('the new decision does not let that resolution stand either: she is asked (no name remembered on this device)', ella.action.kind === 'ask', ella.action)
 }
 
-console.log('\n2. A cloud restore re-links every member by name')
+console.log('\n2. 🚨 The restorer writes only its OWN link — the server would refuse anyone else\'s')
 {
   const db = seededDb(before)
-  const sync = deferred()
-  const storage = memoryStorage()
-  storage.setItem('k', adamBefore.id)
-  const store = createPowerSyncLedgerStore({ db, householdId: HH, userId: ADAM_USER, firstSync: sync.promise, storageKey: 'k', storage, log: silent })
-  sync.resolve()
-  const loaded = await store.load()
-  db.clearLog()
-  // A cloud restore: downloadSnapshot parses the snapshot, setData hands the
-  // store a dataset no list of which it has ever seen. That IS the import.
-  store.save(parseLedgerBackupJson(raw), loaded!)
-  await store.flush()
-  await tick(10)
-
+  const store = await restoreBy(db, device(ADAM_USER, adamBefore.id), parseLedgerBackupJson(raw))
   const linkOps = db.log.filter((s) => s.columns.includes('linked_user_id'))
-  // Counted, not just "every", or an empty list would pass this vacuously
-  // (SHARED-FINANCE-LEDGER-INFO §53: count what you can see before trusting a zero).
-  // Three: linkOps clears my OLD row first (the (household, linked_user_id)
-  // unique index), linkOps sets my new one, and Part 5 sets Ella's.
-  check('three link ops: my old row cleared, my new row linked, Ella re-linked', linkOps.length === 3, linkOps)
+  // Counted, not "every": an empty list would pass vacuously (§53).
+  check('exactly two link ops: my old row cleared, my new row linked', linkOps.length === 2, linkOps)
   check('every link op is a narrow one-column UPDATE on people', linkOps.length > 0 && linkOps.every((s) => s.kind === 'update' && s.table === 'people' && s.columns.length === 1), linkOps)
+  check('the server (modelled trigger) refused NOTHING — before PROMPT-16 it refused the write of Ella\'s link', db.rejected.length === 0, db.rejected)
+  const newAdam = store.importMap!.get(personNamed(parseLedgerBackupJson(raw), 'Adam').id)!
+  check("the restorer's own link survives, on the new row", db.tables.get('people')!.get(newAdam)?.linked_user_id === ADAM_USER)
+  check('nobody else is linked to anything: Ella\'s link died with her old row, as it always did', [...db.tables.get('people')!.values()].filter((r) => r.linked_user_id).length === 1)
 
-  const ella = await deviceView(db, ELLA_USER, ellaBefore.id)
-  const landedOn = ella.data.people.find((p) => p.id === ella.data.primaryPersonId)!
-  check("Ella's device still lands on Ella", landedOn.name === 'Ella', landedOn.name)
-  check('…with her own pay cycle, unchanged', payCycleOf(ella.data, landedOn.id) === payCycleOf(before, ellaBefore.id), [payCycleOf(ella.data, landedOn.id), payCycleOf(before, ellaBefore.id)])
-  // Her stored choice IS stale — a restore regenerates every id, so it always
-  // is — but it is never consulted, because the re-linked row answers first.
-  check('…and she is not asked to choose again', ella.asksWhichPersonAmI === false)
-
-  const adam = await deviceView(db, ADAM_USER, null) // no choice: falls through to the linked row
-  check("the restorer's own link survives too", adam.data.people.find((p) => p.id === adam.data.primaryPersonId)!.name === 'Adam')
+  // The model itself: Adam writing Ella's link is refused, exactly as people_enforce_self_link does.
+  const newElla = store.importMap!.get(personNamed(parseLedgerBackupJson(raw), 'Ella').id)!
+  await db.write([{ kind: 'update', table: 'people', id: newElla, set: { linked_user_id: ELLA_USER } }])
+  check('the fake refuses a link to another user (the 42501 the live runs hit)', db.rejected.length === 1 && (db.tables.get('people')!.get(newElla)?.linked_user_id ?? null) === null, db.rejected)
+  db.actingUser = ELLA_USER
+  await db.write([{ kind: 'update', table: 'people', id: newElla, set: { linked_user_id: ELLA_USER } }])
+  check('…and accepts the same write from Ella herself', db.tables.get('people')!.get(newElla)?.linked_user_id === ELLA_USER)
 }
 
-console.log('\n3. A file restore does the same (both routes converge, Part 3)')
+console.log('\n3. 🚨 Ella, resolved by LINK, never chose: after the restore her device re-links itself by name')
 {
   const db = seededDb(before)
-  const sync = deferred()
-  const storage = memoryStorage()
-  storage.setItem('k', adamBefore.id)
-  const store = createPowerSyncLedgerStore({ db, householdId: HH, userId: ADAM_USER, firstSync: sync.promise, storageKey: 'k', storage, log: silent })
-  sync.resolve()
-  const loaded = await store.load()
-  // The file picker's path: the same parse, of the same bytes off disk.
-  store.save(parseLedgerBackupJson(readFileSync(BACKUP, 'utf8')), loaded!)
-  await store.flush()
-  await tick(10)
-  const ella = await deviceView(db, ELLA_USER, ellaBefore.id)
-  check("Ella's device still lands on Ella", ella.data.people.find((p) => p.id === ella.data.primaryPersonId)!.name === 'Ella')
+  const ellaDev = device(ELLA_USER) // no choice: the link is what resolves her
+  const first = await boot(db, ellaDev)
+  check('before the restore: Ella\'s device shows Ella, by link, and remembers it', first.landedOn === 'Ella' && first.store.resolvedBy === 'link' && first.store.lastShown?.name === 'Ella', first.store.lastShown)
+  check('…with nothing stored as a "choice" (so nothing can ever go stale)', ellaDev.storage.map.get('k') === undefined)
+  const cycleBefore = payCycleOf(first.data, first.data.primaryPersonId)
+
+  await restoreBy(db, device(ADAM_USER, adamBefore.id), parseLedgerBackupJson(raw))
+
+  const after = await boot(db, ellaDev) // her next sync
+  check("assemble alone still lands her on Adam (the fallback is unchanged — it is the DECISION that changed)", after.landedOn === 'Adam', after.landedOn)
+  check('🚨 CONTROL — the old gate says READY here: no link, and no stale choice to notice', after.oldGateAsks === false && after.store.staleChoice === false)
+  check('the new decision is to LINK the one unlinked person with the remembered name', after.action.kind === 'link' && after.action.reason === 'remembered_name' && nameOf(after.data, after.action.personId) === 'Ella', after.action)
+  check('…and that is not the row Adam is linked to', after.action.kind === 'link' && after.store.ownerOf(after.action.personId) === null)
+
+  if (after.action.kind === 'link') await act(db, after.store, after.data, after.action.personId, ELLA_USER)
+  check('the link was written as Ella and accepted', db.rejected.length === 0 && [...db.tables.get('people')!.values()].some((r) => r.name === 'Ella' && r.linked_user_id === ELLA_USER), db.rejected)
+  const healed = await boot(db, ellaDev)
+  // Acting on the decision is a "Set as me", so this device also records it as a choice; either way
+  // the LINK is what every other device of hers will resolve by.
+  check("Ella's device now lands on Ella, and her account is linked to that row", healed.landedOn === 'Ella' && healed.store.linkedPersonId === healed.data.primaryPersonId, [healed.landedOn, healed.store.resolvedBy])
+  check('…with her own pay cycle, unchanged', payCycleOf(healed.data, healed.data.primaryPersonId) === cycleBefore, [payCycleOf(healed.data, healed.data.primaryPersonId), cycleBefore])
+  check('…and she is ready, not asked', healed.action.kind === 'ready')
+  const adam = await boot(db, device(ADAM_USER))
+  check("Adam's device (no choice) still lands on Adam", adam.landedOn === 'Adam' && adam.action.kind === 'ready')
 }
 
-console.log("\n4. A patch of this household's own file needs no re-link at all (Part 4)")
+console.log('\n4. A file restore does the same (both routes converge, Part 3)')
 {
   const db = seededDb(before)
-  const sync = deferred()
-  const storage = memoryStorage()
-  storage.setItem('k', adamBefore.id)
-  const store = createPowerSyncLedgerStore({ db, householdId: HH, userId: ADAM_USER, firstSync: sync.promise, storageKey: 'k', storage, log: silent })
-  sync.resolve()
-  const loaded = await store.load()
-  db.clearLog()
-  store.save(JSON.parse(JSON.stringify(loaded)) as AppDataV2, loaded!) // the household's own file, re-imported unchanged
-  await store.flush()
-  await tick(10)
-  check('no link op at all: nothing was unlinked, so nothing needs re-linking', db.log.filter((s) => s.columns.includes('linked_user_id')).length === 0, db.log.slice(0, 5))
-  const ella = await deviceView(db, ELLA_USER, personNamed(before, 'Ella').id)
-  check("Ella's device is untouched", ella.data.people.find((p) => p.id === ella.data.primaryPersonId)!.name === 'Ella')
+  const ellaDev = device(ELLA_USER)
+  await boot(db, ellaDev)
+  await restoreBy(db, device(ADAM_USER, adamBefore.id), parseLedgerBackupJson(readFileSync(BACKUP, 'utf8'))) // the file picker's parse, of the same bytes
+  const after = await boot(db, ellaDev)
+  check('Ella is told to re-link herself by name', after.action.kind === 'link' && nameOf(after.data, after.action.personId) === 'Ella', after.action)
 }
 
 console.log('\n5. Ambiguity is never guessed (§0 Q4b)')
 {
-  const linked = new Map([[ellaBefore.id, ELLA_USER]])
-  const twoSams: AppDataV2 = { ...before, people: [{ ...adamBefore, name: 'Sam' }, { ...ellaBefore, id: 'new-ella', name: 'Sam' }] }
-  const ambiguous = relinkOps(linked, { ...before, people: [{ ...ellaBefore, name: 'Sam' }] }, twoSams, ADAM_USER, null)
-  check('two incoming people with one name: no op, and the member is reported unresolved', ambiguous.ops.length === 0 && ambiguous.unresolved.length === 1, ambiguous)
+  // A rename between the backup and the restore (UAT run one): she was "Ella X", the file says "Ella".
+  const db = seededDb(before)
+  db.tables.get('people')!.get(ellaBefore.id)!.name = 'Ella X'
+  const ellaDev = device(ELLA_USER)
+  const first = await boot(db, ellaDev)
+  check('her device remembers the name it showed: Ella X', first.store.lastShown?.name === 'Ella X', first.store.lastShown)
+  await restoreBy(db, device(ADAM_USER, adamBefore.id), parseLedgerBackupJson(raw))
+  const after = await boot(db, ellaDev)
+  check('the name is gone from the incoming data: ASK, do not guess', after.action.kind === 'ask', after.action)
 
-  const renamed: AppDataV2 = { ...before, people: [{ ...ellaBefore, id: 'new-ella', name: 'Elle' }] }
-  const noMatch = relinkOps(linked, before, renamed, ADAM_USER, null)
-  check('the name is gone from the incoming data: no op, reported unresolved', noMatch.ops.length === 0 && noMatch.unresolved.length === 1, noMatch)
+  // Two incoming people with her name.
+  const db2 = seededDb(before)
+  const dev2 = device(ELLA_USER)
+  await boot(db2, dev2)
+  // A third person in the file also called Ella. (Renaming Adam would not do: the restorer's own
+  // row is linked to him, so it is not a candidate, and one unlinked Ella is not ambiguous.)
+  const twoEllas = parseLedgerBackupJson(raw)
+  const spare = personNamed(twoEllas, 'Ella')
+  twoEllas.people = [...twoEllas.people, { ...spare, id: 'second-ella', salaryHistory: [], salaryOverrides: [] }]
+  await restoreBy(db2, device(ADAM_USER, adamBefore.id), twoEllas)
+  const after2 = await boot(db2, dev2)
+  check('two unlinked incoming people with that name: ASK', after2.action.kind === 'ask', after2.action)
 
-  const cased: AppDataV2 = { ...before, people: [{ ...ellaBefore, id: 'new-ella', name: '  ella ' }] }
-  const loose = relinkOps(linked, before, cased, ADAM_USER, null)
-  check('case and spacing still match — a hand-edited file usually differs by exactly that', loose.ops.length === 1 && loose.ops[0].id === 'new-ella', loose)
+  // Case and spacing still match — a restore of a hand-edited file is exactly where "Ella" becomes " ella ".
+  const db3 = seededDb(before)
+  const dev3 = device(ELLA_USER)
+  await boot(db3, dev3)
+  const cased = parseLedgerBackupJson(raw)
+  cased.people = cased.people.map((p) => (p.name === 'Ella' ? { ...p, name: '  ella ' } : p))
+  await restoreBy(db3, device(ADAM_USER, adamBefore.id), cased)
+  const after3 = await boot(db3, dev3)
+  check('case and spacing still match', after3.action.kind === 'link' && after3.action.reason === 'remembered_name', after3.action)
+}
 
-  const mine = relinkOps(new Map([[adamBefore.id, ADAM_USER]]), before, before, ADAM_USER, null)
-  check('my own link is left to linkOps, never written twice', mine.ops.length === 0 && mine.unresolved.length === 0, mine)
+console.log("\n6. A patch of this household's own file needs nothing (Part 4)")
+{
+  const db = seededDb(before)
+  const ellaDev = device(ELLA_USER)
+  await boot(db, ellaDev)
+  db.actingUser = ADAM_USER
+  const { store, data } = await boot(db, device(ADAM_USER, adamBefore.id))
+  db.clearLog()
+  store.save(JSON.parse(JSON.stringify(data)) as AppDataV2, data) // the household's own file, re-imported unchanged
+  await store.flush()
+  await tick(10)
+  check('no link op at all: nothing was unlinked', db.log.filter((s) => s.columns.includes('linked_user_id')).length === 0, db.log.slice(0, 5))
+  const ella = await boot(db, ellaDev)
+  check("Ella's device is untouched: Ella, by link, ready", ella.landedOn === 'Ella' && ella.action.kind === 'ready')
+}
 
-  const clash = relinkOps(linked, before, { ...before, people: [{ ...ellaBefore, id: 'shared-row', name: 'Ella' }] }, ADAM_USER, 'shared-row')
-  check('a row linkOps is already claiming is never also claimed here', clash.ops.length === 0 && clash.unresolved.length === 1, clash)
+console.log('\n7. A device that never showed anyone, in a one-person household, is not asked')
+{
+  const solo = regenerateIds(parseLedgerBackupJson(raw)).data
+  const onlyAdam: AppDataV2 = { ...solo, people: solo.people.filter((p) => p.name === 'Adam'), payCycles: solo.payCycles.filter((c) => c.personId === personNamed(solo, 'Adam').id) }
+  const db = new FakeSyncDb()
+  db.seed(toRows(onlyAdam, { householdId: HH })) // nobody linked yet
+  const fresh = await boot(db, device(ADAM_USER))
+  check('resolved by the fallback, with no memory and no link: ready, not asked', fresh.store.resolvedBy === 'fallback' && fresh.action.kind === 'ready', fresh.action)
+  check('…and nothing was healed from a fallback (that would be a guess)', fresh.action.kind !== 'link')
 }
 
 console.log(failures === 0 ? '\nAll checks passed.\n' : `\n${failures} check(s) FAILED.\n`)

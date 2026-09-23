@@ -284,13 +284,11 @@ const ellaSubject: DeleteSubject = { type: 'person', id: ELLA }
   check('Ella is blocked by exactly these items', keys, [
     'creditCard:ella-card',
     'loan:ella-loan',
-    'loan:joint-loan',
     'pension:ella-pension',
     'pot:ella-pot',
     'savingsPot:ella-savings',
     'template:ella-bill',
     'template:ella-income',
-    'template:joint-adam-50',
     'template:joint-ella-payee',
     'transaction:ella-pending',
   ])
@@ -303,13 +301,16 @@ const ellaSubject: DeleteSubject = { type: 'person', id: ELLA }
   check('loan → Loans', groupOf('loan:ella-loan'), 'loans')
   check('credit card → Credit cards', groupOf('creditCard:ella-card'), 'creditCards')
   check('joint bill where Ella is payee → Joint account splits', groupOf('template:joint-ella-payee'), 'jointSplits')
-  check("joint bill where Ella pays the other 50% → Joint account splits", groupOf('template:joint-adam-50'), 'jointSplits')
-  check('joint LOAN split → Joint account splits', groupOf('loan:joint-loan'), 'jointSplits')
+  // 🚨 PROMPT-16 D3 (2026-09-22): a joint bill where Ella merely pays the OTHER half is NOT a
+  // blocker any more. The remainder falls to whoever remains, by costForPerson's own formula, so
+  // nothing needs reassigning — and "reassigning" it was what set nine real bills to 100%.
+  check("joint bill where Ella pays the other 50% is NOT listed (the remainder simply falls to Adam)", keys.includes('template:joint-adam-50'), false)
+  check('joint LOAN where Ella pays the other 50% is NOT listed either', keys.includes('loan:joint-loan'), false)
   check('hand-logged pending transaction → Upcoming transactions', groupOf('transaction:ella-pending'), 'upcomingTransactions')
   check("a joint bill Adam pays 100% of is NOT Ella's", keys.includes('template:joint-adam-100'), false)
   check("Adam's own bill is not listed", keys.includes('template:adam-bill'), false)
   check("Ella's CLEARED transactions never block", blockers.some((b) => b.id.startsWith('ella-cleared')), false)
-  check('the split detail names what Ella pays', blockers.find((b) => b.key === 'template:joint-adam-50')?.detail, 'Ella pays 50%')
+  check('the split detail names what Ella pays', blockers.find((b) => b.key === 'template:joint-ella-payee')?.detail, 'Ella pays 60%')
 
   // Each type blocks on its own.
   const only = (patch: Partial<AppDataV2>): AppDataV2 => ({ ...household(), pensions: [], savingsPots: [], pots: [], recurringTemplates: [], loans: [], creditCards: [], transactions: [], ...patch })
@@ -321,7 +322,7 @@ const ellaSubject: DeleteSubject = { type: 'person', id: ELLA }
     ['bill', { recurringTemplates: full.recurringTemplates.filter((t) => t.id === 'ella-bill') }],
     ['loan', { loans: full.loans.filter((l) => l.id === 'ella-loan') }],
     ['credit card', { creditCards: full.creditCards }],
-    ['joint split bill', { recurringTemplates: full.recurringTemplates.filter((t) => t.id === 'joint-adam-50') }],
+    ['joint split bill (as payee)', { recurringTemplates: full.recurringTemplates.filter((t) => t.id === 'joint-ella-payee') }],
   ]
   for (const [label, patch] of soloCases) check(`a person owning only a ${label} is blocked`, findDeleteBlockers(only(patch), ellaSubject).length, 1)
   check('a person owning nothing is not blocked', findDeleteBlockers(only({}), ellaSubject).length, 0)
@@ -345,7 +346,8 @@ const ellaSubject: DeleteSubject = { type: 'person', id: ELLA }
   check('credit card now belongs to Adam', data.creditCards[0].ownerId, ADAM)
   check('recurring income: ownerId AND personId move', [data.recurringTemplates.find((t) => t.id === 'ella-income')?.ownerId, data.recurringTemplates.find((t) => t.id === 'ella-income')?.personId], [ADAM, ADAM])
   const jointEllaPayee = data.recurringTemplates.find((t) => t.id === 'joint-ella-payee')!
-  check('joint split reassigned: payee Adam at 100% (still joint while Ella exists)', [jointEllaPayee.location, jointEllaPayee.payee, jointEllaPayee.payeeSharePercent], ['joint', ADAM, 100])
+  // PROMPT-16 D3: taking a joint bill over keeps the split as it was (60%), it does not force 100.
+  check('joint split reassigned: payee Adam, share KEPT at 60% (still joint while Ella exists)', [jointEllaPayee.location, jointEllaPayee.payee, jointEllaPayee.payeeSharePercent], ['joint', ADAM, 60])
   check('a hand-logged pending transaction moves to Adam', data.transactions.find((t) => t.id === 'ella-pending')?.ownerId, ADAM)
   check('[before delete] cleared transactions are untouched by reassignment', data.transactions.filter((t) => t.status === 'cleared'), clearedBefore)
 
@@ -373,7 +375,7 @@ const ellaSubject: DeleteSubject = { type: 'person', id: ELLA }
   const toChris = applyBlockerActionToAll(three, ellaSubject, { type: 'person', personId: 'chris' }, ASOF)
   const deleted = removePersonFromData(toChris, ELLA)
   const joint = deleted.recurringTemplates.find((t) => t.id === 'joint-ella-payee')!
-  check('3 people: a reassigned joint bill stays joint, Chris at 100%', [joint.location, joint.payee, joint.payeeSharePercent], ['joint', 'chris', 100])
+  check('3 people: a reassigned joint bill stays joint, Chris as payee with the share kept (60%)', [joint.location, joint.payee, joint.payeeSharePercent], ['joint', 'chris', 60])
   check('3 people: nothing dangling', danglingReferences(deleted), [])
   check('a target that is not another person is refused (no-op)', applyBlockerAction(three, ellaSubject, 'pension:ella-pension', { type: 'reassign', target: { type: 'person', personId: ELLA } }, ASOF) === three, true)
 }
@@ -602,8 +604,8 @@ for (const [label, file] of [
       ...data.pensions.filter((x) => x.personId === p.id).map((x) => `pension:${x.id}`),
       ...data.savingsPots.filter((x) => x.personId === p.id).map((x) => `savingsPot:${x.id}`),
       ...data.pots.filter((x) => x.personId === p.id).map((x) => `pot:${x.id}`),
-      ...data.recurringTemplates.filter((x) => (x.location === 'joint' ? x.payee === p.id || x.payeeSharePercent < 100 : x.ownerId === p.id || x.personId === p.id)).map((x) => `template:${x.id}`),
-      ...data.loans.filter((x) => (x.location === 'joint' ? x.payee === p.id || x.payeeSharePercent < 100 : x.ownerId === p.id)).map((x) => `loan:${x.id}`),
+      ...data.recurringTemplates.filter((x) => (x.location === 'joint' ? x.payee === p.id : x.ownerId === p.id || x.personId === p.id)).map((x) => `template:${x.id}`),
+      ...data.loans.filter((x) => (x.location === 'joint' ? x.payee === p.id : x.ownerId === p.id)).map((x) => `loan:${x.id}`),
       ...data.creditCards.filter((x) => x.ownerId === p.id).map((x) => `creditCard:${x.id}`),
       ...data.transactions.filter((x) => x.status === 'pending' && (x.ownerId === p.id || x.personId === p.id)).map((x) => `transaction:${x.id}`),
     ].sort()
@@ -624,7 +626,7 @@ for (const [label, file] of [
   if (label === 'Adam') {
     const ella = data.people.find((x) => x.name === 'Ella')!
     const keys = findDeleteBlockers(data, { type: 'person', id: ella.id }).map((b) => b.name)
-    check("[Adam] Ella is blocked by her Tesco loan, her Test card and the 50% joint splits", [keys.includes('Tesco'), keys.includes('Test'), keys.includes('Prime'), keys.includes('Netflix')], [true, true, true, false])
+    check("[Adam] Ella is blocked by her Tesco loan and her Test card — NOT by the joint bills Adam is payee of", [keys.includes('Tesco'), keys.includes('Test'), keys.includes('Prime'), keys.includes('Netflix')], [true, true, false, false])
   }
   for (const potItem of data.pots) {
     const b = findDeleteBlockers(data, { type: 'pot', id: potItem.id })
@@ -639,6 +641,43 @@ for (const [label, file] of [
     const expected = data.recurringTemplates.filter((t) => t.kind === 'transfer' && (t.transferFrom?.savingsPotId === s.id || t.transferTo?.savingsPotId === s.id)).map((t) => `template:${t.id}`)
     check(`[${label}] savings pot ${s.name}: block list is complete`, b.map((x) => x.key).sort(), expected.sort())
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 🚨 PROMPT-16 Part D3 (2026-09-22) — the production damage, reproduced on
+// the production file, and the control that it no longer happens.
+//
+// Adam added a temporary third person, tapped "Set as me" on it and back (the
+// detour in PROMPT-16 B2), then deleted it. The delete guard listed all NINE
+// of his joint bills under "Joint account splits" as "Temp pays 25%" — true
+// of the model (costForPerson splits the remainder among every non-payee) —
+// and each "Move to Adam" ran reassignJointSplit, which set the share to 100.
+// Nine one-column UPDATEs of payee_share_percent, owner untouched, his share
+// of every joint bill doubled in every projection, no error anywhere.
+// ─────────────────────────────────────────────────────────────────────
+{
+  const prod = parseLedgerBackupJson(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-22-PROD.json', 'utf8'))
+  const adam = prod.people.find((p) => p.name === 'Adam')!
+  const jointBills = prod.recurringTemplates.filter((t) => t.location === 'joint')
+  check('[PROD] the file holds nine joint bills, every one Adam as payee at 50%', [jointBills.length, jointBills.every((t) => t.payee === adam.id && t.payeeSharePercent === 50 && t.ownerId === '')], [9, true])
+
+  const withTemp: AppDataV2 = { ...prod, people: [...prod.people, person('temp', 'Temp')], payCycles: [...prod.payCycles, defaultPayCycleConfig('temp')] }
+  const tempSubject: DeleteSubject = { type: 'person', id: 'temp' }
+  const blockers = findDeleteBlockers(withTemp, tempSubject)
+  check('[PROD] deleting the temporary third person lists NO joint bill (before the fix: all nine, "Temp pays 25%")', blockers.filter((b) => b.group === 'jointSplits').length, 0)
+  check('[PROD] …in fact it lists nothing at all: the temp person owns nothing', blockers, [])
+  const afterDelete = removePersonFromData(withTemp, 'temp')
+  check('[PROD] after the delete every joint bill is still 50/50, Adam as payee, no owner', afterDelete.recurringTemplates.filter((t) => t.location === 'joint').map((t) => [t.payee, t.payeeSharePercent, t.ownerId]), jointBills.map(() => [adam.id, 50, '']))
+  check('[PROD] nothing dangling', danglingReferences(afterDelete), [])
+
+  // The other half of the rule: if the PAYEE is deleted with two people left, the taker keeps the split.
+  const ella = prod.people.find((p) => p.name === 'Ella')!
+  const three: AppDataV2 = { ...withTemp, recurringTemplates: withTemp.recurringTemplates.map((t) => (t.name === 'Netflix' ? { ...t, payee: 'temp' } : t)) }
+  const b = findDeleteBlockers(three, tempSubject)
+  check('[PROD] a joint bill the temp person is PAYEE of is the one blocker', b.map((x) => [x.name, x.group, x.detail]), [['Netflix', 'jointSplits', 'Temp pays 50%']])
+  const moved = applyBlockerAction(three, tempSubject, b[0].key, { type: 'reassign', target: { type: 'person', personId: ella.id } }, ASOF)
+  const netflix = moved.recurringTemplates.find((t) => t.name === 'Netflix')!
+  check('[PROD] moving it to Ella makes her payee and KEEPS 50% (before the fix: 100)', [netflix.payee, netflix.payeeSharePercent, netflix.location], [ella.id, 50, 'joint'])
 }
 
 console.log(failures === 0 ? '\nAll delete-reassign checks passed.' : `\n${failures} check(s) FAILED.`)

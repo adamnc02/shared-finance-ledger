@@ -862,6 +862,10 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
     setDataState((prev) => removePersonFromData(prev, id))
   }
   const setPrimaryPerson: LedgerContextValue['setPrimaryPerson'] = (id) => {
+    // PROMPT-16 Part A: tell the store this is an explicit "Set as me" BEFORE
+    // the state changes, so it does not have to infer the tap from a diff
+    // (LedgerStore.setPrimaryPerson's own comment). The offline store has none.
+    store.setPrimaryPerson?.(id)
     setDataState((prev) => ({ ...prev, primaryPersonId: id }))
   }
 

@@ -54,7 +54,8 @@ import { clearHouseholdCache, getHouseholdId } from '../lib/powersync/household'
 import { justJoinedKey } from '../lib/powersync/linking'
 import { powerSyncAdapter } from '../lib/powersync/powerSyncAdapter'
 import { maybeUploadDailySnapshot } from '../lib/powersync/backup'
-import { createPowerSyncLedgerStore, type PowerSyncLedgerStore } from '../lib/store/powerSyncLedgerStore'
+import { SLOW_CLEAR_AFTER_MS, SLOW_CLEAR_LINE, warnIfSlow } from '../lib/powersync/slowOperation'
+import { createPowerSyncLedgerStore, identityAction, type PowerSyncLedgerStore } from '../lib/store/powerSyncLedgerStore'
 
 export const LAST_USER_KEY = `ledger:sync:db-user:${POWERSYNC_DB_FILENAME}`
 export const primaryPersonKey = (userId: string) => `ledger:sync:primary-person:${POWERSYNC_DB_FILENAME}:${userId}`
@@ -95,7 +96,9 @@ function SignedIn({ userId, email, children }: { userId: string; email: string; 
     restartLine.current = line ?? 'Syncing your household…'
     setPhase({ kind: 'starting', line: restartLine.current })
     void (async () => {
-      await powerSyncDb.disconnectAndClear()
+      // PROMPT-16 Part E: say so if the clear is blocked by another tab on
+      // this origin (slowOperation.ts). The clear itself still completes.
+      await warnIfSlow(powerSyncDb.disconnectAndClear(), SLOW_CLEAR_AFTER_MS, () => setPhase({ kind: 'starting', line: SLOW_CLEAR_LINE }))
       clearHouseholdCache()
       setAttempt((a) => a + 1)
     })()
@@ -125,7 +128,12 @@ function SignedIn({ userId, email, children }: { userId: string; email: string; 
         }
         if (lastUser !== userId) {
           setPhase({ kind: 'starting', line: 'Preparing this device…' })
-          await powerSyncDb.disconnectAndClear()
+          // PROMPT-16 Part E (MIGRATION-LESSONS §64): this hung for ever with
+          // Listly open in another tab. Name the likely cause after 10s; the
+          // clear is never aborted.
+          await warnIfSlow(powerSyncDb.disconnectAndClear(), SLOW_CLEAR_AFTER_MS, () => {
+            if (!cancelled) setPhase({ kind: 'starting', line: SLOW_CLEAR_LINE })
+          })
           try {
             localStorage.setItem(LAST_USER_KEY, userId)
           } catch {
@@ -144,6 +152,8 @@ function SignedIn({ userId, email, children }: { userId: string; email: string; 
           userId,
           firstSync,
           storageKey: primaryPersonKey(userId),
+          deliveryDebounceMs: 400, // PROMPT-16 Part G: read a restore's burst of commits as one state
+
           // Deleted on another device, or moved by a link code redeemed
           // elsewhere: drop this device's copy, including anything queued for
           // the old household, and boot again so ensure_household() gives the
@@ -157,18 +167,25 @@ function SignedIn({ userId, email, children }: { userId: string; email: string; 
         if (cancelled || !current) return
         restartLine.current = 'Syncing your household…'
         if (current.people.length === 0) return setPhase({ kind: 'empty', store, current })
-        // No row is linked to me, and either I have just joined (bringing
-        // nothing) or the person this device had chosen is gone. Ask which
-        // person is me once, rather than leaving the partner's dashboard
-        // showing — it resolves to the first person otherwise.
-        //
-        // The stale-choice half is PROMPT-14 Part 5's fallback (§0 Q4b): a
-        // restore whose incoming names were ambiguous cannot re-link this
-        // device, and silently becoming whoever sorts first (with their pay
-        // cycle) is the exact §23 failure the restore must not cause.
-        if (store.linkedPersonId === null && (justJoined(userId) || store.staleChoice)) {
-          return setPhase({ kind: 'claim', store, current })
+        // PROMPT-16 Parts B and F — who am I on this device? identityAction
+        // (powerSyncLedgerStore.ts) decides from what the store knows: a
+        // link → ready; my chosen row unlinked → link it (the self-heal that
+        // repairs a device whose view was always right but whose link was
+        // never written); the person I was showing is gone or someone
+        // else's → the one unlinked person with that name, else ASK. It
+        // never lets the people[0] fallback stand as an identity: that is
+        // the silent reassignment §23 and PROMPT-14 Part 5 exist to prevent.
+        const action = identityAction(store, current.people, justJoined(userId))
+        if (action.kind === 'link') {
+          console.info(`[sync] linking this account to person ${action.personId} (${action.reason}, PROMPT-16)`)
+          store.setPrimaryPerson(action.personId) // the explicit tap the store needs (Part A)
+          store.save({ ...current, primaryPersonId: action.personId }, current)
+          await store.flush()
+          if (cancelled) return
+          forgetJustJoined(userId)
+          return setPhase({ kind: 'ready', store })
         }
+        if (action.kind === 'ask') return setPhase({ kind: 'claim', store, current })
         setPhase({ kind: 'ready', store })
       } catch (err) {
         console.error('[sync] could not start', err)
@@ -270,6 +287,7 @@ function WhichPersonAmI({ store, current, userId, onDone }: { store: PowerSyncLe
   const [busy, setBusy] = useState(false)
   const choose = async (id: string) => {
     setBusy(true)
+    store.setPrimaryPerson(id) // PROMPT-16 Part A: the tap is explicit, never inferred from the view moving
     store.save({ ...current, primaryPersonId: id }, current)
     await store.flush()
     forgetJustJoined(userId)
