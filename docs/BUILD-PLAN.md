@@ -34,6 +34,13 @@ It is kept, and slimmed to this, for exactly two reasons.
 | "Current baseline" | `TECHNICAL.md` §34 owns the verify counts now, beside the suite it counts |
 | "Session protocol" | The `app-session` skill and `SHARED-FINANCE-LEDGER-INFO.md` own it |
 
+🚨 **Do not re-create the session log. It is not an oversight that it is missing.** It was removed
+on 2026-09-23, **re-added by a session later the same day**, and removed again — which is why this
+note is here rather than a line in the table above. There is no "append here before finishing" step
+any more: **the git history is the log.** If a round produced something that must outlive its
+commit, it belongs in `TECHNICAL.md`, in the phase register below, or in Standing risks — never in
+a narrative log in this file.
+
 **Nothing is open.** `PROMPT-17` — the median forecast, step 1 of the 2026-09-21 execution order,
 skipped while steps 2–4 all shipped — was built, UAT'd and merged on **2026-09-23**, and retired the
 same day. The run order is complete.
@@ -560,76 +567,3 @@ in that table is silent — neither Postgres nor PowerSync will warn you.
   per person — and that Ella's four-weekly cycle renders correctly once "set as me" is used. No
   scoping needed.
 - The open flagged-not-fixed items in `APP-KNOWLEDGE.md` §4.
-
----
-
-# 📓 Session log
-
-Newest first. **Every session appends here before finishing.**
-
-### 2026-09-23 — SESSION 17 — The median spend forecast, and a forecast carry-forward bug it uncovered
-**Prompt doc:** PROMPT-17 (retired) · **Apps touched:** all three · **Branches:**
-`feature/development-2026-09-23-median-forecast` (test + both live),
-`feature/uat-fixes-2026-09-23-forecast-carry-forward`, `…-forecast-caption` · **Merged:** yes
-
-**Done.** Three things, only one of which was planned.
-1. **The median forecast.** Above `MEDIAN_SPEND_HISTORY_DAYS` (42 = 6 whole weeks) the forecast is
-   the median of the window's per-week totals, scaled by `cycleDays / 7`. Below it, and whenever
-   that median is £0, behaviour is byte-identical to before. §0 answered live: 42 days (over
-   28/35/56), the existing week-trim reused unchanged, and the caption wording.
-2. **The forecast carry-forward fix** — see root causes.
-3. **The method caption on every forecast row**, after the first shape proved near-invisible.
-
-**Root causes.**
-- *Median:* a mean is one unusually large week away from being skewed, and a single one-off drags
-  **every** future cycle until it ages out of the window.
-- *Carry-forward:* `CycleGroupedList`'s fold read
-  `upToEnd.length > 0 ? upToEnd.at(-1).running : carried`. `carried` held the forecast-adjusted
-  figure but was only **reached** when no real row was dated on or before that cycle's end — and the
-  projection generates future bills and salary, so on a real ledger it never was. Every closing was
-  overstated by the sum of all **earlier** forecasts, growing each cycle. Live since 2026-09-14.
-  On the 2026-09-20 `personal-ledger` backup: hero −£866.80, final section **+£2,275.97**.
-
-**Files.** `src/lib/averageSpendForecast.ts` (+`MEDIAN_SPEND_HISTORY_DAYS`, `weeklySpendTotals`,
-`medianWeeklySpend`, `spendForecastMethod`), **new** `src/lib/cycleForecastChain.ts`,
-`src/pages/Home.tsx`, `TECHNICAL.md §23`, `docs/APP-KNOWLEDGE.md`.
-
-**Verify.** `tsc -b` clean in all three. Sweeps **155** (test), **141** (`personal-ledger`), **155**
-(`shared-finance-ledger`), zero failures. vitest 45/45. `check:divergence` 0 unaccounted.
-`verify-average-spend-forecast.ts` 45 → **84**; **new** `verify-cycle-forecast-chain.ts` (25),
-which carries a control reproducing the old fold.
-
-**Learnt / surprising.**
-- **The change is a no-op on today's real data.** Neither live dataset clears the 42-day bar yet;
-  mum's window reaches it on **2026-10-04**, and her figure will likely drop noticeably then, with
-  no release to blame. Checking that BEFORE writing the UAT is what forced the synthetic fixtures.
-- **Production hid the carry-forward bug rather than avoiding it.** Real bills and salary move each
-  cycle's balance enough that every figure reads plausibly alone. It only surfaced on a fixture
-  whose future cycles had no real rows — and it was caught by Adam looking at the screen, not by any
-  script. *A balance that is plausible is not a balance that is checked.*
-- **A UAT row that cannot fail is not a test.** Fixture B's "no 'typical week' anywhere" row passed
-  vacuously — B has no caption at all, because its only part-spent cycle is hidden by the £0 floor.
-  Making the caption always-visible turned it into a real check.
-- **Two figures on one screen that are the same quantity should be asserted equal somewhere.** The
-  hero/final-section invariant was written in a code comment and was simply untrue for nine days.
-
-**Deviated from the plan.** PROMPT-17 scoped one change; three shipped. The carry-forward fix was
-Adam's explicit call during UAT. The caption was revised after he could not find it on screen.
-
-**Next.** Nothing open. The 2026-09-21 run order is complete.
-
-### Template
-```
-### {{yyyy-mm-dd}} — SESSION NN — <title>
-**Prompt doc:** PROMPT-NN · **Apps touched:** … · **Branch:** … · **Merged:** yes/no
-**Done:** what actually shipped.
-**Root causes:** the real mechanism, not the symptom.
-**Files:** the ones that matter, with paths.
-**Verify:** tsc state, sweep count, new scripts added.
-**Learnt / surprising:** anything a future session would waste time rediscovering.
-**Deviated from the plan:** what and why.
-**Next:** which prompt doc, and what changed in it because of this session.
-```
-
----
-
