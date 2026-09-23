@@ -52,7 +52,7 @@
 //      Once at least one COMPLETED prior cycle has real history, this
 //      stops applying, including to the current cycle.
 //
-// 2026-09-23 methodology change (Adam-confirmed live, PROMPT-17): once
+// 2026-09-23 methodology change (Adam-confirmed live): once
 // the week-aligned window spans MEDIAN_SPEND_HISTORY_DAYS (42 days = 6
 // whole weeks), the pooled daily rate is replaced by the MEDIAN of the
 // window's own per-week totals, scaled by cycleDays / 7. Below that bar

@@ -22,7 +22,7 @@
 // real-world scenario this session's fix exists to block. See git
 // history for the superseded versions.
 //
-// 2026-09-23 (PROMPT-17) — a SECOND method is added below, not a
+// 2026-09-23 — a SECOND method is added below, not a
 // replacement: once the week-aligned window spans
 // MEDIAN_SPEND_HISTORY_DAYS (42 = 6 whole weeks), the forecast is built
 // from the MEDIAN of the window's own per-week totals instead of the
@@ -387,7 +387,7 @@ function anchor(location: 'personal' | 'joint', ownerId = 'p1'): Transaction {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 2026-09-23 — THE MEDIAN METHOD (PROMPT-17)
+// 2026-09-23 — THE MEDIAN METHOD
 // ════════════════════════════════════════════════════════════════════
 //
 // All fixtures below clamp the window by dating their earliest matching

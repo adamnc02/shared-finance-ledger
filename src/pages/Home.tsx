@@ -2325,7 +2325,7 @@ type CycleRowItem = { kind: 'real'; t: Transaction; running: number } | ({ kind:
  * just noise ("Reduced from £0" says nothing true). The METHOD word
  * after it always renders.
  *
- * 2026-09-23 (Adam's Q3, PROMPT-17) — that same caption now ends in
+ * 2026-09-23 (Adam's own call) — that same caption now ends in
  * "typical week" instead of "estimate" whenever the MEDIAN method
  * produced the figure. The method switch is automatic and has no release
  * to blame it on: an account quoting the same sort of number for weeks
