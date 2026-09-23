@@ -1331,6 +1331,38 @@ comes from `lib/pickerFirst.ts`.
 
 "Just a single payment" is how a one-off is expressed — there is no separate entity for it.
 
+### The form's starting owner is derived, never `||`-defaulted (PROMPT-16 Part D1)
+
+`src/lib/formOwner.ts`. **On a joint item `ownerId` is `''`, and `''` is a MEANING** — "joint, owned
+by nobody" — not "unset". The form used to seed its state with `initial?.ownerId || defaultOwnerId`,
+and `||` cannot tell the two apart: it swallowed the `''` and substituted `data.primaryPersonId`. So
+changing who "me" is made every joint bill's form report the new person as its owner.
+
+**That value was never displayed and never saved** — `LocationEditor` hides the Owner field for a
+joint item, and the save forces `''` back for `location === 'joint'` — so on its own it did no harm.
+It is written down anyway because **two places disagreeing about what `''` means is how the
+2026-09-22 joint-bill damage started** (§33), and the next reader of that `||` could not tell which
+of the two behaviours was the accident.
+
+`formOwnerId(initial, primaryPersonId)` states the rule once: **joint → the primary person as a
+STANDBY**, used only if the user switches the location to Personal or Pot, never written as the
+item's owner; **personal or pot → the item's own owner, or the primary person for a new one.**
+
+Two traps it exists to close, both of which produce a form that looks right:
+
+- Defaulting only when `initial` is absent still shows a person on a joint bill being **edited**.
+  The condition is about the **location**, not about whether there is an `initial`.
+- Making the form blank while leaving the save as it is puts the two out of step in the *other*
+  direction, and the save is then right by accident. `BillOwner.test.tsx` asserts the form **and**
+  the save together: no owner shown for a joint item, `''` saved with the share unchanged, and a new
+  personal bill still defaulting to the primary person.
+
+🚨 **Same class as the overdraft field found the same evening: a falsy-but-meaningful value (`''`,
+`0`) rendered as "unset".** `|| defaultOwnerId`, `|| primaryPersonId` and `ownerId ||` are worth
+grepping across all three apps — this is unlikely to have been the only one.
+
+**Shared with `personal-ledger`**, which has the same form and the same trap.
+
 ---
 
 ## 28. Module: Transactions
@@ -1564,7 +1596,9 @@ blocked while anything still points at it.
 
 > **The fixtures, and what each is for (PROMPT-12 Part 4):** four real backups (Adam 2026-09-15, mum
 > 2026-09-15, 2026-09-17 and **2026-09-20** — the last is the only real file with a credit-card lump
-> payment, and the first with `auto:` ids), read by absolute path from the tracking folder; the two
+> payment, and the first with `auto:` ids), plus **`finance-ledger-backup-2026-09-22-PROD.json`**,
+> the real pre-detour production export `verify-delete-reassign.ts` reproduces PROMPT-16 D3 against
+> (§33) — **five** real backups in all, read by absolute path from the tracking folder; the two
 > committed fixtures in `scripts/fixtures/`; and **`scripts/lib/syntheticFixture.ts`**, the ONE
 > synthetic dataset for every shape no real backup carries — a pension occurrence override, a
 > savings-pot interest override and legacy recurring-deposit override, a salary sort with derived ids,
@@ -1578,7 +1612,7 @@ blocked while anything still points at it.
 
 ```bash
 npx tsc -b                 # must be clean
-npx vitest run             # SavingsPotForm + LedgerProvider suites
+npx vitest run             # 45 tests: SavingsPotForm, LedgerProvider, OverdraftField, BillOwner
 npm run check:divergence   # must pass: no un-registered difference from personal-ledger
 for f in scripts/verify-*.ts; do out=$(npx tsx "$f" 2>&1); rc=$?; \
   if [ $rc -ne 0 ] || echo "$out" | grep -qE "✗|^FAIL|Error:"; then \
@@ -1921,6 +1955,28 @@ or the gate would open on a truly empty ledger.
 **An empty household is never given a "Me" automatically** — that would be carried into the second
 person's join path.
 
+### A boot step that is merely slow must say so (PROMPT-16 Part E)
+
+`src/lib/powersync/slowOperation.ts`. When a different account signs in on this device, `SyncRoot`
+calls `disconnectAndClear()` before anything else. **OPFS locks are per ORIGIN, not per app**, and
+every app here is on `adamnc02.github.io` — so Listly open in another tab blocks the clear, and
+`OPFSCoopSyncVFS` **waits rather than failing**: no error, no timeout, nothing in the console, and
+"Preparing this device…" on screen for ever (MIGRATION-LESSONS §64).
+
+🚨 **The cost was the silence, not the wait.** The screen named the device, so the suspicion went to
+auth, RLS, membership and the sync stream — four healthy things checked against the live database
+before the real cause was found.
+
+`warnIfSlow` changes the **line** after `SLOW_CLEAR_AFTER_MS` (10 s) to name the likely cause —
+another tab or installed app on this origin holding the local database — and offers the same restart
+the `error` phase does.
+
+🚨 **It must never abort the clear.** A half-cleared database still belonging to the previous user is
+far worse than a slow one. **Change the message, not the operation.**
+`verify-slow-operation.ts` resolves the clear after a delay, asserts the line changed while it was
+still pending and that the app still reaches `ready`; its control removes the timeout and shows the
+line never changing.
+
 ### The rescue
 
 `src/components/LegacyDataMigration.tsx` is the empty-household screen: *Import this device's data*
@@ -2070,6 +2126,33 @@ it as an invariant.
 > behind a warning that names the source and says what it replaces, and is **never offered at
 > sign-in**.
 
+### Hand-editing the data: which of the two routes (PROMPT-14 Part 6)
+
+Both routes are legitimate and **they fail in opposite directions**, which is why the choice is
+written down. The worked examples are in `APP-KNOWLEDGE.md` §1.30.
+
+**Edit the row in the Supabase table editor** when the change is a *value*, in a column that is not
+a reference and is not part of a composite id. It is surgical and replicates down the ordinary sync
+path. Three traps, each learnt the hard way:
+
+- **`jsonb` must be a JSON value, never a string** (§38) — `amount_history`, `interest_history`,
+  `payday_history`, scenario actions;
+- **composite ids encode their own data** (§10, §42): changing `salary_sorts.pay_date` orphans
+  `sort:<personId>:<payDate>`, its targets and its transfer; the same goes for `auto:<dedupeKey>`.
+  Change the id too, or do it in JSON;
+- **`position` is real-valued**: append = last + 1, mid-list = the midpoint, **never renumber**.
+
+**Export, edit the JSON, re-import** when the change is *structural* — deleting an entity and the
+rows that point at it, re-parenting a pot, anything touching a `sort:` or `auto:` id. One edit in a
+self-consistent document beats a hand-written cascade across 27 tables, and `migrateLedgerData` +
+`reconcilePersonReferences` run on the way back in, which the table editor bypasses entirely. This
+is the route `isSameHouseholdPatch` above exists to make cheap: **Back Up Now → This device**, edit
+the JSON, **Restore → A file**, and only the fields that actually changed are written.
+
+🚨 **Never hand-edit `households`, `household_members` or `linked_user_id`.** Those are what the RLS
+policies and the link/redeem functions maintain, and only a member's own device may write their own
+link (§42).
+
 ---
 
 ## 44. The divergence register, and the other apps on this project
@@ -2082,11 +2165,30 @@ table machine-readable: one path or glob per row, no prose in the path column.
 
 > 🚨 **`DIVERGENCE.md` is NOT in this repo.** It lives at
 > `~/Downloads/App Development & Bug Tracking/shared-finance-ledger/DIVERGENCE.md` and
-> `scripts/check-divergence.ts` reads it there **by absolute path**. It is one of four files in
-> that folder the repos depend on at runtime — the other three are the real backups
-> `finance-ledger-backup-2026-09-15.json`, `finance-ledger-backup-2026-09-15-mum.json` and
-> `finance-ledger-backup-2026-09-17-mum.json`, which **45 verify scripts across the three ledger
-> repos read by absolute path**. Deleting any of the four breaks the sweep.
+> `scripts/check-divergence.ts` reads it there **by absolute path**.
+>
+> 🚨 **SIX files in that folder are load-bearing at runtime, not four** (re-counted 2026-09-23).
+> `DIVERGENCE.md` plus **five** real backups, none of them in git and none with a second copy.
+> Deleting any one of them breaks the sweep — silently, until the next run:
+>
+> | File in `App Development & Bug Tracking/shared-finance-ledger/` | Read by | `personal-ledger` | here | `finance-ledger-test` |
+> |---|---|---|---|---|
+> | `DIVERGENCE.md` | `check-divergence.ts`, and so `npm run deploy`'s guard | — | 1 | — |
+> | `finance-ledger-backup-2026-09-15.json` | the sweep | 28 | 39 | 39 |
+> | `finance-ledger-backup-2026-09-15-mum.json` | the sweep | 21 | 23 | 23 |
+> | `finance-ledger-backup-2026-09-17-mum.json` | the sweep | 15 | 20 | 20 |
+> | **`finance-ledger-backup-2026-09-20-mum.json`** | `verify-mapping-nulls.ts`, `verify-import-regenerates-ids.ts` (PROMPT-12 Part 4) | 0 | 2 | 2 |
+> | **`finance-ledger-backup-2026-09-22-PROD.json`** | `verify-delete-reassign.ts` — the real pre-detour production export PROMPT-16 D3 was proven against | 1 | 1 | 1 |
+>
+> The last two became load-bearing **after** the 2026-09-21 cleanup earmark was written, which is
+> exactly how a file like this gets tidied away. **Re-run the path sweep before deleting anything in
+> that folder**, rather than trusting any list — including this one:
+>
+> ```bash
+> cd ~/Documents/GitHub && grep -rhoE "App Development & Bug Tracking/[A-Za-z0-9 ._&'-]+(/[A-Za-z0-9 ._&'-]+)*" \
+>   personal-ledger/scripts shared-finance-ledger/scripts finance-ledger-test/scripts listly/scripts \
+>   | sort | uniq -c | sort -rn
+> ```
 
 **Explicitly not allowed to diverge** — a difference here is a bug, not a decision:
 
