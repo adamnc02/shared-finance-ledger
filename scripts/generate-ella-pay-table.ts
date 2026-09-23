@@ -25,7 +25,12 @@ import { toLocalIsoDate as iso } from '../src/lib/date'
 import type { AppDataV2, PayCycleConfig, Person } from '../src/types/ledger'
 
 const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger'
-const OUT = process.argv[2] ?? `${DIR}/ELLA-PAY-TABLE-FY2026-27-to-FY2027-28.md`
+// The table, its two source spreadsheets and its screenshots live together in
+// one folder (2026-09-23). The screenshot links written at the foot of the
+// table are RELATIVE to the table, so `screenshots/` must stay a subfolder of
+// OUT's directory — moving the table without its screenshots breaks them.
+const ELLA_DIR = `${DIR}/ella-pay-cycle`
+const OUT = process.argv[2] ?? `${ELLA_DIR}/ELLA-PAY-TABLE-FY2026-27-to-FY2027-28.md`
 const raw = JSON.parse(readFileSync(`${DIR}/finance-ledger-backup-2026-09-15.json`, 'utf8'))
 const adam: AppDataV2 = migrateLedgerData(raw.data ?? raw)
 const ella0 = adam.people.find((p) => p.name === 'Ella')!
