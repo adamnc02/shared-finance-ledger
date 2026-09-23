@@ -271,7 +271,7 @@ against what was actually built.
 >
 > | # | Work | Where | State |
 > |---|---|---|---|
-> | 1 | Average-spend-forecast median — its own session | `personal-ledger/2026-10-28/PROMPT-average-spend-forecast-median-2026-10-28.md` | Not started |
+> | 1 | Average-spend-forecast median — its own session | 🆕 **`PROMPT-17-average-spend-forecast-median.md`** (rewritten 2026-09-23; the old `personal-ledger/2026-10-28/…` file is superseded) | 🔴 **STILL NOT STARTED** — steps 2, 3 and 4 all shipped without it |
 > | 2 | **PROMPT-14 Parts 1–7, in ONE session** — Adam merged steps 2 and 4 on 2026-09-22: *"This and the backup work should be done in the same session"* | PROMPT-14 (Phase 8) | ✅ **BUILT 2026-09-22 (session 13)**, awaiting UAT and the migration's go-ahead |
 > | 3 | **This phase** — final validation, now covering the alerts (🔔 items throughout PROMPT-12) | PROMPT-12 (Phase 6) | 🟡 **IN PROGRESS (session 17, 2026-09-23)** — baseline taken, Parts 4 and 5 built; waiting on one real 20:00 |
 > | 4 | PowerSync keep-alive | Phase 7, still genuinely last | ✅ **DONE 2026-09-23** — runs from this repo only |
