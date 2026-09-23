@@ -25,7 +25,7 @@
 import type { AppData, Bill as LegacyBill, Loan as LegacyLoan, Person as LegacyPerson } from '../types/models'
 import type { AppDataV2, RecurringTemplate } from '../types/ledger'
 import { findApplicableSnapshot } from './salaryLedger'
-import { summarizeLoan as summarizeLedgerLoan, resolveLoanRateAndConvention } from './ledgerLoans'
+import { summarizeLoan as summarizeLedgerLoan, resolveLoanRateAndConvention, buildLoanSchedule } from './ledgerLoans'
 import { computeMinimumPaymentAmount, withLiveBalances } from './creditCards'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -130,10 +130,21 @@ export function buildLegacyAppData(ledgerData: AppDataV2, asOf: Date = new Date(
   const loans: LegacyLoan[] = ledgerData.loans.filter((loan) => loan.active).map((loan) => {
     const summary = summarizeLedgerLoan(loan, asOf)
     const { monthlyRate, convention } = resolveLoanRateAndConvention(loan)
+    // 🚨 The first payment is the next one genuinely DUE, not today.
+    // `totalAmount` is already the balance as of today, and summarizeLoan()
+    // treats a payment dated on its as-of date as ALREADY MADE — so dating
+    // the schedule from today silently knocked one whole instalment off the
+    // balance every What-if page showed. Adam reported it 2026-09-23: a
+    // £10,050 Monzo loan that has not had a single payment yet (first due
+    // 2026-10-01) read as £9,906.51 here, while the loan card, the pie charts
+    // and the Borrowing form all correctly showed £10,050. The difference was
+    // exactly one payment's capital: 195 − 51.51 interest = 143.49.
+    // Falls back to today only for a loan with nothing left to pay.
+    const nextDueIso = buildLoanSchedule(loan).find((e) => e.date > asOfIso)?.date ?? asOfIso
     return {
       id: loan.id,
       name: loan.name,
-      firstPaymentDate: asOfIso,
+      firstPaymentDate: nextDueIso,
       totalAmount: summary.remainingBalance,
       monthlyPayment: loan.monthlyPayment,
       location: loan.location,
