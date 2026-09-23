@@ -202,7 +202,7 @@ const on16th: TemplateSchedule = { frequency: 'monthly', anchorDate: '2025-01-16
 // 5. Mum's real backup — every template, day +1 from its most recent payment
 // ─────────────────────────────────────────────────────────────────────
 {
-  const BACKUP = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15-mum.json'
+  const BACKUP = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15-mum.json'
   const loaded = autoClearDuePayments(parseLedgerBackupJson(readFileSync(BACKUP, 'utf8')), asOf)
   const agria = loaded.recurringTemplates.find((t) => t.name === 'Agria Pet Insurance - Pippa')!
   const reported = change(loaded, agria.id, { frequency: 'monthly', anchorDate: '2026-09-16' }, '2026-09-15')

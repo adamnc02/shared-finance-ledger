@@ -36,7 +36,7 @@ function check(label: string, actual: unknown, expected: unknown) {
   if (!ok) failures++
 }
 
-const BACKUP_DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger'
+const BACKUP_DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures'
 
 function snap(over: Partial<SalarySnapshot> & Pick<SalarySnapshot, 'id' | 'effectiveFrom' | 'grossAnnual' | 'recordedSeq'>): SalarySnapshot {
   return {

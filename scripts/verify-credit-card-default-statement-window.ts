@@ -38,7 +38,7 @@ check('out-of-range low is clamped', defaultStatementWindowForPaymentDay(0), { s
 
 // --- Applying the default to the real card must keep it reconciled ---
 console.log('\n--- the offered default applied to mum\'s Santander ---')
-const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15-mum.json', 'utf8'))
+const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15-mum.json', 'utf8'))
 const txns: Transaction[] = raw.transactions
 const stored = (raw.creditCards as CreditCard[]).find((c) => c.id === 'lhF0fbR8')!
 const santander = { ...stored, lumpPayments: stored.lumpPayments ?? [] } as CreditCard

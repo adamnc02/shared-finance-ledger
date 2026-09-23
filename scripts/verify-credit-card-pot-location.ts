@@ -33,7 +33,7 @@ function check(label: string, actual: unknown, expected: unknown) {
   if (!ok) failures++
 }
 
-const MUM = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15-mum.json'
+const MUM = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15-mum.json'
 const base = parseLedgerBackupJson(readFileSync(MUM, 'utf8'))
 const PID = base.primaryPersonId!
 const PAY = base.payCycles.find((p) => p.personId === PID)!

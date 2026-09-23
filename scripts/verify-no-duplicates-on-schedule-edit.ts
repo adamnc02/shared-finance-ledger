@@ -54,7 +54,7 @@ function check(label: string, actual: unknown, expected: unknown) {
 
 const TODAY = '2026-09-16'
 const asOf = parseLocalDate(TODAY)
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/'
 const load = (file: string) => autoClearDuePayments(parseLedgerBackupJson(readFileSync(DIR + file, 'utf8')), asOf)
 const mum = load('finance-ledger-backup-2026-09-15-mum.json')
 const adamBackup = load('finance-ledger-backup-2026-09-15.json')

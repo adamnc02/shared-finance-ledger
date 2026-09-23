@@ -99,7 +99,7 @@ for (let y = 2027; y <= 2060; y++) ends.push(fiscalYearEnd(y, THURSDAY).getDate(
 check('…because every year ends between 25 and 31 March, before 6 April', [Math.min(...ends), Math.max(...ends)], [25, 31])
 
 console.log("\n── Ella's pay dates on the fiscal frequency ──")
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures'
 const raw = JSON.parse(readFileSync(`${DIR}/finance-ledger-backup-2026-09-15.json`, 'utf8'))
 const adam: AppDataV2 = migrateLedgerData(raw.data ?? raw)
 const ella0 = adam.people.find((p) => p.name === 'Ella')!

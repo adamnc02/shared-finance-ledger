@@ -48,7 +48,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
   }
 }
 
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures'
 const BACKUPS = ['finance-ledger-backup-2026-09-15.json', 'finance-ledger-backup-2026-09-15-mum.json', 'finance-ledger-backup-2026-09-17-mum.json']
 const load = (n: string) => parseLedgerBackupJson(readFileSync(`${DIR}/${n}`, 'utf8'))
 const AS_OF = new Date(2026, 8, 15)

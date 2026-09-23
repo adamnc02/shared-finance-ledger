@@ -11,7 +11,7 @@ import type { AppDataV2, Loan } from '../src/types/ledger'
 // (the original scripts/fixtures/backup-2026-08-24.json was never committed,
 // so this crashed on every machine from 2026-09-05 until 2026-09-17). Point
 // LEDGER_BACKUP at a fresher export to re-run these checks against current data.
-const BACKUP = process.env.LEDGER_BACKUP ?? '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15-mum.json'
+const BACKUP = process.env.LEDGER_BACKUP ?? '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15-mum.json'
 const data = JSON.parse(readFileSync(BACKUP, 'utf8')) as AppDataV2
 const today = new Date(2026, 8, 15) // the backup's export date, see verify-cycle-end-totals.ts
 const hi = data.loans.find(l => l.name === 'Home Improvements')!

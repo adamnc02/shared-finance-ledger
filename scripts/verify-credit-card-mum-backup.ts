@@ -51,7 +51,7 @@ function checkReconciles(label: string, card: CreditCard, transactions: Transact
   return { live, pending, sum }
 }
 
-const BACKUP = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15-mum.json'
+const BACKUP = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15-mum.json'
 const raw = JSON.parse(readFileSync(BACKUP, 'utf8'))
 const txns: Transaction[] = raw.transactions
 // `lumpPayments` is absent on both of her cards — it predates the field.

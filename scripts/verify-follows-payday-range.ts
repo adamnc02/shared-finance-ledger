@@ -36,7 +36,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
   }
 }
 
-const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15.json', 'utf8'))
+const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15.json', 'utf8'))
 const data: AppDataV2 = migrateLedgerData(raw.data ?? raw)
 const payCycle = data.payCycles.find((c) => c.personId === data.primaryPersonId)!
 const transfers = data.recurringTemplates.filter((t) => t.kind === 'transfer' && t.followsPayday)

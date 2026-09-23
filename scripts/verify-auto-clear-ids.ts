@@ -35,7 +35,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
   }
 }
 
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/'
 const files = ['finance-ledger-backup-2026-09-17-mum.json', 'finance-ledger-backup-2026-09-15.json']
 
 /** What sync does with two devices' rows: one row per id (the connector upserts on id). */

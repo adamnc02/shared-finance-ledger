@@ -79,7 +79,7 @@ function loadBackup(path: string): AppDataV2 {
   return migrateLedgerData(raw.data ?? raw)
 }
 
-const BACKUPS_DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger'
+const BACKUPS_DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures'
 const mum = loadBackup(`${BACKUPS_DIR}/finance-ledger-backup-2026-09-17-mum.json`)
 const adam = loadBackup(`${BACKUPS_DIR}/finance-ledger-backup-2026-09-15.json`)
 

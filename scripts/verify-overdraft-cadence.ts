@@ -53,7 +53,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
   }
 }
 
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures'
 const HH = '11111111-2222-3333-4444-555555555555'
 const base = parseLedgerBackupJson(readFileSync(`${DIR}/finance-ledger-backup-2026-09-15.json`, 'utf8'))
 const OWNER = base.people[0].id

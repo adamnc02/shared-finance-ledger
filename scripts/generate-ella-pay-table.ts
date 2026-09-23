@@ -31,7 +31,7 @@ const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-fina
 // OUT's directory — moving the table without its screenshots breaks them.
 const ELLA_DIR = `${DIR}/ella-pay-cycle`
 const OUT = process.argv[2] ?? `${ELLA_DIR}/ELLA-PAY-TABLE-FY2026-27-to-FY2027-28.md`
-const raw = JSON.parse(readFileSync(`${DIR}/finance-ledger-backup-2026-09-15.json`, 'utf8'))
+const raw = JSON.parse(readFileSync(`${DIR}/fixtures/finance-ledger-backup-2026-09-15.json`, 'utf8'))
 const adam: AppDataV2 = migrateLedgerData(raw.data ?? raw)
 const ella0 = adam.people.find((p) => p.name === 'Ella')!
 const snapshot = { ...ella0.salaryHistory[0], payFrequency: 'four_weekly_fiscal' as const }

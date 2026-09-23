@@ -81,8 +81,8 @@ check('localStorageLedgerStore is importable without a browser (storage looked u
 // ── 1. Round trip ─────────────────────────────────────────────────────────
 console.log('\n1. Round trip through an in-memory Storage')
 const backupPaths = [
-  '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15.json',
-  '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15-mum.json',
+  '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15.json',
+  '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15-mum.json',
 ]
 const fixturePaths = [
   new URL('./fixtures/backup-2026-09-02.json', import.meta.url).pathname,
