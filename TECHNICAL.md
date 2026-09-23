@@ -1160,11 +1160,79 @@ can assert it.
 
 `lib/averageSpendForecast.ts` projects a placeholder ad-hoc spend figure, Personal and Joint only,
 from ad-hoc `type: 'expense'` rows (never bills, loans, card spend, recurring templates or income).
-The methodology is a **single daily rate** — total matching spend over the window divided by the
-window's own day count — scaled by each cycle's actual length, and then reduced by whatever real
-ad-hoc spend already sits in that cycle. **The window's end is today, not the last matching
-transaction's date**: no-spend days between the last transaction and today pull the rate down, and
-excluding them would flatter it.
+It is then reduced by whatever real ad-hoc spend already sits in that cycle. **The window's end is
+today, not the last matching transaction's date**: no-spend days between the last transaction and
+today pull the rate down, and excluding them would flatter it.
+
+**Two methods produce the figure, chosen automatically. There is no user-facing setting.**
+
+| Method | When | What it is |
+|---|---|---|
+| **Median** | the week-aligned window spans `MEDIAN_SPEND_HISTORY_DAYS` (42 = 6 whole weeks) | the **median of the window's own per-week totals**, scaled by `cycleDays / 7` |
+| **Mean** | below that bar, or whenever the median is £0 | the pooled daily rate — total matching spend / window days — scaled by the cycle's own length |
+
+A mean is one unusually large week away from being skewed: a single big one-off — a gift, an
+appliance, a rare big shop — pulls **every** future cycle's forecast up until it ages out of the
+window. A median of several weeks' own totals ignores that week rather than being dragged by it.
+
+**The two thresholds are independent and both matter.** `MIN_SPEND_HISTORY_DAYS` (14) is unchanged
+and remains the only gate on showing a forecast **at all**; 42 decides only **which method**
+produces the number. Two or three weeks is not enough to *have* a middle one — picking one of three
+numbers is not materially different from the mean over the same tiny sample, and arguably worse.
+
+🚨 **The median is of per-WEEK TOTALS, never of transaction amounts.** A median of individual
+amounts answers a different question entirely (the typical size of a shop, not the typical weekly
+outgoing), ignores how *many* shops a week contains, and would look entirely plausible while being
+wrong. Weeks with no spend are real £0 buckets and are kept.
+
+🚨 **A £0 median falls back to the mean.** Someone who shops once a month has four £0 weeks out of
+six, so their typical week genuinely is £0 — and `buildForecastByCycle` drops any cycle whose
+average is `<= 0`, so without the fallback their forecast row would silently **disappear** the day
+they crossed 42 days, with no release to blame. `spendForecastMethod` reports the method that
+actually **ran**, not eligibility, so a mean-derived figure is never captioned as a typical week.
+
+🚨 **`forecastSpendForCycle` is not forked.** Both methods feed it a different
+`averageForThisCycle` and nothing else. Duplicating it per method is how the two paths would drift.
+
+**Why two adjacent cycles show different forecasts with nothing scheduled** (asked twice during the
+2026-09-23 UAT, so it is written down here). The forecast is not a scheduled item — it is a daily
+rate. A £120 typical week is £17.14 a day, so a 30-day cycle forecasts £514.29 and a 31-day cycle
+£531.43. The difference is *exactly one day*. Pay cycles genuinely run 28–31 days, so a flat
+monthly figure would over-forecast short cycles and under-forecast long ones. The tell is that two
+non-adjacent 30-day cycles show **identical** figures.
+
+### The forecast carries forward — `lib/cycleForecastChain.ts`
+
+`buildCycleForecastChain` owns the cycle-grouped ledger's closing-balance chain. It lives in `lib`,
+not in `Home.tsx`, so `verify-cycle-forecast-chain.ts` can assert it — the same reason
+`cycleSummary.ts` does.
+
+**The invariant: the final cycle section's closing balance equals the hero's "projected" figure.**
+The hero computes `projectedBalance - forecastTotal`, summing *every* cycle's forecast, so the two
+are the same quantity by construction.
+
+🚨 **The bug it exists to prevent** (live 2026-09-14 → 2026-09-23). The fold re-based each cycle
+on the raw running balance and subtracted only that cycle's **own** forecast:
+
+```ts
+const realClosing = upToEnd.length > 0 ? upToEnd[upToEnd.length - 1].running : carried
+```
+
+`carried` held the adjusted figure but was only **reached** when no real row was dated on or before
+that cycle's end — and on a real ledger the projection generates future bills and salary, so
+`upToEnd` was never empty. Every closing was overstated by the sum of all **earlier** forecasts,
+growing each cycle. On a real backup the hero said −£866.80 while the final section said
+**+£2,275.97**: £3,142.77 apart, opposite signs. It was invisible for nine days because real bills
+and salary move each cycle's balance enough that every figure looks plausible on its own — it was
+caught on a synthetic fixture whose future cycles had no real rows, where the repeated numbers stood
+out.
+
+🚨 **Row-level running balances are offset too, not only the closings.** Otherwise a cycle's last
+row minus its forecast row stops equalling its closing balance, which is the sum a person does by
+eye. 🚨 **And the no-rows branch must not double-subtract:** `carried` is already fully adjusted.
+That is the obvious-looking wrong fix.
+
+`SavingsPotCycleGroupedList` has the same fold but no forecast, so it is deliberately untouched.
 
 > **The home page ledger is the downstream consumer of everything.** Bills, Loans, Borrowing,
 > Transactions and Wallet all write into state the Home hero cards render. **Any engine change must

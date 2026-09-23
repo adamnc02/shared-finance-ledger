@@ -51,6 +51,24 @@
 //      own partial data, reflected back onto its own remaining days).
 //      Once at least one COMPLETED prior cycle has real history, this
 //      stops applying, including to the current cycle.
+//
+// 2026-09-23 methodology change (Adam-confirmed live, PROMPT-17): once
+// the week-aligned window spans MEDIAN_SPEND_HISTORY_DAYS (42 days = 6
+// whole weeks), the pooled daily rate is replaced by the MEDIAN of the
+// window's own per-week totals, scaled by cycleDays / 7. Below that bar
+// — and whenever that median is genuinely £0 — everything behaves
+// exactly as it did before. The mean's weakness is that one unusually
+// large week (a gift, an appliance, a rare big shop) pulls every future
+// cycle's forecast up until it ages out of the window; a median of
+// several weeks' own totals ignores that week instead of being dragged
+// by it, which is much closer to "what does a typical week actually
+// look like". MIN_SPEND_HISTORY_DAYS (14) is untouched and remains the
+// only gate on showing a forecast AT ALL — 42 decides only which method
+// produces the number.
+//   🚨 The two-threshold shape is the point, not an accident: two or
+//   three weeks is not enough to HAVE a middle one — picking one of
+//   three numbers is not materially different from the mean over the
+//   same tiny sample, and arguably worse.
 
 import { differenceInCalendarDays } from 'date-fns'
 import { previousCycles } from './projection'
@@ -229,17 +247,145 @@ export function dailySpendRate(data: AppDataV2, scope: SpendScope, personId: str
 }
 
 /**
- * The average ad-hoc expense for ONE cycle (current or future): the daily
- * rate scaled by that cycle's own actual length in days — never a fixed/
- * typical constant, since pay cycle length can vary cycle to cycle. 0 for
- * a cycle that's the very first one with any matching history at all
- * (see `isFirstLoggedCycle`) — nothing to genuinely average yet.
+ * The second, HIGHER bar the median method must clear before it takes
+ * over from the pooled mean — 6 whole weeks. MIN_SPEND_HISTORY_DAYS (14)
+ * is unchanged and still the ONLY gate on showing a forecast at all; this
+ * is a separate, stricter threshold that only decides WHICH method
+ * produces the number.
+ *
+ * 2026-09-23 (Adam-confirmed, chosen over 28/35/56 with the reasoning
+ * given live): a median needs enough independent weeks to have a genuine
+ * middle one. At 4 buckets the median is the mean of weeks 2 and 3 — a
+ * single outlier week is a quarter of the sample and still drags the
+ * middle pair, which is barely different from the mean it replaces. At 6
+ * buckets the median is the mean of weeks 3 and 4 with two ordinary
+ * weeks either side, so one unusually large week cannot reach the middle
+ * at all — which is the entire point of the change. 8 weeks is more
+ * robust still, but the window itself only ever spans ~3 pay cycles
+ * (~90 days), so it would leave a narrow band in which the better method
+ * ever engages.
+ *
+ * 🚨 Expressed against the WEEK-ALIGNED window, not the raw one. (They
+ * agree — `weekAlignedWindowStart` trims `raw % 7` days, so aligned >= 42
+ * exactly when raw >= 42 — but the aligned span is the one that becomes
+ * buckets, and stating it that way is what stops a later reader "fixing"
+ * this to read the raw span.)
+ */
+export const MEDIAN_SPEND_HISTORY_DAYS = 42
+
+/**
+ * The week-aligned lookback window split into whole 7-day buckets, each
+ * bucket's own total matching ad-hoc spend, OLDEST FIRST. The window is
+ * already an exact number of weeks (see `weekAlignedWindowStart`), so
+ * every bucket is a full 7 days and the last one ends on `asOfDate` —
+ * there is never a partial bucket to decide what to do with.
+ *
+ * 🚨 The unit is "one week's TOTAL spend", not "one transaction". A
+ * median of individual transaction amounts answers a completely
+ * different question (the typical size of a shop, not the typical weekly
+ * outgoing) and would look entirely plausible while being wrong — it
+ * would also ignore how MANY shops a week contains, which is most of the
+ * signal. Weeks with no spend at all are real £0 buckets and are kept:
+ * dropping them would reintroduce exactly the "extrapolate one big
+ * Saturday across a month" bug MIN_SPEND_HISTORY_DAYS exists to block.
+ */
+export function weeklySpendTotals(data: AppDataV2, scope: SpendScope, personId: string, asOfDate: Date): number[] {
+  const start = weekAlignedWindowStart(rawWindowStart(data, scope, personId, asOfDate), asOfDate)
+  const totalDays = daysInclusive(start, asOfDate)
+  if (totalDays < 7) return []
+  const weeks = Math.floor(totalDays / 7)
+  const buckets: number[] = []
+  for (let w = 0; w < weeks; w++) {
+    const bucketStart = new Date(start)
+    bucketStart.setDate(bucketStart.getDate() + w * 7)
+    const bucketEnd = new Date(bucketStart)
+    bucketEnd.setDate(bucketEnd.getDate() + 6)
+    const startIso = toIso(bucketStart)
+    const endIso = toIso(bucketEnd)
+    buckets.push(round2(data.transactions.filter((t) => matchesSpendScope(t, scope) && t.date >= startIso && t.date <= endIso).reduce((sum, t) => sum + t.amount, 0)))
+  }
+  return buckets
+}
+
+/** The middle value of an ascending copy — the mean of the two middle entries for an even count, which is the ordinary definition and keeps an even-bucket window from arbitrarily favouring the lower week. */
+function median(values: number[]): number {
+  if (values.length === 0) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+/**
+ * The typical week's total ad-hoc spend — the median of
+ * `weeklySpendTotals` — or **0 when the median method does not apply**,
+ * which is the single signal every caller uses to fall back to the mean.
+ * Two distinct reasons it returns 0, deliberately collapsed into one
+ * answer because both mean the same thing to a caller:
+ *
+ *   1. The window spans fewer than MEDIAN_SPEND_HISTORY_DAYS (42) days —
+ *      not enough independent weeks to have a genuine middle one.
+ *   2. The median of the buckets genuinely IS £0.
+ *
+ * 🚨 (2) is not hypothetical and is why the fallback exists (Adam-
+ * confirmed 2026-09-23). Someone who does one big shop a month has four
+ * £0 weeks out of six, so their middle week is £0 — and with no fallback
+ * their forecast row would silently DISAPPEAR the day they crossed the
+ * 42-day threshold, because `buildForecastByCycle` drops any cycle whose
+ * average is <= 0. Removing a figure a user has been reading, with no
+ * release to blame it on, is the exact failure this change is supposed
+ * to avoid causing. So a £0 median hands back to the pooled mean, which
+ * still has a real number for that account.
+ */
+export function medianWeeklySpend(data: AppDataV2, scope: SpendScope, personId: string, asOfDate: Date): number {
+  const start = weekAlignedWindowStart(rawWindowStart(data, scope, personId, asOfDate), asOfDate)
+  if (daysInclusive(start, asOfDate) < MEDIAN_SPEND_HISTORY_DAYS) return 0
+  return median(weeklySpendTotals(data, scope, personId, asOfDate))
+}
+
+/** Which method actually produced the number for this scope right now. Exposed so the UI can say so (Adam's Q3, 2026-09-23) — a figure that changes method without saying so is exactly what gets reported as a bug later. `'median'` ONLY when the median path genuinely ran, so the caption never claims "typical week" over a mean-derived figure. */
+export type SpendForecastMethod = 'mean' | 'median'
+export function spendForecastMethod(data: AppDataV2, scope: SpendScope, personId: string, asOfDate: Date): SpendForecastMethod {
+  return medianWeeklySpend(data, scope, personId, asOfDate) > 0 ? 'median' : 'mean'
+}
+
+/**
+ * The average ad-hoc expense for ONE cycle (current or future), scaled by
+ * that cycle's own actual length in days — never a fixed/typical
+ * constant, since pay cycle length can vary cycle to cycle. 0 for a cycle
+ * that's the very first one with any matching history at all (see
+ * `isFirstLoggedCycle`) — nothing to genuinely average yet.
+ *
+ * 2026-09-23 — TWO methods now feed this one function, chosen
+ * automatically, never a user-facing setting:
+ *
+ *   - **median** (preferred), once the week-aligned window spans
+ *     MEDIAN_SPEND_HISTORY_DAYS (42): the median of the window's own
+ *     per-week totals, scaled by `cycleDays / 7`. A mean is one unusually
+ *     large week away from being skewed — a single big one-off pulls
+ *     EVERY future cycle's forecast up until it ages out of the window.
+ *     A median of several weeks' own totals ignores that week rather than
+ *     being dragged by it.
+ *   - **mean** (unchanged), below that bar, or whenever the median is £0
+ *     (see `medianWeeklySpend`): the pooled daily rate scaled by the
+ *     cycle's own day count, byte-for-byte the behaviour every account
+ *     had before this change.
+ *
+ * 🚨 This is purely ADDITIVE for every account below the bar. Anything
+ * that changes `dailySpendRate`'s own answer, or its signature, has
+ * changed the number for accounts this work was never meant to touch.
+ * 🚨 And note what is NOT forked: `forecastSpendForCycle`'s "average
+ * minus real spend already logged, floored at 0" is identical whichever
+ * method ran. It is handed a different `averageForThisCycle` and nothing
+ * else — duplicating it per method is how the two paths would drift.
  */
 export function averageAdHocSpendForCycle(data: AppDataV2, scope: SpendScope, personId: string, cycle: { start: Date; end: Date }, asOfDate: Date): number {
   if (isFirstLoggedCycle(data, scope, cycle)) return 0
+  const cycleDays = daysInclusive(cycle.start, cycle.end)
+  const typicalWeek = medianWeeklySpend(data, scope, personId, asOfDate)
+  if (typicalWeek > 0) return round2(typicalWeek * (cycleDays / 7))
   const rate = dailySpendRate(data, scope, personId, asOfDate)
   if (rate <= 0) return 0
-  return round2(rate * daysInclusive(cycle.start, cycle.end))
+  return round2(rate * cycleDays)
 }
 
 /**
