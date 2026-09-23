@@ -1,0 +1,17 @@
+{
+  "name": "powersync-keepalive",
+  "private": true,
+  "type": "module",
+  "description": "Scheduled client connection that stops the Free-plan PowerSync instance being deprovisioned. See keepalive.mjs.",
+  "scripts": {
+    "start": "node keepalive.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@powersync/node": "^1.0.1",
+    "@supabase/supabase-js": "^2.116.0",
+    "better-sqlite3": "^12.11.1"
+  }
+}

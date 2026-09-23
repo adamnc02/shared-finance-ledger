@@ -1,0 +1,56 @@
+# Keeps the Free-plan PowerSync instance from being deprovisioned after
+# 7 days without a deploy or client connection. See keepalive/keepalive.mjs
+# for the why and what. A failed run = GitHub emails Adam = check the
+# PowerSync dashboard → Health.
+#
+# Lives here (moved from personal-f, 2026-09-23) because this repo is
+# committed to often — GitHub disables scheduled workflows in public repos
+# with no commits for 60 days. Only ONE repo runs it: the PowerSync instance
+# is shared across the apps on this project, so a second copy is pointless.
+
+name: PowerSync keep-alive
+
+on:
+  schedule:
+    # Mondays and Thursdays 06:17 UTC — never more than 4 days apart, so
+    # one missed/delayed run still lands well inside the 7-day window.
+    # Off the hour on purpose: GitHub delays/drops runs at busy :00 times.
+    - cron: '17 6 * * 1,4'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: powersync-keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: keepalive
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: keepalive/package-lock.json
+
+      - run: npm ci
+
+      - name: Connect to PowerSync
+        env:
+          # Not secrets: the same public values already shipped in the
+          # deployed app bundle (RLS protects data, not these).
+          SUPABASE_URL: https://nxekrfdagkdwhjuunsrl.supabase.co
+          SUPABASE_ANON_KEY: sb_publishable_hv-9Mb3Y36PklJ2Yo4KBhw_XEy3z5lP
+          POWERSYNC_URL: https://6a97292902481fb31b92f94b.powersync.journeyapps.com
+          # Secrets: the dedicated keep-alive user (no household, no data).
+          KEEPALIVE_EMAIL: ${{ secrets.POWERSYNC_KEEPALIVE_EMAIL }}
+          KEEPALIVE_PASSWORD: ${{ secrets.POWERSYNC_KEEPALIVE_PASSWORD }}
+        run: npm start
