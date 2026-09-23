@@ -2326,20 +2326,76 @@ the sibling repo to exist.
 ## 45. Low-balance alerts (PROMPT-14 Part 7)
 
 At **20:00 Europe/London** every evening, one push notification per watched account whose projected
-running balance dips below zero **between tomorrow and the end of the current pay cycle** —
-repeating each evening until it clears.
+running balance dips below zero **in the next 7 days** — repeating each evening until it clears.
 
 ### The rule
 
 `src/lib/shortfall.ts`, **shared with `personal-ledger`** because it is pure arithmetic over the
 existing engines and invents no maths of its own.
 
-🚨 **It is the DIP, not the end-of-cycle balance.** `cycleBalanceSeries` walks every day of the
-cycle and `findShortfalls` reports the **first** day the projected balance goes below zero. So it
-fires on an account that ends the cycle perfectly healthy — which is the entire point, because money
+🚨 **It is the DIP, not a balance at the far end.** `cycleBalanceSeries` walks forward day by day
+and `findShortfalls` reports the **first** day the projected balance goes below zero. So it fires on
+an account that is perfectly healthy a fortnight later — which is the entire point, because money
 that is £200 short on the 12th still bounces a direct debit on the 12th. The one-line-shorter
-end-of-cycle comparison is `verify-shortfall.ts`'s control, and it must keep missing a case the real
-rule catches.
+compare-the-end-balance version is `verify-shortfall.ts`'s control, and it must keep missing a case
+the real rule catches.
+
+### 🚨 TWO HORIZONS, AND THEY ARE NOT THE SAME NUMBER (2026-09-23)
+
+Adam, on a real alert: *"these notifications aren't tied to a cycle, they're simply a day-by-day
+walkthrough … 7 day walk ahead, but don't use the same limit for checking next incoming money, this
+is unbounded … next incoming is quite literally the next incoming cash."*
+
+| | Horizon | Why |
+|---|---|---|
+| The **dip** search | `SHORTFALL_WALK_DAYS` = **7 days**, from tomorrow | A heads-up about something 8 days out is not actionable the way one about Tuesday is — and the alert is nightly, so tomorrow's walk sees it anyway |
+| `nextMoneyIn`, `moneyInBefore`, `recoversOn` | **Unbounded** — as far as the ledger generates (three cycles) | *"When does this get better?"* has a true answer whatever the date. Truncating it produces a confident lie |
+
+**Collapsing them back into one window is a SILENT regression**: the alert still sends, it just
+stops telling the truth about relief. `verify-shortfall-walk-window.ts` §1 and §2 are the controls.
+
+### What this replaced, and the three defects it fixed
+
+Until 2026-09-23 the search ran to **the end of the primary person's current pay cycle**. Every part
+of that was wrong for a shared household, and on 2026-09-23 all three failed at once in one real
+notification:
+
+> *"Disney+ (£14.99) on 28 September leaves you £13.57 short. Nothing more due in before 7 October."*
+
+1. **The joint account has no pay cycle**, so it borrowed the primary person's — and the server has
+   no `primaryPersonId`, because it is per-device and never syncs (DECISIONS Q3).
+   `shortfallsForHousehold` guessed *"the first `people` row with a `linked_user_id"*, off an
+   unordered `select('*')` in the Edge Function. **Which person's cycle every joint alert was
+   measured against was effectively random, and could flip between nights.**
+2. **The cycle end leaked into the prose as a date.** "7 October" was the end of Ella's four-weekly
+   cycle. Nothing was due in on it; there was an outgoing bill. Adam read it as a payment date,
+   which is exactly what it looks like. 🚨 **That line now carries NO date at all** — by definition
+   nothing happens on it, because that branch is the one where the unbounded search found nothing.
+3. **The cycle end truncated the search for incoming money.** Adam's £800 monthly deposit into the
+   joint account was resolved against *Ella's* payday rather than its **owner's** (see below), which
+   moved it to 8 October — one day past that horizon. It did not go missing, which would have been
+   obvious. It **moved**, and the alert reported "nothing more due in".
+
+🚨 **`cyclePersonId` still exists, and is now ONLY a generation horizon** — how far ahead to build
+the ledger so the unbounded lookahead has something to find. **No date is ever compared against it.**
+Reintroducing it as a boundary brings back all three defects at once.
+
+### 🚨 A `followsPayday` transfer follows its OWNER's payday (2026-09-23)
+
+`payCycleForTemplate` in `schedule.ts`, used by `computeJointAccountProjection` and by `autoClear`'s
+non-personal transfer step. A `kind: 'transfer'` template never carries `location: 'joint'`, so both
+callers used to reach for the only pay cycle to hand — the primary person's — and resolved **every**
+household member's payday-following transfer against that one person's payday.
+
+**This is invisible in a one-person household**, which is why it survived. In a two-person one it
+silently *moves* money: Adam's £800, owner Adam, payday the 28th, generated on **8 October** when
+measured against Ella's four-weekly cycle. The `autoClear` call site is the worse of the two, because
+it materialises a **cleared** Transaction at that wrong date.
+
+A template with no owner (a joint-location bill has `ownerId: ''`) still falls back to the primary,
+where there is genuinely no better answer — and `kind: 'bill'` ignores `followsPayday` anyway, so
+nothing there changed. `verify-shortfall-walk-window.ts` §3 pins all of it against the real export,
+with the old behaviour as its control.
 
 🚨 **THE SEARCH STARTS TOMORROW — the walk does not.** Adam, 2026-09-22: *"ignore today, look from
 tomorrow and report the first dip."* An alert sent at 20:00 is a heads-up about what is coming;
@@ -2347,9 +2403,10 @@ today has happened and there is nothing left to do about it.
 
 The distinction is the whole trick, and getting it wrong is silent:
 
-- The series is built over the **whole cycle**, so tomorrow's day-end carries the opening balance
-  and every payment already gone out.
-- Only the **search** is narrowed — `series.filter((p) => p.date > todayIso)`.
+- The series is built from the **current cycle's start to the generation horizon** — wider than the
+  dip window at BOTH ends — so tomorrow's day-end carries the opening balance and every payment
+  already gone out, and the lookahead has somewhere to look.
+- Only the **search** is narrowed — `series.filter((p) => p.date > todayIso && p.date <= windowEnd)`.
 - **Rebuilding the series from tomorrow instead would drop all of that history** and report an
   account as healthy because its past vanished. `verify-shortfall.ts` pins the figure as well as
   the date for exactly this reason, and carries a control proving the whole series still dips on
@@ -2369,8 +2426,9 @@ deposit landing between tomorrow and the dip was invisible and the message fell 
 more due in before 29 September"* — literally true, and read as "nothing is coming" when £100 had
 come and simply was not enough (Adam, 2026-09-22, on a real alert). `moneyInBefore` carries it, and
 the body says so: *"…leaves you £31.66 short, **despite £100.00 due in on 23 September**. Nothing
-**else** due in before 29 September."* The "else" is load-bearing — "more" contradicts the clause
-that just named some. It is already inside the figure; naming it only explains why the figure is
+**else** due in."* The "else" is load-bearing — "more" contradicts the clause that just named some.
+(That sentence used to end "…before 29 September"; see the 2026-09-23 note above for why the date
+had to go.) It is already inside the figure; naming it only explains why the figure is
 what it is.
 
 | Watched | Not watched |

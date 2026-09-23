@@ -214,11 +214,15 @@ if you trimmed it. A backup from anywhere else still gets fresh ids for every ro
 ### Low-balance alerts
 
 At **8pm** every evening, a push notification for any watched account whose **projected running
-balance dips below zero at any point in the current pay cycle** — and again each evening until it
-clears.
+balance dips below zero in the next 7 days** — and again each evening until it clears.
 
-🚨 **It is the dip, not the end-of-cycle balance.** An account can end the cycle perfectly healthy
-and still bounce a direct debit on the 12th, and that is the case this exists for.
+🚨 **It is the dip, not the balance at the end.** An account can be perfectly healthy a fortnight
+later and still bounce a direct debit on the 12th, and that is the case this exists for.
+
+**It looks 7 days ahead for trouble, and as far as it needs to for the money that fixes it.** So an
+alert about Tuesday can still tell you about a payday three weeks out — *"Next scheduled money in on
+25 October."* And when it says *"Nothing more due in"*, it means nothing at all, not nothing before
+some date: that sentence deliberately names no day, because there is no day to name.
 
 ### Overdrafts, and the two kinds of alert
 

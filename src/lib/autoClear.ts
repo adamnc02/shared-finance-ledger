@@ -25,7 +25,7 @@
 // settled, a second pass finds nothing left to do and is a no-op.
 
 import { nanoid } from 'nanoid'
-import { generateTransactionsForTemplate, resolveOccurrenceAmount, resolveTemplateOccurrenceDate } from './schedule'
+import { generateTransactionsForTemplate, payCycleForTemplate, resolveOccurrenceAmount, resolveTemplateOccurrenceDate } from './schedule'
 import { generateLoanPaymentTransactions, resolveRecurringOverpaymentSource } from './ledgerLoans'
 import { generateMinimumPaymentTransactions } from './creditCards'
 import { computeNetPayForPeriod, generateSalaryTransactions } from './salaryLedger'
@@ -558,7 +558,12 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
     const transferRangeStart = primaryPayCycle ? parseLocalDate(primaryPayCycle.openingBalanceDate) : new Date(0)
     if (transferRangeStart <= asOf) {
       for (const template of nonPersonalTransferTemplates) {
-        const candidates = generateTransactionsForTemplate(template, transferRangeStart, asOf, primaryPayCycle)
+        // 🚨 THE OWNER'S PAY CYCLE, NOT THE PRIMARY'S (2026-09-23) — the same defect as
+        // jointAccountLedger's, and worse here, because this branch MATERIALISES a cleared
+        // Transaction. On Ella's device, Adam's payday-following transfer was auto-cleared at
+        // HER payday's date. `transferRangeStart` deliberately still uses the primary's opening
+        // balance date: that is a visibility floor for the device, not a schedule.
+        const candidates = generateTransactionsForTemplate(template, transferRangeStart, asOf, payCycleForTemplate(template, result.payCycles, result.primaryPersonId))
         for (const candidate of candidates) {
           if (candidate.date > asOfIso) continue
           const key = dedupeKey(candidate)
