@@ -1,8 +1,12 @@
 // PROMPT-09 (2026-09-19) — the PowerSync mapping layer (src/lib/powersync/mapping.ts).
 //
-// Every real backup (Adam's, mum's two, plus the two fixtures) goes
+// Every real backup (Adam's, mum's three, plus the two fixtures) goes
 // app → rows → (the SQLite type round trip) → app and must come back
-// deep-equal, in the same array order. And no FK-bound column may ever carry
+// deep-equal, in the same array order. PROMPT-12 Part 4 (2026-09-23) added
+// mum's 2026-09-20 backup — the richest real dataset there is: the first-ever
+// credit-card lump payment, a minimum-payment override, a loan overpayment and
+// three calibration lines — and a SYNTHETIC fixture (bottom of the file) for
+// the shapes NO real backup has ever carried. And no FK-bound column may ever carry
 // '' upward: Postgres rejects it with 23503, which the connector discards,
 // silently losing the write (DATA-MODEL-REVIEW §11.1, MIGRATION-LESSONS §27).
 //
@@ -26,6 +30,7 @@ import { parseLedgerBackupJson } from '../src/lib/ledgerStorage'
 import { toRows, fromRows, canonicalJson, type Rows, type Row } from '../src/lib/powersync/mapping'
 import { SYNCED_TABLES, localName, toServerRecord } from '../src/lib/powersync/tables'
 import type { AppDataV2 } from '../src/types/ledger'
+import { JAR_ID, buildSyntheticFixture } from './lib/syntheticFixture'
 
 let failures = 0
 function check(label: string, ok: boolean, detail?: unknown) {
@@ -42,6 +47,7 @@ const backups = [
   DIR + 'finance-ledger-backup-2026-09-15.json',
   DIR + 'finance-ledger-backup-2026-09-15-mum.json',
   DIR + 'finance-ledger-backup-2026-09-17-mum.json',
+  DIR + 'finance-ledger-backup-2026-09-20-mum.json',
   new URL('./fixtures/backup-2026-09-02.json', import.meta.url).pathname,
   new URL('./fixtures/backup-2026-09-10-uat.json', import.meta.url).pathname,
 ]
@@ -121,6 +127,36 @@ const FK_COLUMNS = new Set([
   'rounding_pot_id',
 ])
 
+/**
+ * What the app should see back after the round trip. Three documented, accepted normalisations
+ * (mapping.ts header), and nothing else:
+ *  - Transaction.payee '' comes back absent (every use compares it with a person id);
+ *  - Pot.recurringDeposit* is not synced (superseded, DECISIONS Q7). Only old test data carries
+ *    it; counted by the caller, and it must be absent from the real backups;
+ *  - an EMPTY optional child list (occurrenceOverrides: [] …) comes back absent: no rows, no
+ *    list. The type makes every use guard it (`?? []` / `?.`), and no code compares one with
+ *    undefined (grep, 2026-09-19).
+ */
+const potDepositFields = ['recurringDepositAmount', 'recurringDepositDayOfMonth', 'recurringDepositStartDate', 'recurringDepositOverrides'] as const
+const OPTIONAL_LISTS = ['occurrenceOverrides', 'recurringDepositOverrides', 'interestOverrides', 'minimumPaymentOverrides', 'statementCalibrationLines']
+function expectedAfterRoundTrip(data: AppDataV2): Omit<AppDataV2, 'primaryPersonId'> {
+  const { primaryPersonId: _omit, ...raw } = data
+  const dropEmpty = <T extends object>(x: T): T =>
+    Object.fromEntries(Object.entries(x).filter(([k, v]) => !(OPTIONAL_LISTS.includes(k) && Array.isArray(v) && v.length === 0))) as T
+  for (const key of ['recurringTemplates', 'pensions', 'savingsPots', 'creditCards', 'loans'] as const) {
+    ;(raw as Record<string, unknown>)[key] = (raw[key] as object[]).map(dropEmpty)
+  }
+  return {
+    ...raw,
+    transactions: raw.transactions.map((t) => {
+      if (t.payee !== '') return t
+      const { payee: _p, ...rest } = t
+      return rest
+    }),
+    pots: raw.pots.map((p) => Object.fromEntries(Object.entries(p).filter(([k]) => !(potDepositFields as readonly string[]).includes(k)))) as AppDataV2['pots'],
+  }
+}
+
 let emptyOwnerPayee = 0
 let emptyOwnerPayeeOn15th = 0
 for (const path of backups) {
@@ -135,31 +171,8 @@ for (const path of backups) {
 
   // 1. round trip
   const back = fromRows(throughSqlite(rows))
-  const { primaryPersonId: _omit, ...raw } = data
-  // Three documented, accepted normalisations (mapping.ts header), and nothing else:
-  //  - Transaction.payee '' comes back absent (every use compares it with a person id);
-  //  - Pot.recurringDeposit* is not synced (superseded, DECISIONS Q7). Only old test
-  //    data carries it; counted and reported, and it must be absent from the real backups.
-  const potDepositFields = ['recurringDepositAmount', 'recurringDepositDayOfMonth', 'recurringDepositStartDate', 'recurringDepositOverrides'] as const
   const droppedPotDeposits = data.pots.filter((p) => potDepositFields.some((f) => p[f] !== undefined)).length
-  //  - an EMPTY optional child list (occurrenceOverrides: [] …) comes back absent: no rows,
-  //    no list. The type makes every use guard it (`?? []` / `?.`), and no code compares
-  //    one with undefined (grep, 2026-09-19).
-  const OPTIONAL_LISTS = ['occurrenceOverrides', 'recurringDepositOverrides', 'interestOverrides', 'minimumPaymentOverrides', 'statementCalibrationLines']
-  const dropEmpty = <T extends object>(x: T): T =>
-    Object.fromEntries(Object.entries(x).filter(([k, v]) => !(OPTIONAL_LISTS.includes(k) && Array.isArray(v) && v.length === 0))) as T
-  for (const key of ['recurringTemplates', 'pensions', 'savingsPots', 'creditCards', 'loans'] as const) {
-    ;(raw as Record<string, unknown>)[key] = (raw[key] as object[]).map(dropEmpty)
-  }
-  const expected = {
-    ...raw,
-    transactions: raw.transactions.map((t) => {
-      if (t.payee !== '') return t
-      const { payee: _p, ...rest } = t
-      return rest
-    }),
-    pots: raw.pots.map((p) => Object.fromEntries(Object.entries(p).filter(([k]) => !(potDepositFields as readonly string[]).includes(k)))),
-  }
+  const expected = expectedAfterRoundTrip(data)
   const diff = firstDiff(back, expected)
   check('app → rows → SQLite → app is deep-equal, same order', diff === null, diff ?? undefined)
   const viaServer = fromRows(throughServer(rows))
@@ -223,6 +236,23 @@ for (const path of backups) {
   check(`all ${catCols.length} category_id references end '@<household>'`, catCols.every((c) => typeof c === 'string' && c.endsWith('@' + HOUSEHOLD)))
   check('the app sees no suffix after the round trip', back.categories.every((c) => !c.id.includes('@')) && back.transactions.every((t) => !t.categoryId.includes('@')))
 
+  // 5a. PROMPT-12 Part 4 — the 2026-09-20 backup was adopted for the child shapes it is the
+  // only real file to carry (a lump payment among them). Assert they are there, so a later
+  // "tidy" of the fixture cannot quietly make the checks above vacuous again (§53, §63).
+  if (name === 'finance-ledger-backup-2026-09-20-mum.json') {
+    const counts = {
+      credit_card_lump_payments: rows.credit_card_lump_payments.length,
+      credit_card_minimum_payment_overrides: rows.credit_card_minimum_payment_overrides.length,
+      loan_overpayments: rows.loan_overpayments.length,
+      loan_statement_calibration_lines: rows.loan_statement_calibration_lines.length,
+      recurring_template_occurrence_overrides: rows.recurring_template_occurrence_overrides.length,
+    }
+    check('mum 2026-09-20 carries the first real lump payment (and the other child shapes it was adopted for)',
+      counts.credit_card_lump_payments >= 1 && counts.credit_card_minimum_payment_overrides >= 1 && counts.loan_overpayments >= 1 &&
+        counts.loan_statement_calibration_lines >= 3 && counts.recurring_template_occurrence_overrides >= 10,
+      counts)
+  }
+
   // 5. unique ids per table
   const dupes = Object.entries(rows).flatMap(([t, list]) => {
     const seen = new Set<string>()
@@ -233,67 +263,91 @@ for (const path of backups) {
 
 console.log('\nAcross the two 2026-09-15 backups (DATA-MODEL-REVIEW §11.1 counted ~80)')
 check(`${emptyOwnerPayeeOn15th} '' ownerId/payee values covered (≥ 80)`, emptyOwnerPayeeOn15th >= 80, emptyOwnerPayeeOn15th)
-console.log(`  (all five files: ${emptyOwnerPayee})`)
+console.log(`  (all six files: ${emptyOwnerPayee})`)
 
 console.log('\njsonb is canonical')
 const reordered = JSON.stringify({ z: 1, a: [{ y: 2, b: 3 }] })
 check('canonicalJson ignores key order', canonicalJson(JSON.parse(reordered)) === canonicalJson({ a: [{ b: 3, y: 2 }], z: 1 }))
 check('canonicalJson drops undefined keys', canonicalJson({ a: 1, b: undefined }) === '{"a":1}')
 
-// ── PROMPT-13 B6 — the six round-up columns ───────────────────────────────
+// ── THE SYNTHETIC FIXTURE — every shape no real backup has ever carried ──
 //
-// The real backups predate this feature, so none of them exercises these
-// columns and every generic check above passes over them vacuously. A
-// purpose-built fixture is the only way to prove the round trip, and the
-// only way to prove §33 for `round_up_history` specifically.
+// PROMPT-12 Part 4 (2026-09-23). Counted across every real backup on
+// 2026-09-20 (PROMPT-12's table): NO real file has a pension occurrence
+// override, a savings-pot interest override, a savings-pot recurring-deposit
+// override, or a salary sort — and, until PROMPT-13 shipped, none had the
+// round-up columns either. Every generic check above passes over those
+// tables vacuously. One fixture, built on Adam's real 2026-09-15 backup,
+// carries all of them, and the counts below assert it really does (§53,
+// §63: a check over fixture data says what it exercised).
 //
-// 🚨 §33 IS THE POINT OF THIS SECTION. PowerSync holds jsonb as TEXT
-// locally. A connector that uploads that text as-is stores a JSON STRING in
-// the jsonb column — valid JSON, so no error — which syncs back as a
-// string, and one JSON.parse yields a string rather than an array. That is
+// It was two fixtures for a day (PROMPT-13's round-up one, and this); they
+// are folded together on purpose — one file that covers every under-
+// exercised shape is easier to keep honest than two that each cover half.
+//
+// 🚨 §33 IS STILL THE POINT OF THE ROUND-UP HALF. PowerSync holds jsonb as
+// TEXT locally. A connector that uploads that text as-is stores a JSON
+// STRING in the jsonb column — valid JSON, so no error — which syncs back as
+// a string, and one JSON.parse yields a string rather than an array. That is
 // exactly how a loan's recurringOverpayment crashed Home in UAT on
 // 2026-09-19, about 30 seconds after an otherwise perfect import. The
 // generic check above would catch it, but only if a row with a history
 // exists; this makes sure one does.
-console.log('\nPROMPT-13: the six round-up columns')
+console.log('\nThe synthetic fixture: pension / savings-pot overrides, a salary sort, and the round-up columns')
 
-const jarId = 'jar00001'
-const roundUpFixture: AppDataV2 = {
-  ...(parseLedgerBackupJson(readFileSync(backups[0], 'utf8')) as AppDataV2),
-}
-const rupPerson = roundUpFixture.people[0].id
-roundUpFixture.pots = [
-  {
-    id: jarId, personId: rupPerson, name: 'Coin Jar', openingBalance: -5.25, openingDate: '2026-09-01',
-    active: true, color: '#f5a524', isCoinJar: true,
-  },
-  // A control: an ordinary pot alongside it, so `is_coin_jar` is proven to
-  // discriminate rather than simply always come back true.
-  { id: 'pot00001', personId: rupPerson, name: 'Bills Pot', openingBalance: 100, openingDate: '2026-09-01', active: true, color: '#4cd08a' },
-]
-roundUpFixture.payCycles = roundUpFixture.payCycles.map((pc, i) =>
-  i === 0
-    ? {
-        ...pc,
-        roundUpEnabled: true,
-        roundUpEffectiveFrom: '2026-09-01',
-        roundUpHistory: [
-          { enabled: true, from: '2026-03-01', until: '2026-06-01', nextRuleFrom: '2026-06-01' },
-          { enabled: false, from: '2026-06-01', until: '2026-09-01', nextRuleFrom: '2026-09-01' },
-        ],
-      }
-    : pc,
-)
-roundUpFixture.transactions = [
-  // A rounded expense, and a control that was not rounded.
-  { ...roundUpFixture.transactions[0], id: 'rup00001', type: 'expense', paymentMethod: 'card', location: 'personal', amount: 8, roundedFrom: 7.5, roundingPotId: jarId },
-  { ...roundUpFixture.transactions[0], id: 'rup00002', type: 'expense', paymentMethod: 'cash', location: 'personal', amount: 7.5 },
-  // PROMPT-13 B1a — a row that deliberately opted out. Indistinguishable
-  // from rup00002 on the server WITHOUT this column, which is the point.
-  { ...roundUpFixture.transactions[0], id: 'rup00003', type: 'expense', paymentMethod: 'card', location: 'personal', amount: 7.5, roundUpSkipped: true },
-]
+const { data: roundUpFixture, personId: rupPerson } = buildSyntheticFixture()
+const jarId = JAR_ID
 
 const rupRows = toRows(roundUpFixture, ctx)
+
+// The fixture is not vacuous: every under-exercised table has rows from it.
+const fixtureCounts = {
+  pension_occurrence_overrides: rupRows.pension_occurrence_overrides.length,
+  savings_pot_interest_overrides: rupRows.savings_pot_interest_overrides.length,
+  savings_pot_recurring_deposit_overrides: rupRows.savings_pot_recurring_deposit_overrides.length,
+  salary_sorts: rupRows.salary_sorts.length,
+  salary_sort_targets: rupRows.salary_sort_targets.length,
+}
+check('the five never-exercised tables all receive rows from the fixture (§53: not vacuous)',
+  fixtureCounts.pension_occurrence_overrides === 2 && fixtureCounts.savings_pot_interest_overrides === 2 &&
+    fixtureCounts.savings_pot_recurring_deposit_overrides === 2 && fixtureCounts.salary_sorts === 1 && fixtureCounts.salary_sort_targets === 2,
+  fixtureCounts)
+check('every column the fixture writes exists in the schema', Object.entries(rupRows).flatMap(([table, list]) => {
+  const cols = SYNCED_TABLES.find((t) => t.remote === table)!.columns
+  return [...new Set(list.flatMap((r) => Object.keys(r)))].filter((c) => c !== 'id' && !(c in cols)).map((c) => `${table}.${c}`)
+}).length === 0)
+
+// The whole fixture, both trips, deep-equal — the same test the real backups get, over rows they never produce.
+{
+  const rawFixture = expectedAfterRoundTrip(roundUpFixture)
+  const local = firstDiff(fromRows(throughSqlite(rupRows)), rawFixture)
+  check('fixture: app → rows → SQLite → app is deep-equal, same order', local === null, local ?? undefined)
+  const server = firstDiff(fromRows(throughServer(rupRows)), rawFixture)
+  check('fixture: …and through the server (connector → Postgres jsonb → sync) too', server === null, server ?? undefined)
+}
+{
+  const back = fromRows(throughServer(rupRows))
+  const pen = back.pensions.find((p) => p.id === 'pen00001')!
+  check('pension: both occurrence overrides come back — the moved-and-re-amounted one and the deleted one, in order',
+    pen.occurrenceOverrides?.length === 2 && pen.occurrenceOverrides[0].date === '2026-08-14' && pen.occurrenceOverrides[0].amount === 420 && pen.occurrenceOverrides[1].deleted === true,
+    pen.occurrenceOverrides)
+  check('pension: amountHistory (jsonb) comes back an ARRAY, not a string (§33)', Array.isArray(pen.amountHistory), typeof pen.amountHistory)
+  const sav = back.savingsPots.find((p) => p.id === 'sav00001')!
+  check('savings pot: interestOverrides come back, a £0 override included (0 is a value, not absent)',
+    sav.interestOverrides?.length === 2 && sav.interestOverrides[1].amount === 0, sav.interestOverrides)
+  check('savings pot: the LEGACY recurringDepositOverrides still map (the pre-2026-09-04 read path)',
+    sav.recurringDepositOverrides?.length === 2 && sav.recurringDepositOverrides[0].deleted === true && sav.recurringDepositOverrides[1].amount === 75, sav.recurringDepositOverrides)
+  check('savings pot: interestHistory (jsonb) comes back an ARRAY (§33)', Array.isArray(sav.interestHistory), typeof sav.interestHistory)
+  const sort = back.salarySorts[0]
+  check('salary sort: personId is DERIVED back from its transfers\' owner (no column on the server, PROMPT-11)', sort?.personId === rupPerson, sort?.personId)
+  check('salary sort: both targets, their destinations and transaction links intact',
+    sort?.targets.length === 2 && sort.targets[0].to.savingsPotId === 'sav00001' && sort.targets[1].to.potId === 'pot00001' && sort.targets[1].transactionId === `${sort.targets[1].id}:tx`,
+    sort?.targets)
+  const tgtRows = rupRows.salary_sort_targets
+  check('salary sort: an absent to_pot_id / to_savings_pot_id goes up NULL, never \'\' (§27)',
+    tgtRows.every((r) => r.to_pot_id !== '' && r.to_savings_pot_id !== ''), tgtRows.map((r) => [r.to_pot_id, r.to_savings_pot_id]))
+}
+
 const rupTxn = rupRows.transactions.find((r) => r.id === 'rup00001')!
 const rupTxnPlain = rupRows.transactions.find((r) => r.id === 'rup00002')!
 const rupJar = rupRows.pots.find((r) => r.id === jarId)!

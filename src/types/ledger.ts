@@ -1495,13 +1495,24 @@ export interface Pot {
   // SavingsPot.color above.
   color: string
 
-  // ── Recurring deposits — SUPERSEDED, same reasoning as SavingsPot's
-  // fields of the same name (see that type's own comment) — a Pot never
-  // shipped a live UI against these fields (Phase 4 was still-to-build),
-  // so they're kept purely for the type union's/backup-loading's sake,
-  // never populated by anything in the app. A recurring deposit into a
-  // Pot is a RecurringTemplate with kind: 'transfer' (transferTo:
-  // {type:'pot', potId}).
+  // ── Recurring deposits — SUPERSEDED as a mechanism, same reasoning as
+  // SavingsPot's fields of the same name (see that type's own comment). A
+  // recurring deposit into a Pot is a RecurringTemplate with kind: 'transfer'
+  // (transferTo: {type:'pot', potId}); nothing in the app creates a pot with
+  // `recurringDepositAmount` any more, and no real backup carries one
+  // (verify-mapping-nulls.ts asserts it). The sync layer deliberately does
+  // not carry any of the four (DECISIONS Q7, mapping.ts).
+  //
+  // ⚠️ But "never populated by anything in the app" — which this comment
+  // used to say of all four — is FALSE for `recurringDepositOverrides`
+  // (corrected 2026-09-23, PROMPT-12 Part 4; the code wins). The legacy
+  // manage-deposits card on the Transfer screen (Expenses.tsx, shown only for
+  // a pot that still has `recurringDepositAmount`) writes it on every pause
+  // and single-amount change via potLedger.ts's setPausedPotDeposits /
+  // applyPotSingleDepositAmountChange, and potLedger.ts reads it when it
+  // walks such a pot's deposits. So: unreachable for any pot created by the
+  // current app, live for a pot loaded from a pre-Pots-backlog backup, and
+  // kept for exactly that. Do not tidy it away as dead.
   recurringDepositAmount?: number
   recurringDepositDayOfMonth?: number // 1–31, clamped to the shorter month
   recurringDepositStartDate?: string // ISO date of the first occurrence
