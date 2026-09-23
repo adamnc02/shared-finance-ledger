@@ -849,8 +849,9 @@ are stamped on first sight by the reconciler rather than migrated.
 
 **For the migration:** `transactions` is a real table, so carry this column
 (`occurrence_original_date`, nullable — legacy rows genuinely have none until the reconciler stamps
-them). `dedupeKey` itself was deliberately left date-based; see BUILD-PLAN's session log,
-correction 2, for why keying it off the new field would have duplicated every pre-existing row.
+them). `dedupeKey` itself was deliberately left date-based: keying it off the new field would have
+duplicated every pre-existing row, because legacy rows have no `occurrence_original_date` until the
+reconciler stamps one.
 
 ### 11.7b The duplicates are left alone — decided, do not revisit
 
