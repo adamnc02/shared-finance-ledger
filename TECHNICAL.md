@@ -1558,9 +1558,20 @@ blocked while anything still points at it.
 
 ## 34. Testing: the verify suite
 
-**The house testing idiom** is `scripts/verify-*.ts` — 141 plain `tsx` executables printing ✓/✗,
-each with a header explaining the real bug it prevents. Several read the fixtures in
+**The house testing idiom** is `scripts/verify-*.ts` — 154 plain `tsx` executables printing ✓/✗
+(2026-09-23), each with a header explaining the real bug it prevents. Several read the fixtures in
 `scripts/fixtures/`. **Write one alongside any change to `src/lib/`.**
+
+> **The fixtures, and what each is for (PROMPT-12 Part 4):** four real backups (Adam 2026-09-15, mum
+> 2026-09-15, 2026-09-17 and **2026-09-20** — the last is the only real file with a credit-card lump
+> payment, and the first with `auto:` ids), read by absolute path from the tracking folder; the two
+> committed fixtures in `scripts/fixtures/`; and **`scripts/lib/syntheticFixture.ts`**, the ONE
+> synthetic dataset for every shape no real backup carries — a pension occurrence override, a
+> savings-pot interest override and legacy recurring-deposit override, a salary sort with derived ids,
+> a moved auto-cleared occurrence, and the seven round-up columns. `verify-mapping-nulls.ts` and
+> `verify-import-regenerates-ids.ts` both read it and both assert the counts it exercised, so the
+> coverage can never silently go vacuous again (MIGRATION-LESSONS §53, §63, §67). Add the next
+> under-exercised shape there, not in a second fixture.
 
 > 🚨 **Some verify scripts read real backups from OUTSIDE this repo, by absolute path** — see the
 > warning in §44. They are not in git and there is no second copy.
@@ -1991,7 +2002,16 @@ the `@<household>` suffix) and gives everything else a new id.
 > in the data** that equals one of the old ids is replaced by its new one — `ownerId`, `payee`,
 > `personId`, `potId`, `savingsPotId`, `creditCardId`, `categoryId`, `sourceId`, `transactionId`,
 > `followsIncomeSource.pensionId`, `interestDestination.*` and anything added later.
-> `auto:<dedupeKey>` ids are **re-derived** from the remapped transaction (§10).
+>
+> 🚨 **The two composite id kinds are EXCLUDED from that walk and re-derived instead** (PROMPT-12
+> Part 4, 2026-09-23): `auto:<sourceType>:<sourceId>:<slotDate>` (§10) and
+> `sort:<personId>:<payDate>[:<destination>[:tx]]` (§42). Re-derivation means **swapping the ids
+> inside the composite for their new ones and nothing else** — the slot date an auto id names is
+> kept even when the row has since been moved (APP-KNOWLEDGE §1.5a: identity is the slot), and a sort
+> keeps the shape two devices converge on. Before this, a `sort:` id was collected like any other,
+> handed a nanoid by the walk, and the re-derivation (keyed on the prefix) never saw it; and an auto id
+> was recomputed from `dedupeKey`, i.e. the row's *current* date. Neither was visible to any real
+> backup: `scripts/lib/syntheticFixture.ts` is what found both.
 
 ### …unless the file is this household's own (PROMPT-14 Part 4)
 
