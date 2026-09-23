@@ -27,12 +27,27 @@
 //     'sort:<personId>:<payDate>[:<destination>[:tx]]' (PROMPT-11).
 // Both differ between two households once the ids inside them do.
 //
+// 🚨 Both composite kinds are EXCLUDED from the generic walk (PROMPT-12 Part
+// 4, 2026-09-23). Until then a 'sort:…' id was collected like any other,
+// handed a nanoid by the generic pass, and the re-derivation below — which
+// keys on the 'sort:' prefix — never saw it: every imported sort, target and
+// transfer came out with a random id, and the two-device merge PROMPT-11
+// built the derived ids for was lost on import. No real backup carried a
+// salary sort, so nothing noticed until the synthetic fixture did.
+//
+// And an auto id keeps the SLOT it names. 'auto:recurring_template:<id>:
+// 2026-09-20' is the occurrence's original date, even after that payment
+// was moved to the 21st (APP-KNOWLEDGE §1.5a: identity is the slot, not the
+// date). Re-deriving from dedupeKey — which reads the CURRENT date — silently
+// re-slotted every moved occurrence on import (mum's 2026-09-20 backup, two
+// rows). Only the ids inside the key are remapped now, so an import never
+// changes what a row identifies.
+//
 // Pure: no PowerSync or Supabase import (runs in Node).
 
 import { nanoid } from 'nanoid'
 import type { AppDataV2, Transaction } from '../../types/ledger'
 import { defaultCategories } from '../categories'
-import { dedupeKey } from '../projection'
 import { salarySortId, salarySortTargetId, salarySortTransactionId } from '../salarySortLedger'
 
 /** The app's 35 fixed category ids, kept as they are. */
@@ -41,13 +56,15 @@ export const FIXED_CATEGORY_IDS: ReadonlySet<string> = new Set(defaultCategories
 const AUTO_PREFIX = 'auto:'
 const SORT_PREFIX = 'sort:'
 
-/** Every `id` of every object anywhere in `data` (dedupeKey-derived auto ids excluded). */
+const isComposite = (id: string) => id.startsWith(AUTO_PREFIX) || id.startsWith(SORT_PREFIX)
+
+/** Every `id` of every object anywhere in `data` (the composite auto/sort ids excluded — they are re-derived, not remapped). */
 function collectIds(value: unknown, out: Set<string>) {
   if (Array.isArray(value)) {
     for (const v of value) collectIds(v, out)
   } else if (value && typeof value === 'object') {
     const id = (value as { id?: unknown }).id
-    if (typeof id === 'string' && id && !id.startsWith(AUTO_PREFIX)) out.add(id)
+    if (typeof id === 'string' && id && !isComposite(id)) out.add(id)
     for (const v of Object.values(value)) collectIds(v, out)
   }
 }
@@ -62,12 +79,14 @@ function remap<T>(value: T, map: ReadonlyMap<string, string>): T {
   return value
 }
 
-/** An auto-cleared payment's id follows its (remapped) occurrence key. */
-function rederiveAutoIds(transactions: Transaction[], newId: () => string): Transaction[] {
+/**
+ * An auto-cleared payment's id follows its (remapped) occurrence key: the ids embedded in the key
+ * are swapped for their new ones, and the slot date it names is left exactly as it was.
+ */
+function rederiveAutoIds(transactions: Transaction[], map: ReadonlyMap<string, string>): Transaction[] {
   return transactions.map((t) => {
     if (!t.id.startsWith(AUTO_PREFIX)) return t
-    const key = dedupeKey(t)
-    const id = key ? AUTO_PREFIX + key : AUTO_PREFIX + newId()
+    const id = AUTO_PREFIX + t.id.slice(AUTO_PREFIX.length).split(':').map((segment) => map.get(segment) ?? segment).join(':')
     return id === t.id ? t : { ...t, id }
   })
 }
@@ -106,14 +125,14 @@ export function regenerateIds(data: AppDataV2, newId: () => string = () => nanoi
     while (ids.has(fresh) || FIXED_CATEGORY_IDS.has(fresh)) fresh = newId()
     map.set(id, fresh)
   }
-  return { data: applyIdMap(data, map, newId), map }
+  return { data: applyIdMap(data, map), map }
 }
 
 /**
  * Applies an existing old → new map (a save that still carries the imported ids, before the store's
  * own delivery has replaced them in the app).
  */
-export function applyIdMap(data: AppDataV2, map: ReadonlyMap<string, string>, newId: () => string = () => nanoid(8)): AppDataV2 {
+export function applyIdMap(data: AppDataV2, map: ReadonlyMap<string, string>): AppDataV2 {
   const out = rederiveSalarySortIds(remap(data, map))
-  return { ...out, transactions: rederiveAutoIds(out.transactions, newId) }
+  return { ...out, transactions: rederiveAutoIds(out.transactions, map) }
 }
