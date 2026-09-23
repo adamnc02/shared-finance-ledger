@@ -250,7 +250,7 @@ console.log('\n1. Synthetic pots')
 
 console.log("\n2. Adam's real backup")
 {
-  const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15.json', 'utf8'))
+  const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15.json', 'utf8'))
   const data = buildLegacyAppData(migrateLedgerData(raw.data ?? raw))
   const savings = data.savingsPots.find((p) => p.name === 'Savings')!
   checkTrue("'Savings' pot exposed with its real target (£10,000 by 31 Mar 2027)", savings?.targetAmount === 10000 && savings?.targetDate === '2027-03-31')
@@ -291,7 +291,7 @@ console.log("\n2. Adam's real backup")
 
 console.log("\n3. Mum's real backup (no savings pots)")
 {
-  const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15-mum.json', 'utf8'))
+  const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15-mum.json', 'utf8'))
   const data = buildLegacyAppData(migrateLedgerData(raw.data ?? raw))
   check('No savings pots at all', data.savingsPots.length, 0)
   let threw = false

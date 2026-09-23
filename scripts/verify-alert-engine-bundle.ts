@@ -54,7 +54,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
   }
 }
 
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures'
 const HH = '11111111-2222-3333-4444-555555555555'
 const AS_OF = new Date(2026, 8, 15)
 const LONDON_DATE = '2026-09-15'

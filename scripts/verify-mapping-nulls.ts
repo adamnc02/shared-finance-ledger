@@ -42,7 +42,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
   }
 }
 
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/'
 const backups = [
   DIR + 'finance-ledger-backup-2026-09-15.json',
   DIR + 'finance-ledger-backup-2026-09-15-mum.json',

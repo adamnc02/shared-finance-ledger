@@ -40,7 +40,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
 
 const HH = '11111111-2222-3333-4444-555555555555'
 const ME = 'user-me'
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/'
 const MUM = DIR + 'finance-ledger-backup-2026-09-17-mum.json'
 const quiet = { error: (...a: unknown[]) => console.log('    [log.error]', ...a), warn: () => {}, info: () => {} }
 

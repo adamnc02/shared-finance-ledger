@@ -41,7 +41,7 @@ function check(label: string, actual: unknown, expected: unknown) {
   if (!ok) failures++
 }
 
-const BACKUP = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15-mum.json'
+const BACKUP = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15-mum.json'
 const raw = JSON.parse(readFileSync(BACKUP, 'utf8'))
 const txns: Transaction[] = raw.transactions
 const cardOf = (id: string): CreditCard => {

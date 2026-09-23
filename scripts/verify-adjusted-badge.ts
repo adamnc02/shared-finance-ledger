@@ -40,7 +40,7 @@ function check(label: string, actual: unknown, expected: unknown) {
   if (!pass) failures++
 }
 
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures'
 function load(file: string): AppDataV2 {
   const raw = JSON.parse(readFileSync(`${DIR}/${file}`, 'utf8'))
   return migrateLedgerData(raw.data ?? raw)

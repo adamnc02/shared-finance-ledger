@@ -57,7 +57,7 @@ function firstDifference(a: unknown, b: unknown): string {
   return `…${x.slice(Math.max(0, i - 60), i + 60)} vs …${y.slice(Math.max(0, i - 60), i + 60)}`
 }
 
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures'
 function load(file: string): AppDataV2 {
   const raw = JSON.parse(readFileSync(`${DIR}/${file}`, 'utf8'))
   return migrateLedgerData(raw.data ?? raw)

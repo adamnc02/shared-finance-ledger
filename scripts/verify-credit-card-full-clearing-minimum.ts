@@ -42,7 +42,7 @@ check('fixed £200 → no, however large', creditCardMinimumClearsFullBalance(wi
 check('fixed £999999 → still no: a fixed minimum is never a 100% rule', creditCardMinimumClearsFullBalance(withMin({ type: 'fixed', amount: 999999 })), false)
 
 console.log('\n--- against the real cards ---')
-const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15-mum.json', 'utf8'))
+const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15-mum.json', 'utf8'))
 const txns: Transaction[] = raw.transactions
 const cardOf = (id: string): CreditCard => {
   const c = (raw.creditCards as CreditCard[]).find((x) => x.id === id)!

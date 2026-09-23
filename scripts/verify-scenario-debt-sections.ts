@@ -228,7 +228,7 @@ console.log('1. Synthetic loan and credit card')
 
 console.log("\n2. Adam's real backup")
 {
-  const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15.json', 'utf8'))
+  const raw = JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15.json', 'utf8'))
   const data: AppData = buildLegacyAppData(migrateLedgerData(raw.data ?? raw))
   const loan = data.loans[0]
   checkTrue('At least one real loan to act on', Boolean(loan), data.loans.map((l) => l.name))

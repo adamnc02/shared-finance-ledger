@@ -57,7 +57,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
 const HH = '11111111-2222-3333-4444-555555555555'
 const ADAM = 'user-adam'
 const ELLA = 'user-ella'
-const backup = parseLedgerBackupJson(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15.json', 'utf8'))
+const backup = parseLedgerBackupJson(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15.json', 'utf8'))
 const [adamP, ellaP] = backup.people
 const quiet = { error: (...a: unknown[]) => console.log('    [log.error]', ...a), warn: () => {}, info: () => {} }
 const brief = (log: Statement[]) => log.map((s) => `${s.kind} ${s.table} ${s.id} [${s.columns.join(',')}]`)
@@ -161,7 +161,7 @@ console.log('\n5. Import and Start fresh link the new "Me"')
   await tick(30)
   const cur = got[got.length - 1]
   db.clearLog()
-  store.save(parseLedgerBackupJson(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15.json', 'utf8')), cur)
+  store.save(parseLedgerBackupJson(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15.json', 'utf8')), cur)
   await store.flush()
   const second = store.importMap!.get(backup.primaryPersonId)!
   const clearAt = db.log.findIndex((s) => s.kind === 'update' && s.id === newMe && s.columns.join() === 'linked_user_id')

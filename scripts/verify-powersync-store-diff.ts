@@ -40,7 +40,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
 
 const HH = '11111111-2222-3333-4444-555555555555'
 const USER = 'user-adam'
-const BACKUP = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15.json'
+const BACKUP = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15.json'
 const quiet = { error: (...a: unknown[]) => console.log('    [log.error]', ...a), warn: () => {}, info: () => {} }
 
 async function storeWith(data: AppDataV2 | null) {

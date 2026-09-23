@@ -50,7 +50,7 @@ function check(label: string, actual: unknown, expected: unknown) {
 }
 
 const ASOF = '2026-06-01'
-const BACKUP_DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger'
+const BACKUP_DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures'
 
 // ── Independent dangling-reference scan ───────────────────────────────
 // Deliberately NOT built from deleteReassign.ts — it walks every live id
@@ -656,7 +656,7 @@ for (const [label, file] of [
 // of every joint bill doubled in every projection, no error anywhere.
 // ─────────────────────────────────────────────────────────────────────
 {
-  const prod = parseLedgerBackupJson(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-22-PROD.json', 'utf8'))
+  const prod = parseLedgerBackupJson(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-22-PROD.json', 'utf8'))
   const adam = prod.people.find((p) => p.name === 'Adam')!
   const jointBills = prod.recurringTemplates.filter((t) => t.location === 'joint')
   check('[PROD] the file holds nine joint bills, every one Adam as payee at 50%', [jointBills.length, jointBills.every((t) => t.payee === adam.id && t.payeeSharePercent === 50 && t.ownerId === '')], [9, true])

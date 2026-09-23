@@ -15,7 +15,7 @@ import { parseLedgerBackupJson } from '../../src/lib/ledgerStorage'
 import { salarySortId, salarySortTargetId, salarySortTransactionId } from '../../src/lib/salarySortLedger'
 import type { AppDataV2 } from '../../src/types/ledger'
 
-export const SYNTHETIC_BASE = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15.json'
+export const SYNTHETIC_BASE = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15.json'
 export const JAR_ID = 'jar00001'
 
 export function buildSyntheticFixture(): { data: AppDataV2; personId: string } {

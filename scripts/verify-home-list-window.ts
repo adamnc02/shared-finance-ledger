@@ -38,7 +38,7 @@ function checkEq(label: string, actual: unknown, expected: unknown) {
   check(`${label}${ok ? '' : `: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`}`, ok)
 }
 
-const BACKUPS = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/'
+const BACKUPS = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/'
 
 console.log('1. Real backups: every card, both horizons')
 let sawPreWindowRows = false

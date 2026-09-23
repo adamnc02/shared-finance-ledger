@@ -70,7 +70,7 @@ console.log('\n2. Which candidate wins')
 
 console.log('\n3. Real backups')
 for (const file of ['finance-ledger-backup-2026-09-15.json', 'finance-ledger-backup-2026-09-15-mum.json']) {
-  const data: AppDataV2 = migrateLedgerData(JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/' + file, 'utf8')))
+  const data: AppDataV2 = migrateLedgerData(JSON.parse(readFileSync('/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/' + file, 'utf8')))
   const named = data.transactions.filter((t) => t.note && t.categoryId && normaliseTransactionName(t.note).length > 3)
   const who = file.includes('mum') ? 'mum' : 'Adam'
   checkTrue(`${who}: has named transactions to learn from`, named.length > 0, named.length)

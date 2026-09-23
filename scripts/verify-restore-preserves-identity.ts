@@ -67,7 +67,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
 const HH = '11111111-2222-3333-4444-555555555555'
 const ADAM_USER = 'user-adam'
 const ELLA_USER = 'user-ella'
-const BACKUP = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/finance-ledger-backup-2026-09-15.json'
+const BACKUP = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/finance-ledger-backup-2026-09-15.json'
 const raw = readFileSync(BACKUP, 'utf8')
 const silent = { error: () => {}, warn: () => {}, info: () => {} }
 

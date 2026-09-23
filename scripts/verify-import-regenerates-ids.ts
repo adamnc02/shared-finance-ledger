@@ -41,7 +41,7 @@ function check(label: string, ok: boolean, detail?: unknown) {
   }
 }
 
-const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/'
+const DIR = '/Users/adamcox/Downloads/App Development & Bug Tracking/shared-finance-ledger/fixtures/'
 const BACKUPS = { adam: 'finance-ledger-backup-2026-09-15.json', mum: 'finance-ledger-backup-2026-09-17-mum.json', mum20: 'finance-ledger-backup-2026-09-20-mum.json' }
 const SYNTHETIC = 'synthetic'
 const read = (f: string): AppDataV2 => (f === SYNTHETIC ? buildSyntheticFixture().data : parseLedgerBackupJson(readFileSync(DIR + f, 'utf8')))
