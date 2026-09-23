@@ -5,7 +5,8 @@ import { toLocalIsoDate, todayIso, parseLocalDate } from '../lib/date'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, CreditCard as CreditCardIcon, Layers, PieChart, PiggyBank, Wallet, SlidersHorizontal, X, TrendingUp, RotateCcw } from 'lucide-react'
 import { useLedgerData } from '../context/LedgerContext'
 import { computeProjection, horizonCycles, inCycleWindow, horizonRangeEnd, THREE_CYCLES_AHEAD, buildPersonalTrendSeries, type ProjectionHorizon } from '../lib/projection'
-import { averageAdHocSpendForCycle, daysOfSpendHistory, forecastSpendForCycle, hasAnyMatchingSpend, hasSpendHistory, MIN_SPEND_HISTORY_DAYS, type SpendScope } from '../lib/averageSpendForecast'
+import { buildCycleForecastChain } from '../lib/cycleForecastChain'
+import { averageAdHocSpendForCycle, daysOfSpendHistory, forecastSpendForCycle, hasAnyMatchingSpend, hasSpendHistory, MIN_SPEND_HISTORY_DAYS, spendForecastMethod, type SpendForecastMethod, type SpendScope } from '../lib/averageSpendForecast'
 import { summarizeLoanProgress, summarizeLoan } from '../lib/ledgerLoans'
 import { computeJointSummary, buildJointPersonGroups, type JointPersonGroup } from '../lib/jointLedger'
 import { computeJointAccountProjection, jointAccountSignedAmount, buildJointTrendSeries } from '../lib/jointAccountLedger'
@@ -1293,15 +1294,21 @@ function canShowCycleTotals(entry: DeckEntry, _horizon: ProjectionHorizon, group
  * daily rate from at all — simplifies every caller to a single
  * `.get(...)` with no extra null-check.
  */
-function buildForecastByCycle(data: AppDataV2, scope: SpendScope, personId: string, cycles: { start: Date; end: Date }[]): Map<string, { forecastAmount: number; realSpend: number }> {
-  const map = new Map<string, { forecastAmount: number; realSpend: number }>()
+type CycleForecast = { forecastAmount: number; realSpend: number; method: SpendForecastMethod }
+
+function buildForecastByCycle(data: AppDataV2, scope: SpendScope, personId: string, cycles: { start: Date; end: Date }[]): Map<string, CycleForecast> {
+  const map = new Map<string, CycleForecast>()
   const asOfDate = new Date()
   if (!hasSpendHistory(data, scope, personId, asOfDate)) return map
+  // 2026-09-23 — which method produced these figures is a property of the
+  // SCOPE and its window, not of any one cycle, so it's resolved once
+  // here and carried on every entry rather than recomputed per row.
+  const method = spendForecastMethod(data, scope, personId, asOfDate)
   for (const cycle of cycles) {
     const averageForThisCycle = averageAdHocSpendForCycle(data, scope, personId, cycle, asOfDate)
     if (averageForThisCycle <= 0) continue
     const { forecastAmount, realSpend } = forecastSpendForCycle(data, scope, averageForThisCycle, cycle)
-    if (forecastAmount > 0) map.set(toLocalIsoDate(cycle.start), { forecastAmount, realSpend })
+    if (forecastAmount > 0) map.set(toLocalIsoDate(cycle.start), { forecastAmount, realSpend, method })
   }
   return map
 }
@@ -2302,7 +2309,7 @@ function formatCycleDate(iso: string): string {
  */
 
 /** 2026-09-13 (average spend forecast) — the row-shaped item DirectionGroupedRows folds a cycle's real transactions AND its (at most one) synthetic forecast row into, so the forecast row can sit inside the "Outgoing" pill alongside real expenses rather than needing its own separate treatment. */
-type CycleRowItem = { kind: 'real'; t: Transaction; running: number } | { kind: 'forecast'; forecastAmount: number; realSpend: number; cycleEndIso: string }
+type CycleRowItem = { kind: 'real'; t: Transaction; running: number } | ({ kind: 'forecast'; cycleEndIso: string } & CycleForecast)
 
 /**
  * 2026-09-13 (average spend forecast, Adam-specified) — "a completely
@@ -2313,11 +2320,33 @@ type CycleRowItem = { kind: 'real'; t: Transaction; running: number } | { kind: 
  * page's own background colour, so it reads as a cutout through the
  * fill rather than a coloured-icon-on-neutral-circle. Dashed outline +
  * italic muted label reinforce "this is an estimate, not a real entry."
- * The "Reduced from £X" caption only appears once the reduction
- * actually did something (`realSpend > 0`) — otherwise it's just noise
- * ("Reduced from £0" says nothing true).
+ * The "Reduced from £X" part of the caption only appears once the
+ * reduction actually did something (`realSpend > 0`) — otherwise it's
+ * just noise ("Reduced from £0" says nothing true). The METHOD word
+ * after it always renders.
+ *
+ * 2026-09-23 (Adam's Q3, PROMPT-17) — that same caption now ends in
+ * "typical week" instead of "estimate" whenever the MEDIAN method
+ * produced the figure. The method switch is automatic and has no release
+ * to blame it on: an account quoting the same sort of number for weeks
+ * starts quoting a different one the day it crosses
+ * MEDIAN_SPEND_HISTORY_DAYS. One word is what makes that self-explaining
+ * rather than a bug report. 🚨 It must track the method that ACTUALLY
+ * ran, not merely "is this account eligible" — `spendForecastMethod`
+ * already accounts for the £0-median fallback to the mean, so a
+ * mean-derived figure never gets captioned "typical week".
+ *
+ * 🚨 2026-09-23, revised during the same UAT: the method word renders on
+ * EVERY forecast row, not only on one that has been reduced. Adam's first
+ * reaction to the original build was "I don't see it anywhere" — and he
+ * was right to be puzzled. Tying it to the `Reduced from` line meant it
+ * only ever appeared on a cycle with real spend already logged in it,
+ * which in practice is the current cycle and no other, so every FUTURE
+ * cycle — where most of the figures are — said nothing at all. A method
+ * indicator that is absent from most of the rows it describes is not an
+ * indicator.
  */
-function ProjectedSpendRow({ forecastAmount, realSpend, runningBalance }: { forecastAmount: number; realSpend: number; runningBalance?: number }) {
+function ProjectedSpendRow({ forecastAmount, realSpend, method, runningBalance }: { forecastAmount: number; realSpend: number; method: SpendForecastMethod; runningBalance?: number }) {
   const averagePerCycle = round2(forecastAmount + realSpend)
   return (
     <div className="flex items-center gap-3 py-2 px-2 my-1 rounded-xl" style={{ border: '1px dashed var(--color-ink-faint)' }}>
@@ -2328,11 +2357,10 @@ function ProjectedSpendRow({ forecastAmount, realSpend, runningBalance }: { fore
         <p className="text-sm italic" style={{ color: 'var(--color-ink-muted)' }}>
           Average spend forecast
         </p>
-        {realSpend > 0 && (
-          <p className="text-[11px]" style={{ color: 'var(--color-ink-faint)' }}>
-            Reduced from £{formatCurrency(averagePerCycle)} · estimate
-          </p>
-        )}
+        <p className="text-[11px]" style={{ color: 'var(--color-ink-faint)' }}>
+          {realSpend > 0 && `Reduced from £${formatCurrency(averagePerCycle)} · `}
+          {method === 'median' ? 'typical week' : 'estimate'}
+        </p>
       </div>
       <div className="text-right shrink-0">
         <span className="text-sm font-mono font-semibold" style={{ color: 'var(--color-ink-muted)' }}>
@@ -2446,7 +2474,7 @@ function CycleGroupedList({
   /** Splits ONE cycle's visible rows into person pills while groupByPerson is on. Defaults to Joint's own buildJointPersonGroups (payee shares + "Spend"); Household passes buildHouseholdPersonGroups. */
   buildPersonGroups?: (rows: Transaction[]) => (JointPersonGroup | HouseholdPersonGroup)[]
   /** 2026-09-13 (average spend forecast) — one entry per FUTURE cycle that needs a synthetic forecast row, keyed by that cycle's own start date (ISO). Personal/Joint only; every other caller omits this entirely. See buildForecastByCycle's own comment. */
-  forecastByCycle?: Map<string, { forecastAmount: number; realSpend: number }>
+  forecastByCycle?: Map<string, CycleForecast>
 }) {
   const sign = amountSign ?? signedAmount
   // Collapse state tracks what's explicitly been TOGGLED away from its
@@ -2488,10 +2516,20 @@ function CycleGroupedList({
     return { t, running }
   })
 
-  let carried = openingRunningBalance
+  // 2026-09-23 — the closing-balance chain lives in lib now so a verify
+  // script can hold it. See cycleForecastChain.ts's own header for the bug
+  // it exists to prevent: the forecasts did not carry forward at all, and on
+  // a real ledger the hero and this list disagreed by thousands.
+  const chain = buildCycleForecastChain(
+    withRunning.map(({ t, running }) => ({ date: t.date, running })),
+    cycles.map((c) => ({ startIso: toLocalIsoDate(c.start), endIso: toLocalIsoDate(c.end) })),
+    (startIso) => forecastByCycle?.get(startIso)?.forecastAmount ?? 0,
+    openingRunningBalance,
+  )
   const sections = cycles.map((cycle, i) => {
     const startIso = toLocalIsoDate(cycle.start)
     const endIso = toLocalIsoDate(cycle.end)
+    const { closing, priorForecasts } = chain[i]
     // Every section, INCLUDING the first/current one, is bounded on both
     // ends by its own cycle window for DISPLAY purposes — a stored
     // transaction dated before the current cycle's start (but after the
@@ -2502,25 +2540,23 @@ function CycleGroupedList({
     // been since the account was last rebalanced). Its effect on the
     // BALANCE is still fully accounted for below via `upToEnd`, which
     // isn't lower-bounded — only the rendered row list is.
-    const rows = withRunning.filter(({ t }) => t.date >= startIso && t.date <= endIso)
-    // Balance carried OUT of this cycle — the running figure of the LAST
-    // transaction dated on/before this cycle's end, cumulative across the
-    // whole window regardless of this section's own display bound (so an
-    // empty-looking current cycle still correctly reflects older history
-    // that landed between the opening balance date and its own start),
-    // or, if there's no transaction at all yet, whatever came in from the
-    // cycle before.
-    const upToEnd = withRunning.filter(({ t }) => t.date <= endIso)
-    const realClosing = upToEnd.length > 0 ? upToEnd[upToEnd.length - 1].running : carried
-    // 2026-09-13 (average spend forecast) — a forecast row for this
-    // cycle (if any) reduces its closing balance by its own forecast
-    // amount, same as a real expense would — and that ADJUSTED figure
-    // is what carries forward into every later cycle's own opening
-    // point, so the projected balance genuinely reflects it rather than
-    // being a purely cosmetic row.
+    // Offset by every EARLIER cycle's forecast, so a cycle's own last row
+    // minus its own forecast row really is its closing balance — the sum a
+    // person does by eye.
+    const rows = withRunning.filter(({ t }) => t.date >= startIso && t.date <= endIso).map(({ t, running }) => ({ t, running: round2(running - priorForecasts) }))
+    // `closing` above is the balance carried OUT of this cycle — the running
+    // figure of the LAST row dated on/before this cycle's end, cumulative
+    // across the whole window regardless of this section's own display bound
+    // (so an empty-looking current cycle still reflects older history that
+    // landed between the opening balance date and its own start), or, with no
+    // row at all yet, whatever came in from the cycle before. That lower-bound
+    // independence is why the chain takes the WHOLE fold, not this cycle's
+    // rows.
+    // 2026-09-13 (average spend forecast) — a forecast row for this cycle
+    // (if any) reduces its closing balance by its own forecast amount, same
+    // as a real expense would, and that ADJUSTED figure carries forward into
+    // every later cycle's own opening point (buildCycleForecastChain).
     const forecast = forecastByCycle?.get(startIso)
-    const closing = forecast ? round2(realClosing - forecast.forecastAmount) : realClosing
-    carried = closing
     // Respects the "Show cleared" toggle — computed here, AFTER `closing`
     // above already folded every row (cleared included), so this can
     // never change the balance figures, only which rows render.
@@ -2566,13 +2602,13 @@ function CycleGroupedList({
                   <DirectionGroupedRows<CycleRowItem>
                     items={[
                       ...section.visibleRows.map((r): CycleRowItem => ({ kind: 'real', t: r.t, running: r.running })),
-                      ...(section.forecast ? [{ kind: 'forecast' as const, forecastAmount: section.forecast.forecastAmount, realSpend: section.forecast.realSpend, cycleEndIso: section.endIso }] : []),
+                      ...(section.forecast ? [{ kind: 'forecast' as const, ...section.forecast, cycleEndIso: section.endIso }] : []),
                     ]}
                     isIncoming={(item) => item.kind === 'real' && (amountSign ? amountSign(item.t) : signedAmount(item.t)) > 0}
                     amountOf={(item) => (item.kind === 'real' ? Math.abs(amountSign ? amountSign(item.t) : signedAmount(item.t)) : item.forecastAmount)}
                     dateOf={(item) => (item.kind === 'real' ? item.t.date : item.cycleEndIso)}
                     keyOf={(item) => (item.kind === 'real' ? item.t.id : 'forecast')}
-                    renderRow={(item) => (item.kind === 'real' ? <TransactionRow t={item.t} data={data} amountSign={amountSign} /> : <ProjectedSpendRow forecastAmount={item.forecastAmount} realSpend={item.realSpend} />)}
+                    renderRow={(item) => (item.kind === 'real' ? <TransactionRow t={item.t} data={data} amountSign={amountSign} /> : <ProjectedSpendRow forecastAmount={item.forecastAmount} realSpend={item.realSpend} method={item.method} />)}
                   />
                 ) : (
                   <div className="flex flex-col divide-y" style={{ borderColor: 'var(--color-track)' }}>
@@ -2583,7 +2619,7 @@ function CycleGroupedList({
                       <p className="text-[11px] text-[var(--color-ink-muted)] text-center py-3">Nothing in this cycle.</p>
                     )}
                     {/* Always the LAST line in the cycle, regardless of date — Adam's own explicit requirement (see PROMPT-average-spend-forecast-toggle-2026-09-13.md). */}
-                    {section.forecast && <ProjectedSpendRow forecastAmount={section.forecast.forecastAmount} realSpend={section.forecast.realSpend} />}
+                    {section.forecast && <ProjectedSpendRow forecastAmount={section.forecast.forecastAmount} realSpend={section.forecast.realSpend} method={section.forecast.method} />}
                   </div>
                 )}
                 <div
@@ -2661,7 +2697,7 @@ function DateOrderedList({
    * (Household/Pot/Savings Pot/Credit Card, none of which have this
    * feature) is unaffected.
    */
-  forecast?: { forecastAmount: number; realSpend: number }
+  forecast?: CycleForecast
   /** The forecast's own sort/group key — the current cycle's end date, same "always sorts as the last thing in the period" convention CycleGroupedList's own forecast row uses. Required whenever `forecast` is passed. */
   forecastEndIso?: string
 }) {
@@ -2685,13 +2721,13 @@ function DateOrderedList({
       <DirectionGroupedRows<CycleRowItem>
         items={[
           ...visible.map((r): CycleRowItem => ({ kind: 'real', t: r.t, running: r.running })),
-          ...(hasForecast ? [{ kind: 'forecast' as const, forecastAmount: forecast.forecastAmount, realSpend: forecast.realSpend, cycleEndIso: forecastEndIso! }] : []),
+          ...(hasForecast ? [{ kind: 'forecast' as const, ...forecast, cycleEndIso: forecastEndIso! }] : []),
         ]}
         isIncoming={(item) => item.kind === 'real' && sign(item.t) > 0}
         amountOf={(item) => (item.kind === 'real' ? Math.abs(sign(item.t)) : item.forecastAmount)}
         dateOf={(item) => (item.kind === 'real' ? item.t.date : item.cycleEndIso)}
         keyOf={(item) => (item.kind === 'real' ? item.t.id : 'forecast')}
-        renderRow={(item) => (item.kind === 'real' ? <TransactionRow t={item.t} data={data} amountSign={amountSign} /> : <ProjectedSpendRow forecastAmount={item.forecastAmount} realSpend={item.realSpend} />)}
+        renderRow={(item) => (item.kind === 'real' ? <TransactionRow t={item.t} data={data} amountSign={amountSign} /> : <ProjectedSpendRow forecastAmount={item.forecastAmount} realSpend={item.realSpend} method={item.method} />)}
       />
     )
   }
@@ -2708,7 +2744,7 @@ function DateOrderedList({
       )}
       {/* Always the LAST line, regardless of date — same convention
           CycleGroupedList's own forecast row uses. */}
-      {hasForecast && <ProjectedSpendRow forecastAmount={forecast.forecastAmount} realSpend={forecast.realSpend} runningBalance={round2(finalRunning - forecast.forecastAmount)} />}
+      {hasForecast && <ProjectedSpendRow forecastAmount={forecast.forecastAmount} realSpend={forecast.realSpend} method={forecast.method} runningBalance={round2(finalRunning - forecast.forecastAmount)} />}
     </div>
   )
 }

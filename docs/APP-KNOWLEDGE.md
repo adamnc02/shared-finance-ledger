@@ -1513,3 +1513,55 @@ Listly also depends on this schema's household model and functions. Before chang
 `my_household_ids()`, `households`, `household_members`, `ensure_household()`, the link-code
 functions, `erase_my_data()`, or the shapes of `people` / `categories` / `pots` / `savings_pots` /
 `joint_account`, read **`listly/docs/LEDGER-INTEGRATION.md`**. Every failure there is silent.
+
+---
+
+## 🚨 The average spend forecast is a typical WEEK, not a pooled average (added 2026-09-23)
+
+**The invariant, in Adam's terms:** *a typical week, not a pooled average, once there is enough
+history to have a typical week.*
+
+Once the week-aligned lookback window spans `MEDIAN_SPEND_HISTORY_DAYS` (**42 days = 6 whole
+weeks**), the forecast is the **median of that window's own per-week totals**, scaled by
+`cycleDays / 7`. Below that bar it is the pooled daily rate, exactly as before. The switch is
+automatic and there is no user-facing setting. Full mechanism in `TECHNICAL.md §23`.
+
+Things that must not be quietly undone:
+
+- **`MIN_SPEND_HISTORY_DAYS` (14) is a separate threshold and is untouched.** It remains the only
+  gate on showing a forecast *at all*. 42 decides only *which method* produces the number. Two or
+  three weeks is not enough to **have** a middle one.
+- **The median is of per-WEEK TOTALS, never of transaction amounts.** A median of amounts answers a
+  different question and would look plausible while being wrong.
+- **A £0 median falls back to the mean.** A once-a-month shopper has four £0 weeks out of six.
+  Without the fallback their forecast row would vanish the day they crossed 42 days, because
+  `buildForecastByCycle` drops any cycle whose average is `<= 0`. Removing a figure someone has been
+  reading, with no release to blame, is the failure this was meant to avoid causing — not create.
+- **`forecastSpendForCycle` is never forked.** Both methods feed it a different average, nothing
+  else.
+- **The caption must track the method that RAN, not eligibility.** `spendForecastMethod` already
+  accounts for the fallback, so a mean-derived figure is never labelled a typical week.
+
+### And the forecast must CARRY FORWARD between cycles
+
+**The invariant: the last cycle section's closing balance equals the hero's "projected" figure.**
+They are the same quantity by construction — the hero is `projectedBalance - forecastTotal` over
+every cycle. Held by `verify-cycle-forecast-chain.ts`, which includes a control reproducing the old
+behaviour.
+
+It was **wrong and live from 2026-09-14 to 2026-09-23**, by up to £3,142.77 on a real backup, with
+the two figures showing **opposite signs**. Nothing on screen looked wrong: a real ledger's own
+bills and salary move each cycle's balance enough that every figure reads plausibly on its own. It
+was found only because a synthetic fixture with no future real rows made the repeated numbers
+obvious, and it was found by Adam looking at the screen, not by any script.
+
+**The lesson worth keeping:** a balance that is *plausible* is not a balance that is *checked*. Two
+figures on the same screen that are supposed to be the same quantity should be asserted equal
+somewhere, not left to the eye.
+
+### Listly's rows feed this
+
+`transactions` has a second writer (see the section above): a priced Listly shop inserts an ordinary
+`type: 'expense'` row. Those rows are indistinguishable from hand-entered ad-hoc spend by design,
+so they land in the forecast's weekly buckets like any other expense. That is correct — it is real
+spend — but it means **a shop priced in Listly moves this app's spend forecast**.

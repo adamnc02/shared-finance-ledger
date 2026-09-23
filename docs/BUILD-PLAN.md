@@ -34,8 +34,9 @@ It is kept, and slimmed to this, for exactly two reasons.
 | "Current baseline" | `TECHNICAL.md` §34 owns the verify counts now, beside the suite it counts |
 | "Session protocol" | The `app-session` skill and `SHARED-FINANCE-LEDGER-INFO.md` own it |
 
-**The only work still open is `PROMPT-17-average-spend-forecast-median.md`** — the median forecast,
-which was step 1 of the 2026-09-21 execution order and was skipped while steps 2–4 all shipped.
+**Nothing is open.** `PROMPT-17` — the median forecast, step 1 of the 2026-09-21 execution order,
+skipped while steps 2–4 all shipped — was built, UAT'd and merged on **2026-09-23**, and retired the
+same day. The run order is complete.
 
 > **A note on the phase descriptions below.** They are written in the future tense, as plans, because
 > that is what they were. **Every one of them is done.** Read them as the record of what was
@@ -271,7 +272,7 @@ against what was actually built.
 >
 > | # | Work | Where | State |
 > |---|---|---|---|
-> | 1 | Average-spend-forecast median — its own session | 🆕 **`PROMPT-17-average-spend-forecast-median.md`** (rewritten 2026-09-23; the old `personal-ledger/2026-10-28/…` file is superseded) | 🔴 **STILL NOT STARTED** — steps 2, 3 and 4 all shipped without it |
+> | 1 | Average-spend-forecast median — its own session | retired 2026-09-23; the mechanism lives in `TECHNICAL.md §23` and the invariant in `APP-KNOWLEDGE.md` | ✅ **DONE 2026-09-23** — UAT passed in `finance-ledger-test`, merged to both live apps. The run order is now complete |
 > | 2 | **PROMPT-14 Parts 1–7, in ONE session** — Adam merged steps 2 and 4 on 2026-09-22: *"This and the backup work should be done in the same session"* | PROMPT-14 (Phase 8) | ✅ **BUILT 2026-09-22 (session 13)**, awaiting UAT and the migration's go-ahead |
 > | 3 | **This phase** — final validation, now covering the alerts (🔔 items throughout PROMPT-12) | PROMPT-12 (Phase 6) | 🟡 **IN PROGRESS (session 17, 2026-09-23)** — baseline taken, Parts 4 and 5 built; waiting on one real 20:00 |
 > | 4 | PowerSync keep-alive | Phase 7, still genuinely last | ✅ **DONE 2026-09-23** — runs from this repo only |
@@ -565,6 +566,57 @@ in that table is silent — neither Postgres nor PowerSync will warn you.
 # 📓 Session log
 
 Newest first. **Every session appends here before finishing.**
+
+### 2026-09-23 — SESSION 17 — The median spend forecast, and a forecast carry-forward bug it uncovered
+**Prompt doc:** PROMPT-17 (retired) · **Apps touched:** all three · **Branches:**
+`feature/development-2026-09-23-median-forecast` (test + both live),
+`feature/uat-fixes-2026-09-23-forecast-carry-forward`, `…-forecast-caption` · **Merged:** yes
+
+**Done.** Three things, only one of which was planned.
+1. **The median forecast.** Above `MEDIAN_SPEND_HISTORY_DAYS` (42 = 6 whole weeks) the forecast is
+   the median of the window's per-week totals, scaled by `cycleDays / 7`. Below it, and whenever
+   that median is £0, behaviour is byte-identical to before. §0 answered live: 42 days (over
+   28/35/56), the existing week-trim reused unchanged, and the caption wording.
+2. **The forecast carry-forward fix** — see root causes.
+3. **The method caption on every forecast row**, after the first shape proved near-invisible.
+
+**Root causes.**
+- *Median:* a mean is one unusually large week away from being skewed, and a single one-off drags
+  **every** future cycle until it ages out of the window.
+- *Carry-forward:* `CycleGroupedList`'s fold read
+  `upToEnd.length > 0 ? upToEnd.at(-1).running : carried`. `carried` held the forecast-adjusted
+  figure but was only **reached** when no real row was dated on or before that cycle's end — and the
+  projection generates future bills and salary, so on a real ledger it never was. Every closing was
+  overstated by the sum of all **earlier** forecasts, growing each cycle. Live since 2026-09-14.
+  On the 2026-09-20 `personal-ledger` backup: hero −£866.80, final section **+£2,275.97**.
+
+**Files.** `src/lib/averageSpendForecast.ts` (+`MEDIAN_SPEND_HISTORY_DAYS`, `weeklySpendTotals`,
+`medianWeeklySpend`, `spendForecastMethod`), **new** `src/lib/cycleForecastChain.ts`,
+`src/pages/Home.tsx`, `TECHNICAL.md §23`, `docs/APP-KNOWLEDGE.md`.
+
+**Verify.** `tsc -b` clean in all three. Sweeps **155** (test), **141** (`personal-ledger`), **155**
+(`shared-finance-ledger`), zero failures. vitest 45/45. `check:divergence` 0 unaccounted.
+`verify-average-spend-forecast.ts` 45 → **84**; **new** `verify-cycle-forecast-chain.ts` (25),
+which carries a control reproducing the old fold.
+
+**Learnt / surprising.**
+- **The change is a no-op on today's real data.** Neither live dataset clears the 42-day bar yet;
+  mum's window reaches it on **2026-10-04**, and her figure will likely drop noticeably then, with
+  no release to blame. Checking that BEFORE writing the UAT is what forced the synthetic fixtures.
+- **Production hid the carry-forward bug rather than avoiding it.** Real bills and salary move each
+  cycle's balance enough that every figure reads plausibly alone. It only surfaced on a fixture
+  whose future cycles had no real rows — and it was caught by Adam looking at the screen, not by any
+  script. *A balance that is plausible is not a balance that is checked.*
+- **A UAT row that cannot fail is not a test.** Fixture B's "no 'typical week' anywhere" row passed
+  vacuously — B has no caption at all, because its only part-spent cycle is hidden by the £0 floor.
+  Making the caption always-visible turned it into a real check.
+- **Two figures on one screen that are the same quantity should be asserted equal somewhere.** The
+  hero/final-section invariant was written in a code comment and was simply untrue for nine days.
+
+**Deviated from the plan.** PROMPT-17 scoped one change; three shipped. The carry-forward fix was
+Adam's explicit call during UAT. The caption was revised after he could not find it on screen.
+
+**Next.** Nothing open. The 2026-09-21 run order is complete.
 
 ### Template
 ```

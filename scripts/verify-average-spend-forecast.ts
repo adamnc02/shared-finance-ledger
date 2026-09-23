@@ -22,6 +22,18 @@
 // real-world scenario this session's fix exists to block. See git
 // history for the superseded versions.
 //
+// 2026-09-23 (PROMPT-17) — a SECOND method is added below, not a
+// replacement: once the week-aligned window spans
+// MEDIAN_SPEND_HISTORY_DAYS (42 = 6 whole weeks), the forecast is built
+// from the MEDIAN of the window's own per-week totals instead of the
+// pooled daily rate. Tests 20-27 pin both paths AND the boundary between
+// them, because the real risk here isn't the median arithmetic — it's
+// that an account silently changes method, and therefore changes a
+// number the user has already learned to read, with no release to blame
+// it on. Every one of the 19 tests above still passes UNCHANGED, which
+// is itself the assertion that the change is purely additive for
+// accounts below the bar.
+//
 // Still verifies, unchanged since 2026-09-13: the per-cycle reduction
 // math (forecastSpendForCycle), and that the window is NOT bound by
 // either ledger's own opening-balance date (Adam's own rebalancing
@@ -38,8 +50,12 @@ import {
   forecastSpendForCycle,
   hasAnyMatchingSpend,
   hasSpendHistory,
+  MEDIAN_SPEND_HISTORY_DAYS,
+  medianWeeklySpend,
   MIN_SPEND_HISTORY_DAYS,
+  spendForecastMethod,
   weekAlignedWindowStart,
+  weeklySpendTotals,
   type SpendScope,
 } from '../src/lib/averageSpendForecast'
 import { toLocalIsoDate as iso } from '../src/lib/date'
@@ -368,6 +384,220 @@ function anchor(location: 'personal' | 'joint', ownerId = 'p1'): Transaction {
   const data = dataWith([expense('e1', '2026-09-27', 300, 'personal')]) // only within currentCycle — see test 17's comment on this date
   check('the current cycle (the first-ever one) is blocked', averageAdHocSpendForCycle(data, personalScope, 'p1', currentCycle, asOf), 0)
   assert('a FUTURE cycle still gets a real, nonzero forecast', averageAdHocSpendForCycle(data, personalScope, 'p1', futureCycle, asOf) > 0)
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 2026-09-23 — THE MEDIAN METHOD (PROMPT-17)
+// ════════════════════════════════════════════════════════════════════
+//
+// All fixtures below clamp the window by dating their earliest matching
+// expense deliberately, since `rawWindowStart` trims the natural
+// 3-cycles-back start forward to the earliest real transaction. With
+// asOf = 10 Oct 2026:
+//   2026-08-16 -> a 56-day (8 whole week) window, Aug16..Oct10
+//   2026-08-30 -> a 42-day (6 whole week) window — EXACTLY the threshold
+//   2026-09-06 -> a 35-day (5 whole week) window — one week BELOW it
+// Each is verified against the implementation's own helpers rather than
+// asserted from hand-done calendar arithmetic.
+
+const futureCycle = { start: new Date(2026, 9, 25), end: new Date(2026, 10, 24) } // Oct25..Nov24 = 31 days
+const currentCycle31 = { start: new Date(2026, 8, 25), end: new Date(2026, 9, 24) } // Sep25..Oct24 = 30 days
+
+/** The pooled-mean answer for `futureCycle` over whatever fixture is passed — the CONTROL every median test below is measured against. Uses `dailySpendRate` directly, which this change leaves completely untouched, so it still reports exactly what the app would have shown before 2026-09-23. */
+function meanAnswerForFutureCycle(data: AppDataV2): number {
+  return round2(dailySpendRate(data, personalScope, 'p1', asOf) * 31)
+}
+
+// ── 20. The window shapes these fixtures rely on are what the implementation actually resolves ──
+{
+  check('MEDIAN_SPEND_HISTORY_DAYS is 42 — six whole weeks (Adam, 2026-09-23)', MEDIAN_SPEND_HISTORY_DAYS, 42)
+  const eightWeeks = dataWith([expense('e1', '2026-08-16', 100, 'personal')])
+  check('a fixture whose earliest expense is 2026-08-16 gives an 8-week window', daysOfSpendHistory(eightWeeks, personalScope, 'p1', asOf), 56)
+  const sixWeeks = dataWith([expense('e1', '2026-08-30', 100, 'personal')])
+  check('...2026-08-30 gives exactly the 42-day threshold', daysOfSpendHistory(sixWeeks, personalScope, 'p1', asOf), 42)
+  const fiveWeeks = dataWith([expense('e1', '2026-09-06', 100, 'personal')])
+  check('...2026-09-06 gives 35 days, one week below it', daysOfSpendHistory(fiveWeeks, personalScope, 'p1', asOf), 35)
+}
+
+// ── 21. WEEKLY BUCKETING: the window splits into whole 7-day buckets, each holding its own week's TOTAL ──
+{
+  // Seven ordinary £100 weeks and one deliberate £1,500 outlier (week 4)
+  // — a gift, an appliance, a rare big shop. This is the fixture the
+  // whole change exists for.
+  const data = dataWith([
+    expense('w1', '2026-08-16', 100, 'personal'),
+    expense('w2', '2026-08-23', 100, 'personal'),
+    expense('w3', '2026-08-30', 100, 'personal'),
+    expense('w4', '2026-09-08', 1500, 'personal'), // THE OUTLIER, inside week 4 (Sep6..Sep12)
+    expense('w5', '2026-09-13', 100, 'personal'),
+    expense('w6', '2026-09-20', 100, 'personal'),
+    expense('w7', '2026-09-27', 100, 'personal'),
+    expense('w8', '2026-10-04', 100, 'personal'),
+  ])
+  check('weeklySpendTotals returns one bucket per whole week, OLDEST FIRST', weeklySpendTotals(data, personalScope, 'p1', asOf), [100, 100, 100, 1500, 100, 100, 100, 100])
+  check('the median of those buckets is an ordinary week, NOT the outlier', medianWeeklySpend(data, personalScope, 'p1', asOf), 100)
+  check('spendForecastMethod reports the median path is what ran', spendForecastMethod(data, personalScope, 'p1', asOf), 'median')
+
+  // ── THE HEADLINE ASSERTION, and its control ──
+  const medianAnswer = averageAdHocSpendForCycle(data, personalScope, 'p1', futureCycle, asOf)
+  const meanAnswer = meanAnswerForFutureCycle(data)
+  check('MEDIAN: the typical week (£100) scaled by the cycle (31/7)', medianAnswer, 442.86)
+  check('CONTROL — the pooled MEAN over the SAME fixture is visibly dragged by the outlier', meanAnswer, 1217.86)
+  assert('the mean is dragged to nearly 3x the median answer — this is the bug being fixed', meanAnswer > medianAnswer * 2.5)
+
+  // The sharpest statement of "not dragged": the median's answer over a
+  // fixture WITH the outlier is identical to the mean's answer over the
+  // same fixture WITHOUT it. The outlier week is ignored, not smeared.
+  const withoutOutlier = dataWith([
+    expense('w1', '2026-08-16', 100, 'personal'),
+    expense('w2', '2026-08-23', 100, 'personal'),
+    expense('w3', '2026-08-30', 100, 'personal'),
+    expense('w4', '2026-09-08', 100, 'personal'), // an ordinary week instead
+    expense('w5', '2026-09-13', 100, 'personal'),
+    expense('w6', '2026-09-20', 100, 'personal'),
+    expense('w7', '2026-09-27', 100, 'personal'),
+    expense('w8', '2026-10-04', 100, 'personal'),
+  ])
+  check('the median WITH the outlier == the mean WITHOUT it — the outlier week is ignored, not smeared', medianAnswer, meanAnswerForFutureCycle(withoutOutlier))
+}
+
+// ── 22. 🚨 THE UNIT IS A WEEK'S TOTAL, NOT A TRANSACTION AMOUNT ──
+{
+  // Eight £100 weeks, but week 1 is five £20 shops instead of one £100
+  // one. A median of individual TRANSACTION amounts would answer a
+  // different question entirely (the typical size of a shop, ignoring
+  // how many a week contains) and would look perfectly plausible.
+  const data = dataWith([
+    expense('a1', '2026-08-16', 20, 'personal'),
+    expense('a2', '2026-08-17', 20, 'personal'),
+    expense('a3', '2026-08-18', 20, 'personal'),
+    expense('a4', '2026-08-19', 20, 'personal'),
+    expense('a5', '2026-08-20', 20, 'personal'),
+    expense('w2', '2026-08-23', 100, 'personal'),
+    expense('w3', '2026-08-30', 100, 'personal'),
+    expense('w4', '2026-09-06', 100, 'personal'),
+    expense('w5', '2026-09-13', 100, 'personal'),
+    expense('w6', '2026-09-20', 100, 'personal'),
+    expense('w7', '2026-09-27', 100, 'personal'),
+    expense('w8', '2026-10-04', 100, 'personal'),
+  ])
+  check('five £20 shops in one week is a £100 WEEK, not five £20 data points', weeklySpendTotals(data, personalScope, 'p1', asOf), [100, 100, 100, 100, 100, 100, 100, 100])
+  check('the median is £100 (the typical WEEK)', medianWeeklySpend(data, personalScope, 'p1', asOf), 100)
+  check('so the forecast is £442.86', averageAdHocSpendForCycle(data, personalScope, 'p1', futureCycle, asOf), 442.86)
+  // The control: what the wrong implementation would have produced. The
+  // median of the twelve transaction amounts is (20 + 100) / 2 = £60,
+  // which scaled by 31/7 gives £265.71.
+  assert('CONTROL — a median of TRANSACTION amounts would have given £265.71, and does not', averageAdHocSpendForCycle(data, personalScope, 'p1', futureCycle, asOf) !== 265.71)
+}
+
+// ── 23. THE BOUNDARY: one week below the threshold is byte-identical to today's answer ──
+{
+  // Five weeks, uneven on purpose so the two methods CANNOT agree by
+  // coincidence: four £100 weeks and one £600 week. Mean -> £885.71,
+  // median would have been £442.86.
+  const fiveWeeks = dataWith([
+    expense('w1', '2026-09-06', 100, 'personal'),
+    expense('w2', '2026-09-13', 100, 'personal'),
+    expense('w3', '2026-09-20', 100, 'personal'),
+    expense('w4', '2026-09-27', 100, 'personal'),
+    expense('w5', '2026-10-04', 600, 'personal'),
+  ])
+  check('35 days: the method is still the MEAN', spendForecastMethod(fiveWeeks, personalScope, 'p1', asOf), 'mean')
+  check('35 days: medianWeeklySpend returns 0 — the single "does not apply" signal', medianWeeklySpend(fiveWeeks, personalScope, 'p1', asOf), 0)
+  check('35 days: the answer is EXACTLY what dailySpendRate alone produces — unchanged from before 2026-09-23', averageAdHocSpendForCycle(fiveWeeks, personalScope, 'p1', futureCycle, asOf), meanAnswerForFutureCycle(fiveWeeks))
+  check('35 days: and that answer is £885.71, not the median’s £442.86', averageAdHocSpendForCycle(fiveWeeks, personalScope, 'p1', futureCycle, asOf), 885.71)
+
+  // One week later — the same shape, now 42 days — and the method flips.
+  const sixWeeks = dataWith([
+    expense('w0', '2026-08-30', 100, 'personal'),
+    expense('w1', '2026-09-06', 100, 'personal'),
+    expense('w2', '2026-09-13', 100, 'personal'),
+    expense('w3', '2026-09-20', 100, 'personal'),
+    expense('w4', '2026-09-27', 100, 'personal'),
+    expense('w5', '2026-10-04', 600, 'personal'),
+  ])
+  check('42 days: the method flips to MEDIAN', spendForecastMethod(sixWeeks, personalScope, 'p1', asOf), 'median')
+  check('42 days: the answer is the typical week, £442.86', averageAdHocSpendForCycle(sixWeeks, personalScope, 'p1', futureCycle, asOf), 442.86)
+  check('42 days: the mean over the SAME fixture would have been £811.90', meanAnswerForFutureCycle(sixWeeks), 811.9)
+}
+
+// ── 24. Eligibility is measured on the WEEK-ALIGNED window, not the raw one ──
+{
+  // A raw 41-day span. `weekAlignedWindowStart` trims the 6 leftover
+  // days, leaving 35 — five weeks, below the bar. Reading the RAW span
+  // here would be a plausible-looking off-by-one that let the median
+  // take over on five buckets.
+  const data = dataWith([
+    expense('w0', '2026-08-31', 100, 'personal'), // trimmed OUT by week alignment
+    expense('w1', '2026-09-06', 100, 'personal'),
+    expense('w2', '2026-09-13', 100, 'personal'),
+    expense('w3', '2026-09-20', 100, 'personal'),
+    expense('w4', '2026-09-27', 100, 'personal'),
+    expense('w5', '2026-10-04', 600, 'personal'),
+  ])
+  check('the RAW window spans 41 days', daysOfSpendHistory(data, personalScope, 'p1', asOf), 41)
+  check('...but only 5 whole weeks survive alignment', weeklySpendTotals(data, personalScope, 'p1', asOf).length, 5)
+  check('so the method is still the MEAN, despite 41 >= 35 and only one day short of 42', spendForecastMethod(data, personalScope, 'p1', asOf), 'mean')
+}
+
+// ── 25. 🚨 A GENUINELY £0 MEDIAN FALLS BACK TO THE MEAN — the forecast row must never silently disappear ──
+{
+  // Adam-confirmed 2026-09-23. Someone who does one big shop a month has
+  // four £0 weeks out of six, so their middle week is £0 — and
+  // buildForecastByCycle drops any cycle whose average is <= 0. Without
+  // this fallback, crossing the 42-day threshold would DELETE a figure
+  // they had been reading for weeks, with no release to blame.
+  const monthlyShopper = dataWith([
+    expense('m1', '2026-08-16', 200, 'personal'),
+    expense('m2', '2026-09-13', 210, 'personal'),
+  ])
+  check('the window is 8 weeks, so the median method is otherwise eligible', weeklySpendTotals(monthlyShopper, personalScope, 'p1', asOf), [200, 0, 0, 0, 210, 0, 0, 0])
+  check('the median week genuinely IS £0', medianWeeklySpend(monthlyShopper, personalScope, 'p1', asOf), 0)
+  check('so the reported method is MEAN, not median — the caption must never claim "typical week" over a mean figure', spendForecastMethod(monthlyShopper, personalScope, 'p1', asOf), 'mean')
+  const answer = averageAdHocSpendForCycle(monthlyShopper, personalScope, 'p1', futureCycle, asOf)
+  assert('THE FORECAST ROW SURVIVES — a nonzero figure, not the £0 that would have deleted the row', answer > 0)
+  check('...and it is exactly the pooled-mean answer, £226.96', answer, 226.96)
+  check('...which is what this account showed before 2026-09-23 too', answer, meanAnswerForFutureCycle(monthlyShopper))
+}
+
+// ── 26. forecastSpendForCycle is NOT forked — it is handed a different average and nothing else ──
+{
+  const data = dataWith([
+    expense('w1', '2026-08-16', 100, 'personal'),
+    expense('w2', '2026-08-23', 100, 'personal'),
+    expense('w3', '2026-08-30', 100, 'personal'),
+    expense('w4', '2026-09-08', 1500, 'personal'),
+    expense('w5', '2026-09-13', 100, 'personal'),
+    expense('w6', '2026-09-20', 100, 'personal'),
+    expense('w7', '2026-09-27', 100, 'personal'), // inside currentCycle31
+    expense('w8', '2026-10-04', 100, 'personal'), // inside currentCycle31
+  ])
+  const average = averageAdHocSpendForCycle(data, personalScope, 'p1', currentCycle31, asOf)
+  check('the median average for a 30-day cycle is £100 x 30/7', average, 428.57)
+  const { forecastAmount, realSpend } = forecastSpendForCycle(data, personalScope, average, currentCycle31)
+  check('real ad-hoc spend already logged in that cycle is picked up identically', realSpend, 200)
+  check('and the reduction is the SAME "average minus real spend, floored at 0" rule as the mean path', forecastAmount, 228.57)
+}
+
+// ── 27. Nothing about the median path changes WHETHER a forecast shows at all — MIN_SPEND_HISTORY_DAYS is still the only gate ──
+{
+  const data = dataWith([
+    expense('w1', '2026-08-16', 100, 'personal'),
+    expense('w2', '2026-08-23', 100, 'personal'),
+    expense('w3', '2026-08-30', 100, 'personal'),
+    expense('w4', '2026-09-08', 1500, 'personal'),
+    expense('w5', '2026-09-13', 100, 'personal'),
+    expense('w6', '2026-09-20', 100, 'personal'),
+    expense('w7', '2026-09-27', 100, 'personal'),
+    expense('w8', '2026-10-04', 100, 'personal'),
+  ])
+  assert('hasSpendHistory still gates on the 14-day minimum, untouched', hasSpendHistory(data, personalScope, 'p1', asOf))
+  check('MIN_SPEND_HISTORY_DAYS is still 14 — the two thresholds are independent', MIN_SPEND_HISTORY_DAYS, 14)
+  // A 3-week window: past the 14-day gate, nowhere near the 42-day one.
+  const threeWeeks = dataWith([expense('t1', '2026-09-20', 100, 'personal'), expense('t2', '2026-09-27', 100, 'personal'), expense('t3', '2026-10-04', 100, 'personal')])
+  assert('a 3-week account still gets a forecast', hasSpendHistory(threeWeeks, personalScope, 'p1', asOf))
+  check('...built by the mean, exactly as before', spendForecastMethod(threeWeeks, personalScope, 'p1', asOf), 'mean')
+  check('...with no median involvement at all', medianWeeklySpend(threeWeeks, personalScope, 'p1', asOf), 0)
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)
