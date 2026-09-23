@@ -1,9 +1,9 @@
 // Verifies that the average spend forecast CARRIES FORWARD through the
 // cycle-grouped ledger's closing balances.
 //
-// 🚨 THE REAL BUG THIS PREVENTS (Adam-reported 2026-09-23, during PROMPT-17's
-// own UAT, from a screenshot where two future cycles showed balances that
-// were not monotonic). Home's hero caption computes "projected" as
+// 🚨 THE REAL BUG THIS PREVENTS (Adam-reported 2026-09-23, during the
+// median-forecast UAT, from a screenshot where two future cycles showed
+// balances that were not monotonic). Home's hero caption computes "projected" as
 // `projectedBalance - forecastTotal`, summing EVERY cycle's forecast, and its
 // own comment says that figure must equal the last cycle section's closing
 // balance. It did not. The fold re-based each cycle on the raw running

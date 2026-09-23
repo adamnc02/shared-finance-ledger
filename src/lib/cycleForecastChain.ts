@@ -1,4 +1,4 @@
-// 2026-09-23 (Adam-reported during the PROMPT-17 UAT, root-caused the same
+// 2026-09-23 (Adam-reported during the median-forecast UAT, root-caused the same
 // session) — the per-cycle closing-balance chain for Home's cycle-grouped
 // ledger, extracted out of Home.tsx so a verify script can assert it. The
 // fold used to live inline in `CycleGroupedList`, where nothing could reach
