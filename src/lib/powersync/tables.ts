@@ -56,6 +56,8 @@ export const SYNCED_TABLES: SyncedTable[] = [
     category_icon: 'text', category_icon_color: 'text',
     // PROMPT-13 B5 — the one restricted pot per person.
     is_coin_jar: 'bool',
+    // PROMPT-15 — how far below zero this account may go; 0 = none.
+    overdraft_amount: 'real',
     ...P,
   }),
   t('savings_pots', {
@@ -79,6 +81,8 @@ export const SYNCED_TABLES: SyncedTable[] = [
     payday_adjust_for_non_working_day: 'bool', cycle_start_day_of_month: 'integer', cycle_start_follows_payday: 'bool',
     follows_income_source_type: 'text', follows_pension_id: 'text', payday_history: 'json', pay_schedule_kind: 'text',
     pay_schedule_anchor: 'text', salary_sort_basis: 'text',
+    // PROMPT-15 — how far below zero this account may go; 0 = none.
+    overdraft_amount: 'real',
     // PROMPT-13 B4 — the switch, per person. `round_up_history` is 'json'
     // and MUST reach the server as a jsonb VALUE, never a jsonb string
     // (MIGRATION-LESSONS §33) — verify-mapping-nulls.ts covers it.
@@ -125,7 +129,7 @@ export const SYNCED_TABLES: SyncedTable[] = [
   }),
   t('credit_card_lump_payments', { ...H, credit_card_id: 'text', date: 'text', amount: 'real', note: 'text', ...P }),
   t('credit_card_minimum_payment_overrides', { ...H, credit_card_id: 'text', date: 'text', amount: 'real', ...P }),
-  t('joint_account', { ...H, opening_balance: 'real', opening_balance_date: 'text' }),
+  t('joint_account', { ...H, opening_balance: 'real', opening_balance_date: 'text', overdraft_amount: 'real' }),
   t('transactions', {
     ...H, date: 'text', amount: 'real', direction: 'text', category_id: 'text', payment_method: 'text', status: 'text',
     type: 'text', note: 'text', location: 'text', owner_id: 'text', payee: 'text', payee_share_percent: 'real',

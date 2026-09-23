@@ -7,8 +7,7 @@ import { THREE_CYCLES_AHEAD } from '../lib/projection'
 import { findApplicableSnapshot, PAY_FREQUENCY_OPTIONS, payFrequencyLabel, nextPayDateProblem, salaryNeedsPayDate, latestSalarySnapshot, computeNetPayForPeriod, upcomingPaydays, closedPaydays, firstPaydayOnOrAfter, recentAndUpcomingPaydayDates, applyPaydayChange, type PaydayChange } from '../lib/salaryLedger'
 import { calculateBonusOnTop } from '../lib/tax'
 import { AttachBonusButton } from '../components/AttachBonusButton'
-import { downloadLedgerBackup, parseLedgerBackupJson } from '../lib/ledgerStorage'
-import { Plus, Trash2, Download, Upload, ChevronDown, ChevronUp, Settings, X, Users, CalendarClock, Info, ArrowUpDown } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, ChevronUp, Settings, X, Users, CalendarClock, Info, ArrowUpDown } from 'lucide-react'
 import type { AppDataV2, Category, Loan, PayCycleConfig, PaySchedule, Pension, Person, Pot, RecurrenceFrequency, RecurringTemplate, SavingsInterestMethod, SavingsPot, Transaction } from '../types/ledger'
 import { nanoid } from 'nanoid'
 import { DeductionModal } from '../components/DeductionModal'
@@ -42,6 +41,7 @@ import {
 } from '../lib/pensionLedger'
 import { JointAccountSetupModal } from '../components/JointAccountSetupModal'
 import { HeaderAccessory } from '../components/HeaderAccessory'
+import { WalletBackupSlot } from '../components/BackupSection'
 import { RebalanceAccountsModal, type RebalanceTarget } from '../components/RebalanceAccountsModal'
 import { formatFullDate } from '../lib/format'
 import {
@@ -56,7 +56,6 @@ import { buildExampleLedger } from '../lib/savingsInterest'
 import { newPot, potBalanceAsOf, potDepositOccurrencePreviews } from '../lib/potLedger'
 import { pickNextSharedCardColor } from '../lib/creditCards'
 import { describeSchedule, recentAndUpcomingOccurrences } from '../lib/schedule'
-import { isBillTemplate } from '../lib/bills'
 import { recentAndUpcomingLoanPaymentDates } from '../lib/ledgerLoans'
 import { locationsEqual, transferLocationLabel, transferLocationKey, buildTransferLocationOptions, type TransferLocationOption } from '../lib/transferLedger'
 import { AmountStep, LocationStep, FrequencyStep, DateStep, type TransferFrequencyChoice, resolveTransferFrequencyChoice } from '../components/TransferSteps'
@@ -1876,7 +1875,8 @@ function PotForm({
  * text button, sitting outside this form — is now permanently part of
  * this same card, still a checklist, saved together with the name in one
  * Save action. The red inline button is gone. */
-function PotEditForm({
+/** Exported for `OverdraftField.test.tsx`, the same reason `SavingsPotForm` is. */
+export function PotEditForm({
   pot,
   templates,
   loans,
@@ -1915,6 +1915,19 @@ function PotEditForm({
   // balance and as of date". **This is not an inconsistency to tidy up.**
   const [openingBalance, setOpeningBalance] = useState(String(pot.openingBalance))
   const [openingDate, setOpeningDate] = useState(pot.openingDate)
+  // PROMPT-15 — how far below zero this pot may go; 0 = none. Editable on
+  // EVERY ordinary pot (Adam, 2026-09-22: "mum might use pots as other bank
+  // account, so we need to add the flexibility"), and hidden on a Coin Jar,
+  // which is not watched for shortfalls at all.
+  // 🚨 Shows "0", NOT blank — deliberately unlike the opening-balance fields
+  // beside it, which use `|| ''`. Adam lost time to exactly this on
+  // 2026-09-22: a blank field reads as "unset", so he typed 0 into it, which
+  // is the SAME value and correctly did not enable Save.
+  //
+  // For a field whose whole meaning is "0 means no overdraft", blank and 0
+  // are not interchangeable to a reader even though they are to the code —
+  // and the caption under it already promises "Leave at 0 if it cannot".
+  const [overdraft, setOverdraft] = useState(String(pot.overdraftAmount))
   // Its own flow, committed on its own, exactly as the pay cycle settings
   // version is — NOT batched into this form's Save, which governs the name
   // and the anchor pair. A dated change that shares a Save with undated
@@ -1965,7 +1978,8 @@ function PotEditForm({
   // already-named pot, regardless of whether the name had actually
   // changed. Batch 7 (2026-09-07, Bug 8): checklist ticks are
   // deliberately excluded now — see this component's own comment above.
-  const dirty = nameDirty || anchorDirty
+  const overdraftDirty = !pot.isCoinJar && (Number(overdraft) || 0) !== pot.overdraftAmount
+  const dirty = nameDirty || anchorDirty || overdraftDirty
 
   function toggle(item: (typeof items)[number]) {
     const nowChecked = !checked.has(item.key)
@@ -2019,7 +2033,12 @@ function PotEditForm({
     // The anchor pair is only ever sent for a Coin Jar — for every other
     // pot it is not editable and must not be written back, even
     // unchanged.
-    onSave(pot.isCoinJar ? { name: name.trim(), openingBalance: Number(openingBalance) || 0, openingDate } : { name: name.trim() })
+    onSave(
+      pot.isCoinJar
+        ? { name: name.trim(), openingBalance: Number(openingBalance) || 0, openingDate }
+        : // Never negative — a negative would invert the alert's floor.
+          { name: name.trim(), overdraftAmount: Math.max(0, Number(overdraft) || 0) },
+    )
   }
 
   if (roundUp && choosingRoundUpFrom !== null) {
@@ -2085,7 +2104,25 @@ function PotEditForm({
             </Field>
           </>
         )}
+        {/* PROMPT-15 — every ordinary pot, never a Coin Jar. 🚨 NO
+            `allowNegative`, unlike the opening balance above and for the
+            opposite reason: a negative overdraft would invert the alert's
+            floor and fire on a healthy pot. */}
+        {!pot.isCoinJar && (
+          <Field label="Overdraft (£)">
+            <NumberInput
+              value={overdraft}
+              onChange={setOverdraft}
+              className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono"
+            />
+          </Field>
+        )}
       </div>
+      {!pot.isCoinJar && (
+        <p className="text-[11px] text-[var(--color-ink-faint)] mt-1.5">
+          How far below zero this account may go. Leave at 0 if it cannot. Only the 8pm low-balance alert reads it.
+        </p>
+      )}
 
       {/* Batch 7 (2026-09-07, Bug 8): moved directly below the Name field,
           per Adam's own spec — makes it clear this Save only ever governs
@@ -2840,7 +2877,8 @@ export function Salary() {
         </div>
       </header>
 
-      <BackupSection data={data} onRestore={setData} />
+      {/* Renders here unless an app claims Backup & Restore for somewhere else (BackupSection.tsx). */}
+      <WalletBackupSlot data={data} onRestore={setData} />
 
       <CollapsibleSection
         title="Salary"
@@ -3399,8 +3437,8 @@ export function Salary() {
         <JointAccountSetupModal
           initial={data.jointAccount}
           dismissable
-          onSave={(openingBalance, openingBalanceDate) => {
-            setJointAccountOpening(openingBalance, openingBalanceDate)
+          onSave={(openingBalance, openingBalanceDate, overdraftAmount) => {
+            setJointAccountOpening(openingBalance, openingBalanceDate, overdraftAmount)
             setEditingJointAccount(false)
             triggerJointFlash()
           }}
@@ -3446,6 +3484,7 @@ export function Salary() {
               salarySortBasis={payCycle?.salarySortBasis ?? 'payday'}
               openingBalance={payCycle?.openingBalance ?? 0}
               openingBalanceDate={payCycle?.openingBalanceDate ?? todayIso()}
+              overdraftAmount={payCycle?.overdraftAmount ?? 0}
               roundUpEnabled={payCycle?.roundUpEnabled ?? false}
               hasCoinJar={data.pots.some((p) => p.isCoinJar && p.personId === person.id)}
               onChangeRoundUp={(enabled, effectiveFrom) => setRoundUp(person.id, enabled, effectiveFrom)}
@@ -3948,6 +3987,10 @@ function SalarySetupForm({
               paySchedule: isFourWeekly ? { kind: payFrequency, anchorPayDate: nextPayDate } : undefined,
               cycleStartDayOfMonth: Number(cycleStartDayOfMonth),
               cycleStartFollowsPayday,
+              // Set later, in the cog (PayCycleSettingsModal), not during
+              // first-time salary setup — nobody is thinking about their
+              // overdraft while typing their salary in.
+              overdraftAmount: payCycle?.overdraftAmount ?? 0,
               openingBalance: Number(openingBalance),
               openingBalanceDate,
             },
@@ -3964,7 +4007,8 @@ function SalarySetupForm({
 
 // ── Pay cycle settings — payday, weekend adjustment, cycle boundary, opening balance. Moved out of the main flow behind the settings cog, since it's set once and rarely touched. ──
 
-function PayCycleSettingsModal({
+/** Exported for `OverdraftField.test.tsx`, the same reason `SavingsPotForm` is. */
+export function PayCycleSettingsModal({
   personName,
   isPrimary,
   payday,
@@ -3974,6 +4018,7 @@ function PayCycleSettingsModal({
   salarySortBasis,
   openingBalance,
   openingBalanceDate,
+  overdraftAmount,
   roundUpEnabled,
   hasCoinJar,
   onChangeRoundUp,
@@ -3998,6 +4043,8 @@ function PayCycleSettingsModal({
   salarySortBasis: 'payday' | 'budget_cycle'
   openingBalance: number
   openingBalanceDate: string
+  /** PROMPT-15 — how far below zero this account may go; 0 means no overdraft. Read only by the low-balance alert. */
+  overdraftAmount: number
   /**
    * PROMPT-13 B4 — whether round-ups are currently on for this person, and
    * the flow that changes it.
@@ -4024,6 +4071,7 @@ function PayCycleSettingsModal({
     salarySortBasis: 'payday' | 'budget_cycle'
     openingBalance: number
     openingBalanceDate: string
+    overdraftAmount: number
   }) => void
   onDeleteSalary: () => void
   onClose: () => void
@@ -4052,6 +4100,15 @@ function PayCycleSettingsModal({
   const [draftSalarySortBasis, setDraftSalarySortBasis] = useState<'payday' | 'budget_cycle'>(salarySortBasis)
   const [draftOpeningBalance, setDraftOpeningBalance] = useState(String(openingBalance))
   const [draftOpeningBalanceDate, setDraftOpeningBalanceDate] = useState(openingBalanceDate)
+  // 🚨 Shows "0", NOT blank — deliberately unlike the opening-balance fields
+  // beside it, which use `|| ''`. Adam lost time to exactly this on
+  // 2026-09-22: a blank field reads as "unset", so he typed 0 into it, which
+  // is the SAME value and correctly did not enable Save.
+  //
+  // For a field whose whole meaning is "0 means no overdraft", blank and 0
+  // are not interchangeable to a reader even though they are to the code —
+  // and the caption under it already promises "Leave at 0 if it cannot".
+  const [draftOverdraft, setDraftOverdraft] = useState(String(overdraftAmount))
   const [draftRoundUp, setDraftRoundUp] = useState(roundUpEnabled)
   // PROMPT-13 B4 — set while a round-up switch waits for its
   // effective-from date. Kept separate from `choosingPaydayFrom` so the
@@ -4070,6 +4127,7 @@ function PayCycleSettingsModal({
     draftSalarySortBasis !== salarySortBasis ||
     (Number(draftOpeningBalance) || 0) !== openingBalance ||
     draftOpeningBalanceDate !== openingBalanceDate ||
+    (Number(draftOverdraft) || 0) !== overdraftAmount ||
     draftRoundUp !== roundUpEnabled
 
   const paydayChanged = draftPayday !== payday || draftAdjust !== adjustForNonWorkingDay || (paySchedule !== undefined && draftNextPayDate !== (nextPayday ?? ''))
@@ -4113,6 +4171,10 @@ function PayCycleSettingsModal({
       salarySortBasis: draftSalarySortBasis,
       openingBalance: Number(draftOpeningBalance) || 0,
       openingBalanceDate: draftOpeningBalanceDate,
+      // Never negative: NumberInput has no allowNegative here, and this is
+      // the belt to that pair of braces. A negative would invert the alert's
+      // floor to +£500 and fire on a healthy account (PROMPT-15 §0 Q2).
+      overdraftAmount: Math.max(0, Number(draftOverdraft) || 0),
     })
   }
 
@@ -4237,7 +4299,23 @@ function PayCycleSettingsModal({
               className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none"
             />
           </Field>
+          <Field label="Overdraft (£)">
+            {/* PROMPT-15 — how far below zero this account may go. 0 = none.
+                🚨 NO `allowNegative`, deliberately the opposite of the
+                opening balance above and for the opposite reason: an
+                opening balance legitimately takes a minus (the account is
+                overdrawn), whereas a NEGATIVE overdraft would invert the
+                alert's floor to +£500 and fire on a healthy account. */}
+            <NumberInput
+              value={draftOverdraft}
+              onChange={setDraftOverdraft}
+              className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono"
+            />
+          </Field>
         </div>
+        <p className="text-[11px] text-[var(--color-ink-faint)] mt-1.5">
+          How far below zero this account may go. Leave at 0 if it cannot. Only the 8pm low-balance alert reads it.
+        </p>
         <label className="flex items-center gap-2 mt-3">
           <input type="checkbox" checked={draftAdjust} onChange={(e) => setDraftAdjust(e.target.checked)} />
           <span className="text-xs text-[var(--color-ink-muted)]">
@@ -5298,79 +5376,6 @@ const DEDUCTION_TYPE_SHORT: Record<DeductionType, string> = {
   post_tax: 'post-tax',
 }
 
-
-function BackupSection({ data, onRestore }: { data: AppDataV2; onRestore: (data: AppDataV2) => void }) {
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [restored, setRestored] = useState(false)
-
-  function handleFile(file: File) {
-    setError(null)
-    setRestored(false)
-    file
-      .text()
-      .then((text) => {
-        const restoredData = parseLedgerBackupJson(text)
-        const proceed = window.confirm(
-          `This will replace everything currently in the app (${data.people.length} ${data.people.length === 1 ? 'person' : 'people'}, ${data.recurringTemplates.filter(isBillTemplate).length} bills, ${data.loans.length} loans, ${data.creditCards.length} credit cards, ${data.scenarios.length} scenarios) with the contents of this backup. This can't be undone. Continue?`,
-        )
-        if (!proceed) return
-        onRestore(restoredData)
-        setRestored(true)
-      })
-      .catch((err) => setError(err.message))
-  }
-
-  return (
-    <div className="rounded-2xl p-4 mb-6 flex items-center justify-between" style={{ background: 'var(--color-surface)' }}>
-      <div>
-        <h2 className="font-body text-sm font-semibold text-[var(--color-ink)]">Backup</h2>
-        <p className="text-xs text-[var(--color-ink-faint)] mt-0.5 max-w-[220px]">
-          Everything lives in this browser's storage — save a copy somewhere safe in case it gets cleared.
-        </p>
-        {error && (
-          <p className="text-xs mt-1" style={{ color: 'var(--color-negative)' }}>
-            {error}
-          </p>
-        )}
-        {restored && (
-          <p className="text-xs mt-1" style={{ color: 'var(--color-positive)' }}>
-            Restored.
-          </p>
-        )}
-      </div>
-      <div className="flex gap-2 shrink-0">
-        <button
-          onClick={() => downloadLedgerBackup(data)}
-          className="w-9 h-9 rounded-full flex items-center justify-center"
-          style={{ background: 'var(--color-bg-elevated)' }}
-          title="Download a full backup"
-        >
-          <Download size={16} className="text-[var(--color-ink)]" />
-        </button>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="w-9 h-9 rounded-full flex items-center justify-center"
-          style={{ background: 'var(--color-bg-elevated)' }}
-          title="Restore from a backup file"
-        >
-          <Upload size={16} className="text-[var(--color-ink)]" />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/json"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (file) handleFile(file)
-            e.target.value = ''
-          }}
-        />
-      </div>
-    </div>
-  )
-}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

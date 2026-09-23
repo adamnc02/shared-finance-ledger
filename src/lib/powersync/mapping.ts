@@ -62,7 +62,13 @@ import { salarySortPersonId } from '../salarySortLedger'
 import type { SalaryDeduction } from '../tax'
 import type { Scenario } from '../../types/models'
 
-export type Value = string | number | boolean | null
+// 🚨 TWO SHAPES REACH `fromRows`, and a jsonb column looks different in each.
+// PowerSync's local SQLite has no json type, so it hands back jsonb as TEXT;
+// PostgREST hands it back ALREADY PARSED, as an object or an array. The app
+// reads the local database, the ledger-alerts Edge Function reads the server
+// through PostgREST, and BOTH call `fromRows`. So a row value genuinely can be
+// an object, and saying otherwise here is what made `j()` wrong below.
+export type Value = string | number | boolean | null | Value[] | { [k: string]: Value }
 export type Row = { id: string } & Record<string, Value>
 /** Rows per Postgres table name (not the local sfl_ name). */
 export type Rows = Record<string, Row[]>
@@ -109,13 +115,22 @@ function obj<T>(entries: Record<string, unknown>): T {
 const s = (v: Value | undefined): string | undefined => (v === null || v === undefined ? undefined : String(v))
 const n = (v: Value | undefined): number | undefined => (v === null || v === undefined || v === '' ? undefined : Number(v))
 const b = (v: Value | undefined): boolean | undefined => (v === null || v === undefined ? undefined : v === true || v === 1 || v === '1' || v === 'true')
-// A jsonb value stored double-encoded (a JSON string holding JSON: what the
-// connector wrote before toServerRecord, UAT 2026-09-19) is unwrapped, with a
-// warning, rather than handing the app a string where it expects an object.
+// 🚨 A jsonb column arrives here in one of THREE states, and this is the only
+// place that knows it:
+//   1. TEXT holding JSON — PowerSync's SQLite, which has no json type. Parse.
+//   2. ALREADY PARSED — PostgREST, which parses jsonb for you. Do NOT parse:
+//      `JSON.parse(String({}))` is `JSON.parse("[object Object]")`, which
+//      throws. This is what broke ledger-alerts live on 2026-09-22, and it hid
+//      for a day because every fixture backup had an EMPTY history, so `j()`
+//      returned at the guard above and never reached the parse.
+//   3. DOUBLE-ENCODED — a JSON string holding JSON, which is what the
+//      connector wrote before toServerRecord (UAT 2026-09-19). Unwrapped with
+//      a warning rather than handing the app a string where it wants an object.
+// Never narrow this back to `JSON.parse(String(v))`. Both readers are real.
 let warnedDoubleEncoded = false
 function j<T>(v: Value | undefined): T | undefined {
   if (v === null || v === undefined || v === '') return undefined
-  let parsed: unknown = JSON.parse(String(v))
+  let parsed: unknown = typeof v === 'string' ? JSON.parse(v) : v
   if (typeof parsed === 'string' && /^\s*[[{]/.test(parsed)) {
     if (!warnedDoubleEncoded) console.warn('[powersync] a jsonb value on the server is double-encoded (stored as a string); reading it anyway')
     warnedDoubleEncoded = true
@@ -215,7 +230,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
     push('pots', {
       id: p.id, ...h, person_id: p.personId, name: p.name, opening_balance: p.openingBalance, opening_date: p.openingDate, active: p.active,
       color: up(p.color), category_icon: up(p.categoryIcon), category_icon_color: up(p.categoryIconColor),
-      is_coin_jar: up(p.isCoinJar), position: i,
+      is_coin_jar: up(p.isCoinJar), overdraft_amount: p.overdraftAmount, position: i,
     }),
   )
 
@@ -250,6 +265,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
       id: pc.personId, ...h, person_id: pc.personId, opening_balance: pc.openingBalance, opening_balance_date: pc.openingBalanceDate,
       payday_day_of_month: pc.paydayDayOfMonth, payday_adjust_for_non_working_day: pc.paydayAdjustForNonWorkingDay,
       cycle_start_day_of_month: pc.cycleStartDayOfMonth, cycle_start_follows_payday: up(pc.cycleStartFollowsPayday),
+      overdraft_amount: pc.overdraftAmount,
       follows_income_source_type: pc.followsIncomeSource?.type ?? null,
       follows_pension_id: pc.followsIncomeSource?.type === 'pension' ? idUp(pc.followsIncomeSource.pensionId) : null,
       payday_history: jsonUp(pc.paydayHistory), pay_schedule_kind: pc.paySchedule?.kind ?? null,
@@ -316,7 +332,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
   })
 
   if (data.jointAccount) {
-    push('joint_account', { id: ctx.householdId, ...h, opening_balance: data.jointAccount.openingBalance, opening_balance_date: data.jointAccount.openingBalanceDate })
+    push('joint_account', { id: ctx.householdId, ...h, opening_balance: data.jointAccount.openingBalance, opening_balance_date: data.jointAccount.openingBalanceDate, overdraft_amount: data.jointAccount.overdraftAmount })
   }
 
   data.transactions.forEach((t, i) =>
@@ -412,7 +428,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
     obj<Pot>({
       id: r.id, personId: S(r.person_id), name: S(r.name), openingBalance: N(r.opening_balance), openingDate: S(r.opening_date), active: B(r.active),
       color: S(r.color), categoryIcon: s(r.category_icon), categoryIconColor: s(r.category_icon_color),
-      isCoinJar: b(r.is_coin_jar),
+      isCoinJar: b(r.is_coin_jar), overdraftAmount: N(r.overdraft_amount),
     }),
   )
 
@@ -453,6 +469,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
       personId: S(r.person_id), openingBalance: N(r.opening_balance), openingBalanceDate: S(r.opening_balance_date),
       paydayDayOfMonth: N(r.payday_day_of_month), paydayAdjustForNonWorkingDay: B(r.payday_adjust_for_non_working_day),
       cycleStartDayOfMonth: N(r.cycle_start_day_of_month), cycleStartFollowsPayday: b(r.cycle_start_follows_payday),
+      overdraftAmount: N(r.overdraft_amount),
       followsIncomeSource: src === 'pension' ? { type: 'pension', pensionId: S(r.follows_pension_id) } : src === 'salary' ? { type: 'salary' } : undefined,
       paydayHistory: j(r.payday_history),
       paySchedule: kind ? { kind: kind as 'four_weekly', anchorPayDate: S(r.pay_schedule_anchor) } : undefined,
@@ -508,7 +525,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
 
   const joint = rows.joint_account?.[0]
   const jointAccount: JointAccountConfig | null = joint
-    ? { openingBalance: N(joint.opening_balance), openingBalanceDate: S(joint.opening_balance_date) }
+    ? { openingBalance: N(joint.opening_balance), openingBalanceDate: S(joint.opening_balance_date), overdraftAmount: N(joint.overdraft_amount) }
     : null
 
   const transactions: Transaction[] = sorted(rows.transactions).map((r) =>

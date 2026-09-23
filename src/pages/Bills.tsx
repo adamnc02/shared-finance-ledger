@@ -12,6 +12,7 @@ import { CategoryPicker } from '../components/CategoryPicker'
 import { visibleCategoriesFor } from '../lib/categories'
 import { CategoryManagerButton } from '../components/CategoryManagerModal'
 import { LocationEditor } from '../components/LocationEditor'
+import { formOwnerId } from '../lib/formOwner'
 import { SwipeToDelete } from '../components/SwipeToDelete'
 import { FormButtonRow, CancelButton, SaveButton } from '../components/FormButtons'
 import { useSavedFlash, SavedFlashOverlay } from '../components/SavedFlash'
@@ -848,7 +849,8 @@ function BillEditPanel({
   )
 }
 
-function BillForm({
+// Exported for BillOwner.test.tsx (PROMPT-16 Part D); the page is its only app consumer.
+export function BillForm({
   people,
   pots,
   canBeJoint,
@@ -881,7 +883,8 @@ function BillForm({
   const [location, setLocation] = useState<BillLocation>(initial?.location ?? defaultLocation)
   const [payee, setPayee] = useState(initial?.payee || people[0]?.id || '')
   const [payeeSharePercent, setPayeeSharePercent] = useState(initial?.payeeSharePercent ?? 50)
-  const [ownerId, setOwnerId] = useState(initial?.ownerId || defaultOwnerId)
+  // '' on a joint item means "nobody", not "unset" — lib/formOwner.ts.
+  const [ownerId, setOwnerId] = useState(formOwnerId(initial, defaultOwnerId))
   const [potId, setPotId] = useState<string | undefined>(initial?.potId ?? defaultPotId)
   const [categoryId, setCategoryId] = useState(initial?.categoryId ?? BILLS_CATEGORY_ID)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initial?.paymentMethod ?? 'standing_order')
@@ -947,6 +950,10 @@ function BillForm({
               intervalWeeks: frequency === 'every_n_weeks' ? intervalWeeks : undefined,
               anchorDate,
               location,
+              // What a joint bill owns and does not: it has a payee and a
+              // split, and NO owner (''). A personal/pot bill has an owner
+              // and no split (payee '', 100%). The form's standby owner for
+              // a joint bill (lib/formOwner.ts) is deliberately dropped here.
               payee: location === 'joint' ? payee : '',
               payeeSharePercent: location === 'joint' ? payeeSharePercent : 100,
               ownerId: location === 'personal' || location === 'pot' ? ownerId : '',

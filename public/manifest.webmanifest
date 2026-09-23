@@ -1,6 +1,6 @@
 {
-  "name": "Shared Ledger",
-  "short_name": "Shared Ledger",
+  "name": "My Ledger",
+  "short_name": "My Ledger",
   "description": "Shared household finance tracker — salary, loans, bills, and what-if scenarios.",
   "start_url": "./",
   "scope": "./",

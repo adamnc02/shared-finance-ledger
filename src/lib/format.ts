@@ -26,6 +26,18 @@ export function formatMonthYear(iso: string): string {
  * from `new Date(iso)` and reading local getters back off it can
  * day-shift across a timezone boundary for a bare date-only string.
  */
+/**
+ * "12 October" — the same convention as formatFullDate, without the year.
+ *
+ * For somewhere the year is noise because the date is always within weeks: a push notification
+ * about this pay cycle (shortfall.ts). Deliberately lives here beside formatFullDate rather than
+ * being inlined at the call site, so the app has one place that decides how a date reads.
+ */
+export function formatDayMonth(iso: string): string {
+  const [year, month, day] = iso.split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })
+}
+
 export function formatFullDate(iso: string): string {
   const [year, month, day] = iso.split('-').map(Number)
   return new Date(year, month - 1, day).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })

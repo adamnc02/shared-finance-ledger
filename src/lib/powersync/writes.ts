@@ -24,7 +24,7 @@
 // whose relative order genuinely changed get a new one (the longest run
 // already in order is left alone). Deleting never renumbers anything.
 
-import { TABLE_ORDER, type Row, type Rows, type Value } from './mapping'
+import { TABLE_ORDER, canonicalJson, type Row, type Rows, type Value } from './mapping'
 import { localName, tableSpec } from './tables'
 
 export type Op =
@@ -215,8 +215,16 @@ function sameValue(a: Value | undefined, b: Value | undefined): boolean {
 }
 const toBit = (v: Value): number | null => (v === null ? null : v === true || v === 1 || v === '1' ? 1 : 0)
 
-/** SQLite has no boolean: store 1/0. */
-const sqliteValue = (v: Value | undefined): string | number | null => (v === undefined || v === null ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v)
+/**
+ * SQLite has no boolean: store 1/0. And no json type: store canonical TEXT.
+ *
+ * `toRows` already canonicalises every jsonb column, so an object should never
+ * arrive here — but `Value` admits one (PostgREST parses jsonb, see mapping.ts)
+ * and the local column is text either way, so encode rather than let
+ * `[object Object]` reach the database.
+ */
+const sqliteValue = (v: Value | undefined): string | number | null =>
+  v === undefined || v === null ? null : typeof v === 'boolean' ? (v ? 1 : 0) : typeof v === 'object' ? canonicalJson(v) : v
 
 /** The subset of PowerSync's transaction this needs (so tests can pass a fake). */
 export interface WriteTx {

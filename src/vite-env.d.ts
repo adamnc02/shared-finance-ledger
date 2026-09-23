@@ -14,6 +14,15 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL?: string
   readonly VITE_SUPABASE_ANON_KEY?: string
   readonly VITE_POWERSYNC_URL?: string
+  /**
+   * The PUBLIC half of the VAPID pair the `ledger-alerts` Edge Function signs
+   * with (PROMPT-14 Part 7). Public by definition — it is handed to the push
+   * service by every browser that subscribes — so it ships in the bundle. The
+   * private half is a Supabase function secret and is never in this repo.
+   * Absent in a build → the toggle says this build cannot register, rather
+   * than failing silently at subscribe time.
+   */
+  readonly VITE_VAPID_PUBLIC_KEY?: string
 }
 
 interface ImportMeta {

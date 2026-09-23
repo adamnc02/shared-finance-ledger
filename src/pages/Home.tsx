@@ -32,6 +32,7 @@ import { WalletStack } from '../components/WalletStack'
 import { BankCard } from '../components/BankCard'
 import { ProgressRing } from '../components/ProgressRing'
 import { RagLegend } from '../components/RagLegend'
+import { ToggleSwitch } from '../components/Toggle'
 import { ProgressBar } from '../components/ProgressBar'
 import { progressSectionTitle, isCreditCardProgressVisible, summarizeLoansProgress, loansRagProgress, loanEntryRagProgress } from '../lib/progressSection'
 import { CategoryIcon } from '../components/CategoryIcon'
@@ -2102,74 +2103,6 @@ function TrendPreview({
       </button>
       {open && <TrendsModal cardName={cardName} color={color} balanceSpend={balanceSpend} savingsPot={savingsPot} onClose={() => setOpen(false)} />}
     </>
-  )
-}
-
-function ToggleSwitch({
-  label,
-  checked,
-  onChange,
-  help,
-  full,
-  disabled,
-}: {
-  label: string
-  checked: boolean
-  onChange: (v: boolean) => void
-  /** 2026-09-13 (deck controls cleanup) — a short helper caption under the label, only used in the `full` (FiltersSheet row) layout. */
-  help?: string
-  /** 2026-09-13 (deck controls cleanup) — the full-width "settings row" layout FiltersSheet uses (label + optional help on the left, a slightly larger switch on the right), instead of the compact inline label+switch pair used elsewhere on this page. */
-  full?: boolean
-  /** 2026-09-13 follow-up (Adam-specified) — greyed out and non-interactive when the current Group by/Order by selection makes this control inapplicable, rather than hiding the row outright. `full` layout only. */
-  disabled?: boolean
-}) {
-  if (full) {
-    return (
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        aria-disabled={disabled}
-        onClick={() => !disabled && onChange(!checked)}
-        className="w-full flex items-center justify-between gap-3 text-left"
-        style={{ opacity: disabled ? 0.4 : 1, cursor: disabled ? 'default' : 'pointer' }}
-      >
-        <span className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium text-[var(--color-ink)]">{label}</span>
-          {help && <span className="text-[11px] text-[var(--color-ink-muted)]">{help}</span>}
-        </span>
-        <span
-          className="relative inline-block rounded-full transition-colors shrink-0"
-          style={{ width: 38, height: 22, background: checked ? 'var(--color-coral)' : 'var(--color-track)' }}
-        >
-          <span
-            className="absolute rounded-full bg-white transition-transform"
-            style={{ width: 18, height: 18, top: 2, left: 2, transform: checked ? 'translateX(16px)' : 'translateX(0)', boxShadow: '0 1px 2px rgba(0,0,0,0.2)' }}
-          />
-        </span>
-      </button>
-    )
-  }
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className="flex items-center gap-2 text-[11px] font-medium"
-      style={{ color: 'var(--color-ink-muted)' }}
-    >
-      <span>{label}</span>
-      <span
-        className="relative inline-block rounded-full transition-colors shrink-0"
-        style={{ width: 34, height: 20, background: checked ? 'var(--color-coral)' : 'var(--color-track)' }}
-      >
-        <span
-          className="absolute rounded-full bg-white transition-transform"
-          style={{ width: 16, height: 16, top: 2, left: 2, transform: checked ? 'translateX(14px)' : 'translateX(0)', boxShadow: '0 1px 2px rgba(0,0,0,0.2)' }}
-        />
-      </span>
-    </button>
   )
 }
 

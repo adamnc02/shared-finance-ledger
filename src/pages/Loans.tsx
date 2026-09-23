@@ -28,6 +28,7 @@ import { CategoryPicker } from '../components/CategoryPicker'
 import { visibleCategoriesFor, seededCategoryIdForIcon } from '../lib/categories'
 import { aprToMonthlyRate, standardPayment } from '../lib/interestConventions'
 import { LocationEditor } from '../components/LocationEditor'
+import { formOwnerId } from '../lib/formOwner'
 import { SwipeToDelete } from '../components/SwipeToDelete'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { FormButtonRow, CancelButton, SaveButton } from '../components/FormButtons'
@@ -2227,7 +2228,8 @@ function LoanForm({
   const [lender, setLender] = useState('')
   const [categoryId, setCategoryId] = useState(initial?.categoryId ?? (categories.some((c) => c.id === DEFAULT_LOAN_CATEGORY_ID) ? DEFAULT_LOAN_CATEGORY_ID : categories[0]?.id ?? ''))
   const [location, setLocation] = useState<BillLocation>(initial?.location ?? defaultLocation)
-  const [ownerId, setOwnerId] = useState(initial?.ownerId || defaultOwnerId)
+  // '' on a joint item means "nobody", not "unset" — lib/formOwner.ts.
+  const [ownerId, setOwnerId] = useState(formOwnerId(initial, defaultOwnerId))
   const [potId, setPotId] = useState<string | undefined>(initial?.potId ?? defaultPotId)
   const [payee, setPayee] = useState(initial?.payee || (people[0]?.id ?? ''))
   const [payeeSharePercent, setPayeeSharePercent] = useState(initial?.payeeSharePercent ?? 50)

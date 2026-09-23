@@ -376,6 +376,7 @@ export function resolveCycleBounds(data: AppDataV2, personId: string, referenceD
   const fallbackSpec: PayCycleConfig = payCycle ?? {
     personId,
     openingBalance: 0,
+    overdraftAmount: 0,
     openingBalanceDate: toIso(referenceDate),
     paydayDayOfMonth: 28,
     paydayAdjustForNonWorkingDay: true,

@@ -139,9 +139,16 @@ export function migrateLedgerData(data: AppDataV2): AppDataV2 {
     // gets a real, stable, non-repeating identity the first time this
     // runs rather than staying on the old collapsed-to-one-colour default.
     savingsPots: backfillSharedCardColors(data.savingsPots ?? [], data.creditCards?.length ?? 0),
-    pots: backfillSharedCardColors(data.pots ?? [], (data.creditCards?.length ?? 0) + (data.savingsPots?.length ?? 0)),
+    // PROMPT-15 — `overdraftAmount` is non-optional on the type so every
+    // construction site has to be explicit about it. Data written before the
+    // field existed has none, so it is backfilled to 0 (= no overdraft) here,
+    // which is exactly the behaviour those households had.
+    pots: backfillSharedCardColors(data.pots ?? [], (data.creditCards?.length ?? 0) + (data.savingsPots?.length ?? 0)).map((p) => ({
+      ...p,
+      overdraftAmount: p.overdraftAmount ?? 0,
+    })),
     transactions: data.transactions ?? [],
-    payCycles: data.payCycles ?? [],
+    payCycles: (data.payCycles ?? []).map((c) => ({ ...c, overdraftAmount: c.overdraftAmount ?? 0 })),
     // Absent on any backup persisted before the Salary Sorter session
     // (2026-09) — defaults to no sorts ever having been done, same as a
     // brand-new household. See SalarySort's own comment in
@@ -159,7 +166,7 @@ export function migrateLedgerData(data: AppDataV2): AppDataV2 {
     // needsJointAccountSetup (lib/jointAccountLedger.ts) picks that up on
     // next render and prompts for it, same as it would for a newly
     // created one — nothing here guesses an opening balance/date.
-    jointAccount: data.jointAccount ?? null,
+    jointAccount: data.jointAccount ? { ...data.jointAccount, overdraftAmount: data.jointAccount.overdraftAmount ?? 0 } : null,
   }
 
   // Self-heals any bill/loan/card left pointing at a person who no longer
@@ -185,8 +192,20 @@ export function saveLedgerData(data: AppDataV2, storage?: Storage, key: string =
  * the original Blob+anchor download wherever that isn't available
  * (desktop browsers, older iOS/Android) — same resulting file either way.
  */
+/**
+ * The ONE serialisation a backup has, wherever it is going (PROMPT-14 Parts 2-3).
+ *
+ * A cloud snapshot and a downloaded file are the same bytes, which is what makes one Restore over
+ * one format possible: either can be restored through either path. That was true by coincidence —
+ * two call sites that happened to both say JSON.stringify(data, null, 2) — and a coincidence is
+ * not an invariant. Both now call this. `verify-backup-format-parity.ts` fails if either stops.
+ */
+export function serialiseLedgerBackup(data: AppDataV2): string {
+  return JSON.stringify(data, null, 2)
+}
+
 export async function downloadLedgerBackup(data: AppDataV2): Promise<void> {
-  const json = JSON.stringify(data, null, 2)
+  const json = serialiseLedgerBackup(data)
   const date = toLocalIsoDate(new Date())
   const filename = `finance-ledger-backup-${date}.json`
   const blob = new Blob([json], { type: 'application/json' })
@@ -232,6 +251,7 @@ export function defaultPayCycleConfig(personId: string): PayCycleConfig {
     paydayDayOfMonth: 28,
     paydayAdjustForNonWorkingDay: true,
     cycleStartDayOfMonth: 1,
+    overdraftAmount: 0,
   }
 }
 

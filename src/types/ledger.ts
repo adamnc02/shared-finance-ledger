@@ -852,6 +852,24 @@ export interface PayCycleConfig {
   personId: string
   openingBalance: number
   openingBalanceDate: string // ISO date the opening balance was true as of
+  /**
+   * How far below zero this account may go — a POSITIVE number, where `0` means no overdraft at
+   * all (Adam, 2026-09-22: *"if 0, assume no overdraft"*). `500` means the floor is −£500.
+   *
+   * 🚨 NEVER STORED NEGATIVE. The sign convention is the one thing here that inverts silently:
+   * a `-500` would put the floor at +£500 and make every alert fire immediately.
+   *
+   * 🚨 DELIBERATELY NOT EFFECTIVE-DATED, unlike salary snapshots and the round-up on/off history
+   * beside it (Adam, 2026-09-22: *"the only thing it's referenced by is the alerts, so effective
+   * from is useless"*). Those carry histories because projections REPLAY past dates through them.
+   * This is read once, for today, by one consumer. Adding a history would be machinery serving
+   * nobody — and the symmetry with everything else here is exactly why someone will try.
+   *
+   * Its only consumer is the low-balance alert (lib/shortfall.ts). It changes no display, and a
+   * balance inside the overdraft still renders red, because it is still a negative number.
+   */
+  overdraftAmount: number
+
   // The nominal day of the month payday falls on.
   paydayDayOfMonth: number
   // If paydayDayOfMonth falls on a weekend or UK bank holiday, pay the
@@ -1313,6 +1331,7 @@ export interface SavingsPot {
   openingBalance: number
   openingDate: string // ISO date — see file header; nothing before this date is ever considered
   active: boolean
+
   // Drawn from SHARED_CARD_COLORS, assigned round-robin on creation
   // (pickNextSharedCardColor, lib/creditCards.ts) across the combined
   // count of credit cards/pots/savings pots — same "required, backfilled
@@ -1449,6 +1468,29 @@ export interface Pot {
   openingBalance: number
   openingDate: string // ISO date — nothing before this date is ever considered, same rule as SavingsPot.openingDate
   active: boolean
+  /**
+   * How far below zero this account may go — a POSITIVE number, where `0` means no overdraft at
+   * all (Adam, 2026-09-22: *"if 0, assume no overdraft"*). `500` means the floor is −£500.
+   *
+   * 🚨 NEVER STORED NEGATIVE. The sign convention is the one thing here that inverts silently:
+   * a `-500` would put the floor at +£500 and make every alert fire immediately.
+   *
+   * 🚨 DELIBERATELY NOT EFFECTIVE-DATED, unlike salary snapshots and the round-up on/off history
+   * beside it (Adam, 2026-09-22: *"the only thing it's referenced by is the alerts, so effective
+   * from is useless"*). Those carry histories because projections REPLAY past dates through them.
+   * This is read once, for today, by one consumer. Adding a history would be machinery serving
+   * nobody — and the symmetry with everything else here is exactly why someone will try.
+   *
+   * 🚨 POTS HAVE ONE ON PURPOSE. A Pot reads as "a notional pocket inside a real account", and on
+   * that reading an overdraft is meaningless — which is the conclusion I reached and Adam
+   * overruled, correctly: *"i use pots because monzo has them, but mum might use pots as other
+   * bank account, so we need to add the flexibility."* A Pot is whatever the person using it
+   * needs it to be. **Do not tidy this out.**
+   *
+   * A Coin Jar (`isCoinJar: true`) is the exception — its field is hidden, and it is not watched
+   * for shortfalls at all.
+   */
+  overdraftAmount: number
   // Same SHARED_CARD_COLORS/pickNextSharedCardColor/backfill convention as
   // SavingsPot.color above.
   color: string
@@ -1671,6 +1713,23 @@ export interface SummaryDeckCard {
 export interface JointAccountConfig {
   openingBalance: number
   openingBalanceDate: string // ISO date
+  /**
+   * How far below zero this account may go — a POSITIVE number, where `0` means no overdraft at
+   * all (Adam, 2026-09-22: *"if 0, assume no overdraft"*). `500` means the floor is −£500.
+   *
+   * 🚨 NEVER STORED NEGATIVE. The sign convention is the one thing here that inverts silently:
+   * a `-500` would put the floor at +£500 and make every alert fire immediately.
+   *
+   * 🚨 DELIBERATELY NOT EFFECTIVE-DATED, unlike salary snapshots and the round-up on/off history
+   * beside it (Adam, 2026-09-22: *"the only thing it's referenced by is the alerts, so effective
+   * from is useless"*). Those carry histories because projections REPLAY past dates through them.
+   * This is read once, for today, by one consumer. Adding a history would be machinery serving
+   * nobody — and the symmetry with everything else here is exactly why someone will try.
+   *
+   * Its only consumer is the low-balance alert (lib/shortfall.ts). It changes no display, and a
+   * balance inside the overdraft still renders red, because it is still a negative number.
+   */
+  overdraftAmount: number
 }
 
 // ── Root data object ─────────────────────────────────────────────────────

@@ -1,4 +1,14 @@
-# Shared Ledger — household finance PWA, synced across two phones
+# My Ledger — household finance PWA, synced across two phones
+
+> **The app is called "My Ledger" (renamed 2026-09-22, from "Shared Ledger").** The repo, the
+> Supabase schema and the PowerSync app id keep their old names — only the display name changed.
+> It lives in **four** places, and all four must agree: `index.html`'s `<title>` and
+> `apple-mobile-web-app-title`, `public/manifest.webmanifest`'s `name`/`short_name`, and
+> `public/sw.js`'s fallback notification title.
+>
+> 🚨 **iOS reads the name from the INSTALLED copy**, both for the home-screen label and for the
+> "from …" suffix on a push notification. An already-installed phone keeps showing the old name
+> until the home-screen icon is deleted and re-added — that is iOS, not a bug here.
 
 > A two-person household's money, on both people's phones, offline-first: net salary (UK PAYE),
 > bills and recurring transactions, loans with a genuine amortisation engine, credit cards with
@@ -154,29 +164,108 @@ nothing is asked "which of these is you?" once. A same-named person left behind 
 duplicate and is resolved by a banner, through the app's **own** delete-reassign flow — no second
 merge implementation.
 
-**"Set as me" = link + view.** The button only changes `primaryPersonId` (shared code); the store
-turns that into `people.linked_user_id`:
+**"Set as me" = link + view.** The button is an explicit tap (the context tells the store before it
+changes `primaryPersonId`); the store turns the tap into `people.linked_user_id`:
 
-- an **unlinked** row → linked to me, my previous row cleared **first** (there is a unique index);
-- a row linked to **someone else** → view only, never taken — *unless* I have no linked row at all,
-  which is how the second person claims their row if the first tapped it before they joined;
-- `primaryPersonId` moving because my person was **deleted** → nothing is written.
+- a tap on an **unlinked** row → linked to me, my previous row cleared **first** (there is a unique
+  index) — including a tap on the person you are already viewing, which used to do nothing;
+- a tap on a row linked to **someone else** → view only, never taken — *unless* I have no linked row
+  at all, which is how the second person claims their row if the first tapped it before they joined;
+- anything that is **not a tap** (a delete moving the view, a sync, an edit) → nothing is written.
 
-### Cloud backup
+**Each device remembers who it showed.** If that person is gone after a restore, or now belongs to
+someone else, the device links the one unlinked person with the same name, or asks "Which of these
+is you?". A device whose link was never written but whose view was right heals itself on launch. Only
+you can write your own link — the server refuses anyone else's — so nobody can be re-linked for you.
 
-One snapshot a day, automatically, to a private bucket, plus **Back Up Now**. A snapshot is the
-same JSON the Wallet page's download produces, so either can be restored anywhere.
+### Backup & Restore
 
-> **Restore replaces the whole household** on every device, so it sits behind a warning that says
-> so, and goes through the app's normal restore — which the store treats as an import, with fresh
-> row ids.
+**One pair of buttons, in the Account modal, and nowhere else in this app.** The Wallet page shows
+**no Backup card at all** — not an empty one: the slot renders `null`, so there is no card, no
+heading and no gap where one used to be. Two doors to something that replaces the whole household is
+one too many. (`personal-ledger` keeps its Wallet buttons exactly where they have always been.)
+
+Each button asks one follow-up question:
+
+| | Cloud | This device / A file |
+|---|---|---|
+| **Back Up Now** | Uploads today's snapshot. Disabled, with the reason shown, while offline | Saves a backup file. Deliberately does **not** also upload — you were asked, and the answer is honoured |
+| **Restore** | The list of daily snapshots | The file picker |
+
+A cloud snapshot and a downloaded file are **the same bytes** — one serialiser, one parser — which
+is what makes one question over one format possible at all. Either restores through either path.
+
+One snapshot a day still happens automatically. **The newest 30 are kept**; older ones are pruned.
+
+> **Restore replaces the whole household** on every device, so it sits behind a warning that names
+> the source and says what it is replacing.
+
+**Except when it doesn't.** Re-importing a file **this household exported** is treated as a patch:
+if any id in it is one the app already holds, the ids are kept and only the rows you actually
+changed are written. That is what makes hand-editing cheap — Back Up Now → This device, edit the
+JSON, Restore → A file — and the confirm says so, including how many rows the file will **delete**
+if you trimmed it. A backup from anywhere else still gets fresh ids for every row.
+
+> 🚨 **A restore used to make the other person somebody else.** Regenerating ids deleted their
+> "this is me" link, and their phone quietly adopted whoever sorted first, with that person's pay
+> cycle. Links are now carried across by name; if the name is ambiguous, their phone **asks** rather
+> than guessing.
+
+### Low-balance alerts
+
+At **8pm** every evening, a push notification for any watched account whose **projected running
+balance dips below zero at any point in the current pay cycle** — and again each evening until it
+clears.
+
+🚨 **It is the dip, not the end-of-cycle balance.** An account can end the cycle perfectly healthy
+and still bounce a direct debit on the 12th, and that is the case this exists for.
+
+### Overdrafts, and the two kinds of alert
+
+Each account — your current account, the joint account, and **any pot** — can be given an
+**Overdraft**: how far below zero it is allowed to go. Leave it at 0 if it cannot. It is edited
+where that account already is: the pay-cycle cog, the pot's own form, the joint account's.
+
+> **Why pots have one:** you might use pots the way Monzo means them, or you might use one to stand
+> in for a separate bank account. The app does not decide which of those is right. (A Coin Jar is
+> the exception — it has no overdraft and is never watched.)
+
+With a limit set, there are **two** alerts rather than one:
+
+| | When | How often |
+|---|---|---|
+| **"runs short"** | You'll dip into your overdraft, but stay inside it | **Sunday evenings**, and it goes quiet while you stay in it |
+| **"not enough money"** | You'll go past your limit — the payment won't go through | **Every evening** until it clears |
+
+With no overdraft set, only the second exists: dipping below zero *is* running out of money.
+
+🚨 **The Sunday one is self-clearing.** If you live in your overdraft it stops telling you, without
+you turning anything off — and starts again the moment your balance gets back to zero or above. So
+the alert you do get means something.
+
+**Watched:** each person's current account, every Pot that is not a Coin Jar, and the joint account
+— each against **its own** overdraft.
+**Not watched:** savings pots, Coin Jars (one emptying is it working) and credit cards (a balance
+owed is not a balance held). **Who is told:** the account's owner — and joint has two owners.
+
+**There is deliberately no deposit alert.** It reads like the obvious missing half and it is not: a
+notification every time money lands is chatter, and the shortfall alert already says the thing that
+matters.
+
+Turn it on per device, in the Account modal, with a test button beside it. **A phone without
+notification permission receives nothing at all** — there is no email fallback, and there never will
+be — so the toggle says which of the five ways of being off this device is in. On iPhone, add the
+app to the Home Screen first; notifications do not work in a Safari tab. And on a phone that already
+allows notifications for Listly, the first toggle shows no prompt and simply works, because
+permission belongs to the website rather than the app.
 
 ### The Account modal
 
 Identity and provider; **Change password** (email accounts only — an OAuth account has no app
 password); sync status and **Force Sync** (there is deliberately no pull-to-refresh); the
 **rejected-writes** line, always shown — either the list or "No changes rejected by the server ✓";
-the household invite code and Join with a code; Cloud Backup; Sign out; **Delete my app data**.
+the household invite code and Join with a code; **Backup & Restore**; **Low-balance alerts**;
+Sign out; **Delete my app data**.
 
 The button itself sits in the Wallet header through `HeaderAccessory.tsx`, a shared, empty slot
 that renders nothing unless an app fills it. **That is what keeps `Salary.tsx` identical in both
@@ -208,8 +297,16 @@ live apps** while only this one has an Account button.
   into the old household.
 - **Auto-cleared payments have deterministic ids.** Two devices clearing the same payment before
   syncing used to make two rows and double the household balance.
-- **Every import regenerates ids.** The same backup imported into two households would otherwise
-  collide on every row id, and those writes are discarded silently.
+- **Every import regenerates ids** — unless the file is this household's own, in which case the
+  ids are kept and only what changed is written. The same backup imported into two households would
+  otherwise collide on every row id, and those writes are discarded silently.
+- **After a restore, every other member's device re-links itself by name, or asks.** Before, the
+  restoring phone tried to re-link them and the server refused it, so their phone silently became
+  whoever sorted first.
+- **A second device online during a restore writes nothing stale.** It used to re-create occurrences
+  the restore had deleted, or double up the ones the file was about to deliver.
+- **The 8pm alert runs the app's own projection engine**, server-side, rather than a second copy of
+  it written in SQL. The alert and the figure on your phone are the same code.
 
 ---
 
@@ -270,3 +367,74 @@ Everything in `personal-ledger`'s "Known limitations", plus:
 | `silver-octo-invention/docs/` | The Supabase schema, RLS and functions, per app |
 | `listly/docs/LEDGER-INTEGRATION.md` | What Listly depends on in this schema |
 | `Downloads/App Development & Bug Tracking/shared-finance-ledger/` | Build plan, app knowledge, prompts, UAT scripts |
+
+
+## What each button does
+
+Plain English, for when you are looking at the app rather than the code. All of these live in the
+**Account** modal (the person icon in the Wallet header). The Wallet page itself has **no Backup
+card in this app** — see Backup & Restore above for why.
+
+### Back Up Now → **Cloud**
+
+Uploads a copy of the **whole household** to your own private folder in Supabase Storage.
+
+- One file per day: doing it twice today replaces today's rather than making a second.
+- The newest **30** are kept; older ones are pruned.
+- This already happens **once a day on its own**. The button is for "I am about to do something
+  risky and want today's copy to be current".
+- Greyed out, with the reason shown, while the device is offline.
+
+### Back Up Now → **This device**
+
+The **same JSON**, saved to the phone instead.
+
+- No network at all, so it still works when syncing is the thing that is broken — which is exactly
+  when you want it.
+- 🚨 **It does not also upload to the cloud.** You were asked which one, and the answer is honoured
+  literally. The daily automatic snapshot already covers "always have a cloud copy".
+
+### Restore → **Cloud** → tap a date
+
+Fetches that day's copy and **replaces the whole household with it — on every device, and for
+everyone in it**. Anything either of you added since that backup is gone.
+
+The confirmation names the date and says what it is replacing.
+
+### Restore → **A file**
+
+The same thing, from a file you pick. It behaves differently depending on where the file came from,
+and the confirmation tells you which case you are in:
+
+| The file | What happens |
+|---|---|
+| **This household's own export** — you backed up, edited the JSON, brought it back | Treated as a **patch**. Only the rows you actually changed are written. No new ids, nobody has to say who they are again, and the other phone sees one small update. If you deleted rows out of the file, it tells you **how many will be deleted** |
+| **A file from anywhere else** | A full replace, with a fresh id for every row — exactly as it always was |
+
+That first case is what makes hand-editing cheap: **Back Up Now → This device**, edit the JSON,
+**Restore → A file**. The decision rule for when to do that instead of editing a row in Supabase
+directly is in `APP-KNOWLEDGE.md` §1.30.
+
+### Force Sync
+
+Drops the connection to PowerSync and reconnects.
+
+- ✅ **It is safe.** It deletes nothing, changes no data, and cannot lose anything.
+- It does **not** re-download your ledger from scratch.
+- It does **not** push anything that was not already queued to go — the queue uploads on its own.
+
+Use it when the line above it says *Offline* when it should not, or *last synced* is stuck at an old
+time.
+
+### Three things worth knowing
+
+1. **Restore is not a merge.** Except the "this household's own file" case above, it throws away
+   what is there.
+2. **Restore reaches the other person's phone too**, not just yours.
+3. **Restore is refused until first sync finishes.** Restoring into a half-synced copy would compare
+   against rows that have not arrived yet and delete what it could not see, so the card says
+   "available once your household has synced" instead.
+
+> **Not on this list, and not the same thing:** *Delete my app data*, at the bottom of the same
+> modal. That erases your ledger data server-side and keeps your login. It is not a backup
+> operation and nothing above will bring it back except a restore from a copy you already had.
