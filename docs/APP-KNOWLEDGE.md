@@ -1013,13 +1013,19 @@ The workflow, which §1.29 is what makes cheap:
 and the link/redeem functions maintain, and Listly's RLS reads the same household rows
 (`listly/docs/LEDGER-INTEGRATION.md`). A hand-edit there breaks two apps and reports nothing.
 
-### 1.31 A shortfall is the DIP, not the end-of-cycle balance (2026-09-22, PROMPT-14 Part 7)
+### 1.31 A shortfall is the DIP, not a balance at the far end (2026-09-22, PROMPT-14 Part 7)
 
 **The invariant, in Adam's own terms (2026-09-21):** *"comparing this cycle projection to pending
 payments, if value dips below zero, send alert."*
 
-Walk the **whole current cycle**, day by day, and alert if the projected running balance passes the
-account's **floor** at any point in it.
+Walk forward day by day and alert if the projected running balance passes the account's **floor**.
+
+> 🚨 **"The whole current cycle" became "the next 7 days" on 2026-09-23.** Adam, on a real alert:
+> *"these notifications aren't tied to a cycle, they're simply a day-by-day walkthrough … 7 day walk
+> ahead, but don't use the same limit for checking next incoming money, this is unbounded … next
+> incoming is quite literally the next incoming cash."* **Nothing about the DIP rule below changed** —
+> only how far the search for one runs. See §1.31b for the two horizons and the three defects the
+> cycle binding caused, and §1.31c for the owner's-payday fix that came with it.
 
 > ⚠️ **"Below zero" became "below the floor" on 2026-09-22 (PROMPT-15).** Zero is still the floor
 > for an account with no overdraft, which is every account until someone sets one — so nothing
@@ -1045,6 +1051,55 @@ recipient rule — chosen precisely because it needs no special-casing. A `Pot` 
 type's own comment says so), so a pot alert has exactly one recipient.
 
 **Exactly £0.00 is not a shortfall.** Below zero means below zero.
+
+### 1.31b TWO horizons: a 7-day dip, an UNBOUNDED lookahead (2026-09-23, Adam)
+
+**Never use one number for both.** The dip search stops at `SHORTFALL_WALK_DAYS` (7, from tomorrow);
+`nextMoneyIn`, `moneyInBefore` and `recoversOn` look as far ahead as the ledger generates.
+
+🚨 **Collapsing them is SILENT.** The alert still sends — it just stops telling the truth about when
+things get better. `verify-shortfall-walk-window.ts` §§1–2 are the controls.
+
+**What the old cycle binding actually did.** Until 2026-09-23 the search ran to the end of the
+*primary person's* current pay cycle. One real notification on 2026-09-23 hit all three of its
+failure modes at once:
+
+> *"Disney+ (£14.99) on 28 September leaves you £13.57 short. Nothing more due in before 7 October."*
+
+1. 🚨 **The joint account has no cycle of its own, and the SERVER has no primary person.**
+   `primaryPersonId` is per-device and never syncs (DECISIONS Q3), so `shortfallsForHousehold`
+   guessed *"the first `people` row with a `linked_user_id"* — off an **unordered `select('*')`** in
+   the Edge Function. Whose cycle every joint alert was measured against was effectively **random**,
+   and could flip between nights. *(A guess made from unordered rows is not a default; it is a
+   coin toss with a plausible-looking result.)*
+2. 🚨 **A cycle boundary must never appear in the prose as a date.** "7 October" was the end of
+   Ella's four-weekly cycle. Nothing was due in on it. Adam read it as a payment date and went
+   looking. **That line now carries no date at all** — by definition nothing happens on it, because
+   it is the branch where the unbounded search found nothing.
+3. 🚨 **The boundary truncated the lookahead**, so an £800 deposit one day past it read as "nothing
+   more due in". It did not vanish, which would have been obvious. It **moved** — see §1.31c.
+
+`cyclePersonId` survives in the code, but **only as a generation horizon** — how far ahead to build
+the ledger. **No date is ever compared against it**, and making it a boundary again restores all
+three defects.
+
+### 1.31c A `followsPayday` transfer follows its OWNER's payday, not the primary's (2026-09-23)
+
+`payCycleForTemplate` (`schedule.ts`), used by `computeJointAccountProjection` and `autoClear`'s
+non-personal transfer step.
+
+A `kind: 'transfer'` template never carries `location: 'joint'`, so both callers reached for the
+only pay cycle to hand — `primaryPersonId`'s — and resolved **every** member's payday-following
+transfer against that one person's payday.
+
+🚨 **This is invisible in a one-person household**, which is how it survived to production. In a
+two-person one it **moves money silently**: Adam's £800 joint deposit, owner Adam, payday the 28th,
+generated on **8 October** when measured against Ella's four-weekly cycle. Not dropped — *moved*,
+which is far harder to notice. The `autoClear` call site is the worse of the two: it materialises a
+**cleared** Transaction at the wrong date, in real data.
+
+A template with no `ownerId` (a joint-location bill has `''`) still falls back to the primary —
+there is no better answer, and `kind: 'bill'` ignores `followsPayday` anyway.
 
 ### 1.31a There is deliberately NO deposit alert (2026-09-22, Adam)
 

@@ -289,6 +289,34 @@ function walkOccurrences(template: RecurringTemplate, rangeStart: Date, rangeEnd
  * the two are meant to be mutually exclusive (enforced by the UI), this
  * is just a defined tie-break rather than an unreachable branch.
  */
+/**
+ * The pay cycle a `followsPayday` template's dates must be resolved against: **its OWNER's**.
+ *
+ * 🚨 NOT THE PRIMARY PERSON'S, and that distinction is invisible in a one-person household — which
+ * is why it survived until 2026-09-23. A `kind: 'transfer'` template never carries
+ * `location: 'joint'` (see `RecurringTemplate.kind`), so the joint account and `autoClear` both
+ * reached for the only pay cycle they had to hand — `primaryPersonId`'s — and resolved EVERY
+ * household member's payday-following transfer against that one person's payday.
+ *
+ * The real case: Adam's £800 monthly deposit into the joint account, `followsPayday`, owner Adam,
+ * payday the 28th. Measured against Ella's four-weekly cycle it generates on **8 October** instead
+ * of 28 September — not missing, *moved*, which is far harder to spot. On the server, where the
+ * "primary" is whichever `people` row came back first, it moved past the alert's own horizon and
+ * the notification told him nothing was coming in.
+ *
+ * `fallbackPersonId` keeps the old behaviour for a template with no owner (a joint-location bill
+ * has `ownerId: ''`), where there is genuinely no better answer — and `kind: 'bill'` ignores
+ * `followsPayday` anyway, so it changes nothing there.
+ */
+export function payCycleForTemplate(
+  template: Pick<RecurringTemplate, 'ownerId'>,
+  payCycles: PayCycleConfig[],
+  fallbackPersonId?: string,
+): PayCycleConfig | undefined {
+  const owned = template.ownerId ? payCycles.find((c) => c.personId === template.ownerId) : undefined
+  return owned ?? (fallbackPersonId ? payCycles.find((c) => c.personId === fallbackPersonId) : undefined)
+}
+
 export function generateTransactionsForTemplate(
   template: RecurringTemplate,
   rangeStart: Date,

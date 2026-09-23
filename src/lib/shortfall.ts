@@ -1,18 +1,47 @@
-// PROMPT-14 Part 7 (2026-09-22) — "does this account run out of money at any
-// point in the current pay cycle?"
+// PROMPT-14 Part 7 (2026-09-22) — "does this account run out of money in the
+// next few days?"
 //
-// 🚨 IT IS THE DIP, NOT THE END-OF-CYCLE BALANCE. Adam, 2026-09-21:
+// 🚨 IT IS THE DIP, NOT AN END-OF-PERIOD BALANCE. Adam, 2026-09-21:
 // *"comparing this cycle projection to pending payments, if value dips below
-// zero, send alert"*. This walks the WHOLE current cycle day by day and
-// reports the FIRST day the projected running balance goes below zero — which
-// means it fires on an account that ends the cycle perfectly healthy, because
-// the dip is the thing that matters. Money that is £200 short on the 12th and
-// £400 up by the 28th still bounces a direct debit on the 12th.
+// zero, send alert"*. This walks forward day by day and reports the FIRST day
+// the projected running balance goes below zero — which means it fires on an
+// account that is perfectly healthy a fortnight later, because the dip is the
+// thing that matters. Money that is £200 short on the 12th and £400 up by the
+// 28th still bounces a direct debit on the 12th.
 //
 // Say that out loud here, because the cheap version — compare the projected
-// END-of-cycle balance with zero — is one line shorter, looks equivalent, and
-// loses the entire feature. `verify-shortfall.ts` carries that exact
+// balance at the far end with zero — is one line shorter, looks equivalent,
+// and loses the entire feature. `verify-shortfall.ts` carries that exact
 // comparison as its control and requires it to MISS a case this one catches.
+//
+// 🚨 IT IS NOT BOUND TO ANYONE'S PAY CYCLE, AND MUST NOT GO BACK TO BEING SO
+// (Adam, 2026-09-23, on a real alert). *"these notifications aren't tied to a
+// cycle, they're simply a day-by-day walkthrough, stops when the day-end dips
+// below target … doesn't need to be bound to anyone's pay cycle"*.
+//
+// It used to search the primary person's CURRENT PAY CYCLE, and every part of
+// that was wrong for a shared household:
+//
+//   - the joint account has no cycle of its own, so it borrowed one, and the
+//     server has no `primaryPersonId` to borrow from (it is per-device and
+//     never syncs — DECISIONS Q3). `shortfallsForHousehold` guessed "the first
+//     linked person", off an unordered `select('*')`, so WHOSE cycle the joint
+//     account was measured against was effectively random and could flip from
+//     one night to the next;
+//   - the cycle END leaked into the message as a date — "Nothing more due in
+//     before 7 October" — naming a day nothing happens on. Adam read it as a
+//     payment date, which is exactly what it looks like;
+//   - and the cycle end TRUNCATED the search for money coming in, so a £800
+//     deposit one day past the boundary read as "nothing is coming".
+//
+// 🚨 THE TWO HORIZONS ARE DIFFERENT AND THAT IS THE WHOLE POINT. Adam, same
+// message: *"7 day walk ahead, but don't use the same limit for checking next
+// incoming money, this is unbounded … next incoming is quite literally the
+// next incoming cash"*. The DIP search stops at `SHORTFALL_WALK_DAYS`; every
+// question about money arriving — `nextMoneyIn`, `moneyInBefore`,
+// `recoversOn` — looks as far ahead as the ledger can be generated. Collapsing
+// them back into one window is the regression this comment exists to prevent,
+// and it is a silent one: the alert still sends, it just lies about relief.
 //
 // SHARED, and in all three apps deliberately. It is pure arithmetic over the
 // existing engines (`computeProjectionToDate`, `computePotProjection`,
@@ -50,6 +79,24 @@ import { formatDayMonth } from './format'
 import type { AppDataV2, Transaction } from '../types/ledger'
 
 export type WatchedAccountKind = 'personal' | 'pot' | 'joint'
+
+/**
+ * How many days ahead the DIP search looks, counting from tomorrow (Adam, 2026-09-23:
+ * *"7 day walk ahead"*). A heads-up about something eight days out is not actionable in the way
+ * one about Tuesday is, and the alert is nightly — tomorrow's walk sees it anyway.
+ *
+ * 🚨 THIS BOUNDS THE DIP AND NOTHING ELSE. `nextMoneyIn`, `moneyInBefore` and `recoversOn` are
+ * deliberately unbounded; see the file header.
+ */
+export const SHORTFALL_WALK_DAYS = 7
+
+/**
+ * How far the ledger is generated so the unbounded "next money in" has something to find.
+ * Three cycles is `projection.ts`'s own standing horizon, so this invents no new limit — it
+ * reuses the furthest the app ever projects. If nothing comes in within it, the message says
+ * "nothing more due in" with no date, which is honest: that is as far as anything can see.
+ */
+const GENERATION_HORIZON = 'three_cycles' as const
 
 export interface WatchedAccount {
   kind: WatchedAccountKind
@@ -116,8 +163,16 @@ export interface Shortfall {
    * `'overdraft'` → how far below zero you go. `'shortfall'` → how much you are SHORT BY.
    */
   amount: number
-  cycleStart: string
-  cycleEnd: string
+  /**
+   * The DIP SEARCH window this was found in — tomorrow, and `SHORTFALL_WALK_DAYS` days after
+   * today. Kept on the result so a check can assert the window rather than infer it.
+   *
+   * 🚨 It is NOT the range the relief fields were found in. `nextMoneyIn`, `moneyInBefore` and
+   * `recoversOn` look past `windowEnd` on purpose, and `windowEnd` must never be put into the
+   * message as a date — that is precisely the "before 7 October" defect (see the file header).
+   */
+  windowStart: string
+  windowEnd: string
   /**
    * What is going OUT of this account on `date` — the payments that take it under, newest-first by
    * size. Empty when the balance was already below zero before anything was due that day, which is
@@ -206,29 +261,39 @@ export function watchedAccounts(data: AppDataV2): WatchedAccount[] {
  * what is due on that day. Deriving them separately would be two chances to disagree about which
  * transactions belong to the account.
  */
-function accountCycle(
+function accountWalk(
   data: AppDataV2,
   account: WatchedAccount,
   asOfDate: Date,
 ): { days: string[]; openingBalance: number; transactions: Transaction[]; sign: (t: Transaction) => number; include: (t: Transaction) => boolean } | null {
-  const [cycle] = horizonCycles(data, account.cyclePersonId, 'current_cycle', asOfDate)
-  const days = daysBetweenInclusive(cycle.start, cycle.end)
+  // 🚨 `cyclePersonId` survives here for ONE reason only — deciding how far ahead to GENERATE the
+  // ledger. It is no longer a boundary, and nothing below compares a date against it. Reintroducing
+  // it as a limit brings back every symptom in the file header at once.
+  const cycles = horizonCycles(data, account.cyclePersonId, GENERATION_HORIZON, asOfDate)
+  const horizonEnd = cycles[cycles.length - 1].end
+  // 🚨 The day list runs from the CURRENT CYCLE'S START to the generation horizon — wider at BOTH
+  // ends than anything the dip search reads. The near end keeps this series a superset of the one
+  // the Trends chart builds for the same account, which `verify-shortfall.ts` §6 asserts and which
+  // `cameOutOfOverdraftSince` reads backwards. The far end is what makes "next money in" unbounded.
+  // Neither end is a boundary: `buildDailyBalanceSeries` folds every transaction dated on or before
+  // each day regardless of where the list starts, so no day-end loses its history.
+  const days = daysBetweenInclusive(cycles[0].start, horizonEnd)
 
   if (account.kind === 'personal') {
     const payCycle = data.payCycles.find((c) => c.personId === account.id)
     if (!payCycle) return null
-    const projection = computeProjectionToDate(data, account.id, payCycle, cycle.end, asOfDate)
+    const projection = computeProjectionToDate(data, account.id, payCycle, horizonEnd, asOfDate)
     return { days, openingBalance: payCycle.openingBalance, transactions: projection.transactions, sign: signedAmount, include: isLedgerTransaction }
   }
 
   if (account.kind === 'pot') {
     const pot = (data.pots ?? []).find((p) => p.id === account.id)
     if (!pot) return null
-    const projection = computePotProjection(data, pot, 'current_cycle', asOfDate)
+    const projection = computePotProjection(data, pot, GENERATION_HORIZON, asOfDate)
     return { days, openingBalance: pot.openingBalance, transactions: projection.transactions, sign: (t) => potSignedAmount(t, pot.id), include: () => true }
   }
 
-  const projection = computeJointAccountProjection(data, 'current_cycle', asOfDate)
+  const projection = computeJointAccountProjection(data, GENERATION_HORIZON, asOfDate)
   if (!projection) return null
   return { days, openingBalance: projection.openingBalance, transactions: projection.transactions, sign: jointAccountSignedAmount, include: () => true }
 }
@@ -238,7 +303,7 @@ function accountCycle(
  * Exported so a check can assert the walk itself rather than only its verdict.
  */
 export function cycleBalanceSeries(data: AppDataV2, account: WatchedAccount, asOfDate: Date): { date: string; balance: number }[] {
-  const c = accountCycle(data, account, asOfDate)
+  const c = accountWalk(data, account, asOfDate)
   if (!c) return []
   return buildDailyBalanceSeries(c.openingBalance, c.transactions, c.days, c.sign, c.include).map((p) => ({ date: p.date, balance: p.projectedBalance }))
 }
@@ -265,18 +330,24 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
   const out: Shortfall[] = []
   const todayIso = toIso(asOfDate)
 
+  // Tomorrow, and the last day the DIP search will look at. The walk itself runs far past this
+  // at BOTH ends, which is why these are computed from the date rather than read off the series.
+  const day = (offset: number) => toIso(new Date(asOfDate.getFullYear(), asOfDate.getMonth(), asOfDate.getDate() + offset))
+  const windowStart = day(1)
+  const windowEnd = day(SHORTFALL_WALK_DAYS)
+
   for (const account of watchedAccounts(data)) {
-    const [cycle] = horizonCycles(data, account.cyclePersonId, 'current_cycle', asOfDate)
-    const c = accountCycle(data, account, asOfDate)
+    const c = accountWalk(data, account, asOfDate)
     if (!c) continue
-    // 🚨 The series covers the WHOLE cycle — every day-end carries everything
-    // before it, including today's payments and the opening balance.
+    // 🚨 The series runs to the GENERATION horizon — every day-end carries everything before it,
+    // including today's payments and the opening balance.
     const series = buildDailyBalanceSeries(c.openingBalance, c.transactions, c.days, c.sign, c.include)
-    // …but the SEARCH starts tomorrow (Adam, 2026-09-22: "ignore today, look
-    // from tomorrow and report the first dip"). Narrowing the search, never
-    // the walk, is the whole trick: filter the transactions instead and the
-    // balance loses its history.
-    const horizon = series.filter((p) => p.date > todayIso)
+    // …but the DIP SEARCH is the next `SHORTFALL_WALK_DAYS` days only, starting tomorrow (Adam,
+    // 2026-09-22: "ignore today, look from tomorrow and report the first dip"). Narrowing the
+    // search, never the walk, is the whole trick: filter the transactions instead and the balance
+    // loses its history — and narrowing the walk to match would truncate `nextMoneyIn` too, which
+    // is the defect this design exists to prevent.
+    const horizon = series.filter((p) => p.date > todayIso && p.date <= windowEnd)
     const limit = account.overdraftAmount
 
     // TWO floors, and the more severe one wins (PROMPT-15 §0 Q6).
@@ -303,8 +374,10 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
       .map((t) => ({ label: label(t, data), amount: Math.round(-c.sign(t) * 100) / 100 }))
       .sort((a, b) => b.amount - a.amount)
 
-    // The next day money arrives, from the same list again, with how much
-    // arrives that day in total.
+    // The next day money arrives, from the same list again, with how much arrives that day in
+    // total. 🚨 UNBOUNDED — no `windowEnd` here, deliberately (Adam, 2026-09-23: "next incoming is
+    // quite literally the next incoming cash"). A deposit eight days out is still the answer to
+    // "when does this get better?", even though a dip eight days out is not yet worth an alert.
     const incoming = c.transactions.filter((t) => t.date > hit.date && c.include(t) && c.sign(t) > 0)
     const nextInDate = incoming.map((t) => t.date).sort()[0] ?? null
     const nextMoneyIn = nextInDate
@@ -312,7 +385,8 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
       : null
 
     // Whether it recovers — back within THIS severity's floor, not back above
-    // zero. A different line from the dip test, and easy to miss.
+    // zero. A different line from the dip test, and easy to miss. Unbounded, for the same reason
+    // `incoming` is: `series` runs to the generation horizon, not to `windowEnd`.
     const recoversOn = series.find((p) => p.date > hit.date && p.projectedBalance >= floor)?.date ?? null
 
     // Money landing between tomorrow and the dip. Already inside `amount` —
@@ -331,8 +405,8 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
       severity,
       date: hit.date,
       amount,
-      cycleStart: toIso(cycle.start),
-      cycleEnd: toIso(cycle.end),
+      windowStart,
+      windowEnd,
       causes,
       nextMoneyIn,
       moneyInBefore,
@@ -358,7 +432,6 @@ export function findShortfalls(data: AppDataV2, asOfDate: Date = new Date()): Sh
  */
 export function shortfallMessage(shortfall: Shortfall): { title: string; body: string } {
   const on = formatDayMonth(shortfall.date)
-  const ends = formatDayMonth(shortfall.cycleEnd)
   const money = `£${shortfall.amount.toFixed(2)}`
   const { causes, severity, account } = shortfall
   const limit = account.overdraftAmount
@@ -400,8 +473,14 @@ export function shortfallMessage(shortfall: Shortfall): { title: string; body: s
       ? `£${shortfall.nextMoneyIn.amount.toFixed(2)} in on ${formatDayMonth(shortfall.nextMoneyIn.date)}, but you'll still be short after that.`
       : despite
         ? // "more" would contradict the clause that just named some.
-          `Nothing else due in before ${ends}.`
-        : `Nothing more due in before ${ends}.`
+          `Nothing else due in.`
+        : `Nothing more due in.`
+
+  // 🚨 NO DATE ON THAT LAST LINE, EVER (Adam, 2026-09-23). It used to end "…before 7 October",
+  // which was the primary person's cycle end — a boundary, not an event. Adam read it as a payment
+  // date and checked what was due that day: an outgoing bill, and nothing coming in. A date here is
+  // only honest if something happens on it, and by definition nothing does — this branch is the one
+  // where the unbounded search found NOTHING, as far ahead as the ledger goes.
 
   return {
     // The TITLE carries the severity; the body's structure does not. The
@@ -443,13 +522,13 @@ function possessive(account: WatchedAccount): string {
  * 🚨 When it cannot tell, it returns TRUE (= came out = do not suppress). Silence is the failure
  * that matters here; a duplicate heads-up is not.
  *
- * It reuses `accountCycle`'s transaction list rather than re-deriving which rows belong to this
+ * It reuses `accountWalk`'s transaction list rather than re-deriving which rows belong to this
  * account — that scoping exists once, and a second copy would drift. `buildDailyBalanceSeries`
  * folds from the opening balance regardless of which days are reported, so a window starting at
  * `sinceIso` still counts everything before it.
  */
 export function cameOutOfOverdraftSince(data: AppDataV2, account: WatchedAccount, sinceIso: string, asOfDate: Date): boolean {
-  const c = accountCycle(data, account, asOfDate)
+  const c = accountWalk(data, account, asOfDate)
   if (!c) return true
   const todayIso = toIso(asOfDate)
   if (sinceIso >= todayIso) return false // told today; nothing has had time to change

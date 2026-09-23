@@ -17,7 +17,7 @@
 // householdLedger.ts).
 
 import { nanoid } from 'nanoid'
-import { generateTransactionsForTemplate } from './schedule'
+import { generateTransactionsForTemplate, payCycleForTemplate } from './schedule'
 import { generateLoanPaymentTransactions } from './ledgerLoans'
 import { dedupeKey, horizonCycles, previousCycles, THREE_CYCLES_AHEAD, type ProjectionHorizon } from './projection'
 import { jointTransferSignedAmount, transferTouchesJoint } from './transferLedger'
@@ -116,7 +116,6 @@ export function computeJointAccountProjection(
   )
   const existingKeys = new Set(stored.map(dedupeKey).filter((k): k is string => k !== null))
 
-  const primaryPayCycle = data.payCycles.find((c) => c.personId === data.primaryPersonId)
   const generated: Omit<Transaction, 'id'>[] = []
   for (const template of data.recurringTemplates.filter((t) => t.location === 'joint')) {
     generated.push(...generateTransactionsForTemplate(template, genStart, horizonEndDate))
@@ -127,8 +126,13 @@ export function computeJointAccountProjection(
   // 'transfer' comment in types/ledger.ts), not 'joint' — the existing
   // `location === 'joint'` filter above is for JOINT-LOCATED BILLS, a
   // different concept.
+  // 🚨 THE OWNER'S PAY CYCLE, NOT THE PRIMARY PERSON'S (2026-09-23 — see
+  // payCycleForTemplate's own comment for the defect this fixes). Both
+  // people can have a payday-following transfer into the joint account,
+  // and resolving Adam's against Ella's payday silently MOVES it rather
+  // than dropping it.
   for (const template of data.recurringTemplates.filter((t) => t.kind === 'transfer' && t.active && transferTouchesJoint(t.transferFrom, t.transferTo))) {
-    generated.push(...generateTransactionsForTemplate(template, genStart, horizonEndDate, primaryPayCycle))
+    generated.push(...generateTransactionsForTemplate(template, genStart, horizonEndDate, payCycleForTemplate(template, data.payCycles, data.primaryPersonId)))
   }
   for (const loan of data.loans.filter((l) => l.location === 'joint' && l.active)) {
     generated.push(...generateLoanPaymentTransactions(loan, genStart, horizonEndDate))

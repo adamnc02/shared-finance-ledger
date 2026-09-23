@@ -260,14 +260,15 @@ console.log('\n4b. The message: two severities, two tenses, four cause shapes')
     check('…and names the day it lands', s.moneyInBefore?.date === future, s.moneyInBefore)
     const m = shortfallMessage(s)
     check('🚨 the body says "despite £100.00 due in on …"', m.body.includes(`despite £100.00 due in on ${formatDayMonth(future)}`), m.body)
-    check('🚨 …and says "Nothing ELSE", which "Nothing more" would contradict', m.body.includes('Nothing else due in before '), m.body)
+    check('🚨 …and says "Nothing ELSE", which "Nothing more" would contradict', m.body.includes('Nothing else due in.'), m.body)
+    check('🚨 …with NO date after it — 2026-09-23, see below', !/Nothing else due in before/.test(m.body), m.body)
     messages.push(m)
 
     // CONTROL: with no money in beforehand, neither phrase appears.
     const plain = build(pot({ overdraftAmount: 0 }), [out('c1', 400, later, 'Rent')])
     const mp2 = shortfallMessage(plain)
     check('CONTROL: without it, no "despite" clause', !mp2.body.includes('despite'), mp2.body)
-    check('CONTROL: …and it goes back to "Nothing more due in"', mp2.body.includes('Nothing more due in before '), mp2.body)
+    check('CONTROL: …and it goes back to "Nothing more due in"', mp2.body.includes('Nothing more due in.'), mp2.body)
 
     // Several days of money in: no single date to name, so it says "before then".
     const spread = build(pot({ overdraftAmount: 0 }), [incomeOn('i1', 60, future, 'One'), incomeOn('i2', 40, series.find((p) => p.date > future)!.date, 'Two'), out('c1', 400, later, 'Rent')])
@@ -293,7 +294,7 @@ console.log('\n4b. The message: two severities, two tenses, four cause shapes')
     messages.push(shortfallMessage(notEnough))
 
     const nothing = build(pot({ overdraftAmount: 500 }), [out('c1', 312.4, future, 'Rent')])
-    check('nothing due in: it says so', shortfallMessage(nothing).body.includes('Nothing more due in before '), shortfallMessage(nothing).body)
+    check('nothing due in: it says so', shortfallMessage(nothing).body.includes('Nothing more due in.'), shortfallMessage(nothing).body)
   }
 
   console.log('\n   F. recoversOn uses the SEVERITY\'s floor, not always zero')
@@ -347,8 +348,12 @@ console.log("\n6. It is the app's own engine, not a second one")
   // What the Trends modal draws for the same account and the same cycle.
   const payCycle = data.payCycles.find((c) => c.personId === person.id)!
   const trend = buildPersonalTrendSeries(data, person.id, payCycle, 'this_cycle', AS_OF)
-  check('same number of days as the Trends chart', mine.length === trend.balance.length, [mine.length, trend.balance.length])
-  check('same projected balance on every single day, to the penny', mine.every((p, i) => p.balance === trend.balance[i].projectedBalance && p.date === trend.balance[i].date), mine.slice(0, 2))
+  // 🚨 The walk is a SUPERSET of the Trends cycle series since 2026-09-23 — it starts at the same
+  // day and runs on past the cycle end, because "next money in" is unbounded. So the assertion is
+  // PREFIX EQUALITY, not equal length: same days, same pennies, for as far as Trends goes.
+  check('it runs at least as far as the Trends chart', mine.length >= trend.balance.length, [mine.length, trend.balance.length])
+  check('…and past the cycle end, which is what makes "next money in" unbounded', mine.length > trend.balance.length, [mine.length, trend.balance.length])
+  check('same projected balance on every single day of the cycle, to the penny', trend.balance.every((t, i) => mine[i].balance === t.projectedBalance && mine[i].date === t.date), mine.slice(0, 2))
 }
 
 console.log(failures === 0 ? '\nAll checks passed.\n' : `\n${failures} check(s) FAILED.\n`)
