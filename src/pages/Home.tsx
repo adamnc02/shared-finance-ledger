@@ -294,7 +294,7 @@ export function Home() {
 }
 
 /**
- * The cycle statement's one and only entry point (PROMPT-18 D1).
+ * The cycle statement's one and only entry point.
  *
  * Adam: "The button and date picker will live on the home page at the
  * bottom, single button which launches the date picker."

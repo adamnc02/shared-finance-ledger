@@ -32,7 +32,7 @@ import { formatCurrency } from './format'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
-/** One row of one card's table. Mirrors STATEMENT-PAYLOAD-CONTRACT.md exactly; the template reads these field names directly. */
+/** One row of one card's table. 🚨 The template reads these field names directly out of the JSON, so a rename here is a silent break there — see `statement-template.html`'s own reader. */
 export interface StatementRow {
   id: string
   date: string
