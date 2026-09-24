@@ -1247,6 +1247,11 @@ That is the obvious-looking wrong fix.
 
 ### The deck
 
+`buildDeck(data)`, `deckEntryKey` and `heroLabel` moved to **`src/lib/deck.ts`** (2026-09-24) so the
+cycle statement builds its sections from the SAME list the Home page swipes through — see §46. A
+statement with its own list of card kinds would silently stop matching the app the first time one was
+added, and nothing would fail.
+
 `buildDeck(data)` returns the canonical order: Personal, Joint*, Pots*, Credit Cards*, Loans*,
 Savings Pots*, Household*. `deckEntryKey(e)` gives each entry a stable string key, needed because
 the wallet stack's MRU reorder tracks *which entries* were tapped across renders, not their
@@ -2572,3 +2577,143 @@ distinguishes five ways of being off rather than one.
 the 20:00 gate, not as an invitation.
 
 ---
+
+---
+
+## 46. The cycle statement
+
+A single self-contained HTML file the app generates from a date range: opening figure, every payment
+in the window with a running balance, and the projected closing figure — one section per card in the
+Home deck. It regroups itself (by direction, day, category, and as a full pivot), prints to A4, and
+works with no network at all. Built 2026-09-24.
+
+### The one rule everything else follows
+
+🚨 **The statement is a SERIALISER, NOT A SECOND ENGINE.** Every figure comes from the same functions
+the Home page's own cards use. Re-deriving any of them would give the app two numbers, both claiming
+to be the balance, with nothing on either screen to say which is wrong. `computeProjection` is itself
+a thin wrapper over `computeProjectionToDate` for exactly this reason; the statement follows that
+precedent rather than inventing anything.
+
+| The statement needs | It uses |
+|---|---|
+| Which sections exist, and their order | `buildDeck(data)` (`src/lib/deck.ts`), **minus `kind === 'household'`** |
+| Personal rows and figures | `computeProjectionToDate` |
+| Joint / pot rows | `computeJointAccountProjectionToDate`, `computePotProjectionToDate` |
+| Savings pot rows | `buildSavingsPotScheduleRows`, with an explicit window |
+| Loan rows, and the capital/interest split | `buildLoanLedgerRows` — the amortisation engine's own rows |
+| Credit-card balances | `cardBalanceAsOf` |
+| The cycles the window spans | `cyclesInRange`, which walks `resolveCycleBounds` |
+| Row order | `compareByDateSalaryFirst` |
+| Money formatting | `formatCurrency` |
+
+`src/lib/statement.ts` builds the payload; `src/lib/statementFile.ts` is the Vite-only half that
+imports the template with `?raw` and hands the result to `shareOrDownloadFile` (extracted from
+`downloadLedgerBackup`, the share path already proven on the phone).
+
+### Generating one is a single substitution
+
+`src/statement/statement-template.html` ships in the repo, reviewable in a diff, with exactly one
+`__DATA__` token. `renderStatementHtml` replaces it with the payload and that is the whole build.
+The token's presence is asserted, never assumed: a template that silently stopped substituting would
+produce a file that throws when opened, and the failure would arrive on a phone rather than in a test.
+
+🚨 **`?raw` inlines the template at build time — it is never fetched.** The statement is identical
+in all three ledger apps, and `personal-ledger` is permanently offline by design: a fetched template
+would fail silently on the app that can least afford it, so none of them fetch it. Anything running outside Vite (every verify script) reads the file from disk instead,
+which is why `renderStatementHtml` takes the template as an argument rather than importing it.
+
+### The traps
+
+🚨 **A loan folds by CAPITAL, not by cash.** Paying a £171.93 instalment reduces what you owe by the
+capital part only; the interest is a cost, not a reduction. Folding the cash amount overstates the
+debt by the whole interest bill and still looks entirely plausible.
+
+🚨 **A loan's rows come from `buildLoanLedgerRows`, not from the loan card's transactions.** Both
+were tried. An ad-hoc overpayment lives on the loan (`loan.overpayments`), not in
+`data.transactions`, so it has no transaction row to fold — the statement closed at £4,980.30 against
+the engine's £4,730.30, understating the payment by the whole £250. The Home card survives that
+because its section *closing* figure comes from the schedule; a statement printing a balance on every
+row cannot.
+
+🚨 **Generation starts at the CURRENT cycle's start, never the window's.** A statement reaching into
+past cycles is served by stored history, which is complete because `autoClear.ts` materialises every
+occurrence as it falls due. Generating into the past would invent occurrences for bills since deleted
+or changed — rows that never happened, in a document that reads as a record of what did.
+
+🚨 **The file never computes a balance.** A row's running balance is a fact about that row, produced
+by the app. Trimming the view in the file does not change it. The file sums and groups; it never folds.
+
+🚨 **The displayed label is never the sort key.** Cycles came out newest-first because `"14 Oct…"`
+sorts before `"14 Sep…"` alphabetically. Every dimension carries its own ordering key.
+
+🚨 **The reader never sees the word "payee".** The payload and every visible label say
+*description*, and the value is the Home page's own row label (`t.note || category || t.type`,
+`transactionLabel`) — **not** `Transaction.payee`, which the ledger list has never rendered. The
+column mixes counterparties with plain descriptions and holds incoming money too, where nothing in
+the cell is a payee at all.
+
+🚨 **Row ids are positional, not the transaction's own id.** A generated occurrence carries a fresh
+`nanoid` on every call, so two statements built from identical data would share no row and could not
+be diffed.
+
+🚨 **The projected figure is quoted at the WINDOW'S END, never the last row's date.** A window
+running to 24 Dec whose last payment falls on 27 Nov once read "Projected balance, 27 Nov", which
+says the projection stops there and disagrees with the app. Only the label follows the window; the
+figure is still the last row's balance.
+
+🚨 **The starting balance is the figure the table reconciles from** — starting balance + every row =
+the closing figure, checkable without reference to the app. It is deliberately *not* the account's
+own reconciliation balance, which can be months old and appears on no screen. That reconciliation is
+asserted on every cash card, and deliberately **not** on loans or credit cards, where it is false by
+design (capital folding, and a card's own replay through `cardBalanceAsOf`).
+
+### Getting it out of the app
+
+One button at the bottom of Home — not per card, because one file covers the whole deck. It opens a
+range picker offering **Cancel · Preview · Save**.
+
+🚨 **You cannot highlight dates in a native picker, and the app does not try.** `<input type="date">`
+renders its calendar in an OS-controlled shadow root; on iOS it is the system picker. So the window
+is chosen from **a list of real cycles**, where a cycle boundary stops being a hint to spot and
+becomes the thing you tap. "Exact dates" keeps the native inputs with cycle boundaries as chips
+beneath — and the chips *set* the input rather than captioning it. Cycle bounds are committed from
+`resolveCycleBounds`, never re-parsed from a label.
+
+🚨 **THE SAVED FILE CANNOT BE READ ON AN iPHONE, AND THAT IS WHY THE APP SHOWS IT.** A saved `.html`
+opens in the Files app's Quick Look, which renders markup but does **not** run scripts — the controls
+appear and the table does not — and iOS no longer offers "open in Safari" for a local HTML file.
+**Preview** renders the identical bytes in an `srcdoc` iframe inside the app, where scripts run
+normally. One renderer, one set of figures: a React re-implementation of the statement would be the
+two-engines mistake this whole design exists to avoid. The file still matters — the laptop, printing,
+and keeping a copy — and the picker says so beneath the buttons.
+
+Cycles that hold no data are **not offered**: a row of greyed "no data" entries is clutter, not an
+explanation. A cycle that straddles the reconciliation point is offered and tagged *partial*, because
+silently passing off a half-empty cycle as a whole one is the same class of problem as omitting one.
+
+### What proves it
+
+| Script | What it covers |
+|---|---|
+| `verify-cycle-statement.ts` | 189 assertions against a statement **the app generated**, through the real template — sort order, the grand total across five pivot shapes, collapse arithmetic, the control audit, the window labels |
+| `verify-cycle-statement-matches-home.ts` | Every row and balance against what Home renders, with a control that moves one penny and proves the comparison can fail |
+| `verify-statement-picker.ts` | The offered cycles are real and round-trip through `resolveCycleBounds`; the default window equals `horizonCycles(…, 'three_cycles')`; a control that moves the reconciliation date and proves the list shortens |
+
+**The single most valuable assertion** is that the grand total is unchanged across five different
+pivot shapes. A pivot that silently changes a total while looking right is the failure the whole
+design guards against.
+
+🚨 **Two classes of defect here are invisible to the suite**, and were both found by a person looking
+at a phone: the picker's lists opened scrolled to the bottom (`offsetTop` measures from the nearest
+*positioned* ancestor, and the scroll container was not positioned), and the three figure tiles
+wrapped to a 2x2 grid with an empty cell (`auto-fit` at a 190px minimum fits exactly two columns on a
+phone). There is no DOM in the sweep. Layout and scroll are checked by looking.
+
+📍 **This section is §36 in `personal-ledger`.** The numbers diverge because §36–45 here are the sync
+layer. That is why every code comment cites it by NAME — `TECHNICAL.md §"The cycle statement"` — and
+never by number: one citation has to be true in three repos at once.
+
+**Nothing about the statement is sync-specific.** It reads the engines and writes a file; it touches
+no Supabase table, no PowerSync stream and no `writes.ts` mutation, which is why it produced no
+`DIVERGENCE.md` row.

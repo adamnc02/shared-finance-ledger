@@ -62,6 +62,39 @@ export function horizonCycles(data: AppDataV2, personId: string, horizon: Projec
   return cycles
 }
 
+/**
+ * Every pay cycle between the one CONTAINING `startDate` and the one
+ * CONTAINING `endDate`, inclusive at both ends — the arbitrary-window
+ * counterpart of `horizonCycles`, which only ever walks forward from
+ * "now" by a fixed count.
+ *
+ * Built for the downloadable cycle statement, whose window is a date
+ * range the person picks (the range is SYMMETRIC: it always holds whole cycles at both ends,
+ * and the file trims the VIEW).
+ * The picker's own list of offerable cycles comes from here too, so the
+ * rows a statement contains and the cycles the picker offered can never
+ * disagree about where a cycle starts.
+ *
+ * 🚨 Walked with `resolveCycleBounds`, the same helper `horizonCycles`
+ * and `previousCycles` both use — never a second cycle-walker. Cycle
+ * bounds are payday-derived and irregular, so a parallel walker is free
+ * to drift, and two answers about where a cycle begins cannot be told
+ * apart from the screen.
+ *
+ * Returns `[]` when `endDate` precedes `startDate`. Capped at 600 cycles
+ * (~50 years) as a sanity guard against a reversed or absurd range,
+ * matching `daysBetweenInclusive`'s own guard.
+ */
+export function cyclesInRange(data: AppDataV2, personId: string, startDate: Date, endDate: Date): { start: Date; end: Date }[] {
+  if (toIso(endDate) < toIso(startDate)) return []
+  const endIso = toIso(endDate)
+  const cycles = [resolveCycleBounds(data, personId, startDate)]
+  while (toIso(cycles[cycles.length - 1].end) < endIso && cycles.length < 600) {
+    cycles.push(resolveCycleBounds(data, personId, addDays(cycles[cycles.length - 1].end, 1)))
+  }
+  return cycles
+}
+
 /** The end of the projection window: the current cycle's end, or the end of the last cycle in the horizon (current + THREE_CYCLES_AHEAD). */
 export function horizonRangeEnd(data: AppDataV2, personId: string, horizon: ProjectionHorizon, asOfDate: Date): Date {
   const cycles = horizonCycles(data, personId, horizon, asOfDate)

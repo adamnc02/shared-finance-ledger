@@ -512,13 +512,30 @@ export interface PotProjectionResult {
  */
 export function computePotProjection(data: AppDataV2, pot: Pot, horizon: ProjectionHorizon, asOfDate: Date = new Date()): PotProjectionResult {
   const cycles = horizonCycles(data, pot.personId, horizon, asOfDate)
-  const horizonEndDate = cycles[cycles.length - 1].end
+  return computePotProjectionToDate(data, pot, cycles[cycles.length - 1].end, asOfDate)
+}
+
+/**
+ * The same pot projection, bounded by an EXPLICIT end date rather than a
+ * named horizon — the pot counterpart of projection.ts's
+ * computeProjectionToDate, extracted for the downloadable cycle statement
+ * (TECHNICAL.md §"The cycle statement"), whose window is a date range the
+ * person picks and can sit well beyond `three_cycles`. computePotProjection
+ * is now a thin wrapper over it, so the two cannot disagree.
+ *
+ * 🚨 Generation still starts at the CURRENT cycle's start, never at the
+ * window's start — see computeJointAccountProjectionToDate's own comment
+ * for why a statement reaching backwards must be served by stored history
+ * alone.
+ */
+export function computePotProjectionToDate(data: AppDataV2, pot: Pot, horizonEndDate: Date, asOfDate: Date = new Date()): PotProjectionResult {
+  const currentCycleStart = horizonCycles(data, pot.personId, 'current_cycle', asOfDate)[0].start
   const horizonEndIso = toIso(horizonEndDate)
 
   // Visibility floor, same rule as a personal ledger's own opening
   // balance date (projection.ts) — nothing before it is shown or counted.
   const openingDateObj = parseLocalDate(pot.openingDate)
-  const genStart = cycles[0].start > openingDateObj ? cycles[0].start : openingDateObj
+  const genStart = currentCycleStart > openingDateObj ? currentCycleStart : openingDateObj
 
   // PROMPT-13 B2 — the derived Coin Jar credits sit alongside the stored
   // rows, not the generated ones: they are not a schedule walk and are
