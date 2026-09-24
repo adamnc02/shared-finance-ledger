@@ -1,8 +1,9 @@
 // Every behaviour of the downloadable cycle statement, asserted against a
 // statement the APP ITSELF generated.
 //
-// Ported 2026-09-24 from the round's own `statement-template-tests.mjs`,
-// which ran against a hand-injected mock. The assertions are its
+// Ported 2026-09-24 from the standalone node runner the template was
+// built against, which ran on a hand-injected mock and has since been
+// deleted along with the rest of that round's working files. The assertions are its
 // assertions; what changed is where the document comes from — this builds
 // the payload with buildStatementPayload and renders it through the real
 // template in `src/statement/`, so the thing under test is the thing that
