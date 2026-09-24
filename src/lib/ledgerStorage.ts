@@ -204,12 +204,20 @@ export function serialiseLedgerBackup(data: AppDataV2): string {
   return JSON.stringify(data, null, 2)
 }
 
-export async function downloadLedgerBackup(data: AppDataV2): Promise<void> {
-  const json = serialiseLedgerBackup(data)
-  const date = toLocalIsoDate(new Date())
-  const filename = `finance-ledger-backup-${date}.json`
-  const blob = new Blob([json], { type: 'application/json' })
-  const file = new File([blob], filename, { type: 'application/json' })
+/**
+ * Hand a generated file to the iOS Share Sheet, falling back to a plain
+ * `<a download>` where sharing files is not available.
+ *
+ * Extracted from downloadLedgerBackup (2026-09-24) rather than copied,
+ * for the downloadable cycle statement (TECHNICAL.md §"The cycle
+ * statement"). This path is the one that is PROVEN on Adam's phone —
+ * including the AbortError case, which is a normal cancel and not a
+ * failure — and a second copy of it would be a second thing to get wrong
+ * on a device that is awkward to debug.
+ */
+export async function shareOrDownloadFile(contents: string, filename: string, mimeType: string): Promise<void> {
+  const blob = new Blob([contents], { type: mimeType })
+  const file = new File([blob], filename, { type: mimeType })
 
   const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean }
   if (nav.canShare?.({ files: [file] })) {
@@ -230,6 +238,19 @@ export async function downloadLedgerBackup(data: AppDataV2): Promise<void> {
   a.download = filename
   a.click()
   URL.revokeObjectURL(url)
+}
+
+export async function downloadLedgerBackup(data: AppDataV2): Promise<void> {
+  // 🚨 Kept as a named local on its own line, not inlined into the call
+  // below: verify-backup-format-parity.ts asserts THIS TEXT is present,
+  // because the guarantee it protects — one serialiser, one parser, for
+  // the cloud snapshot and the file export alike — is structural, and a
+  // second `JSON.stringify` anywhere in a write path would break it
+  // silently. Inlining it broke that check during the 2026-09-24
+  // statement work; the check was right.
+  const json = serialiseLedgerBackup(data)
+  const date = toLocalIsoDate(new Date())
+  await shareOrDownloadFile(json, `finance-ledger-backup-${date}.json`, 'application/json')
 }
 
 export function parseLedgerBackupJson(json: string): AppDataV2 {

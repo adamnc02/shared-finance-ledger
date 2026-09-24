@@ -1,0 +1,1525 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cycle statement</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    color-scheme: light dark;
+    --paper:#faf8f4; --surface:#ffffff; --ink:#16191f; --ink-soft:#5d6470; --ink-faint:#8b93a1;
+    --rule:#e6e2d9; --rule-soft:#f0ece4; --in:#2f6b4f; --out:#1f242c; --mark:#b5761f; --mark-soft:#fbf1de;
+    --sel:#16191f; --sel-ink:#faf8f4; --chip:#f2eee6; --drop:#cfc8b8;
+    --rail: 212px; --panel: 248px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:#101319; --surface:#171b23; --ink:#e9edf3; --ink-soft:#a3abb9; --ink-faint:#737c8b;
+      --rule:#252b35; --rule-soft:#1e242d; --in:#6fc79b; --out:#e9edf3; --mark:#e0a765; --mark-soft:#2a2113;
+      --sel:#e9edf3; --sel-ink:#101319; --chip:#1e242d; --drop:#39414e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#101319; --surface:#171b23; --ink:#e9edf3; --ink-soft:#a3abb9; --ink-faint:#737c8b;
+    --rule:#252b35; --rule-soft:#1e242d; --in:#6fc79b; --out:#e9edf3; --mark:#e0a765; --mark-soft:#2a2113;
+    --sel:#e9edf3; --sel-ink:#101319; --chip:#1e242d; --drop:#39414e;
+  }
+
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+         font-family:"Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size:14px; }
+  img { max-width:100%; }
+  [hidden] { display:none !important; }
+
+  .shell { display:flex; align-items:flex-start; max-width:1440px; margin:0 auto; }
+
+  /* Left rail: a vertical list of pills, one per hero card. */
+  .rail {
+    width:var(--rail); flex:0 0 var(--rail); position:sticky;
+    top:env(safe-area-inset-top, 0px);
+    max-height:100vh; overflow-y:auto;
+    padding:22px 12px calc(28px + env(safe-area-inset-bottom, 0px));
+    border-right:1px solid var(--rule);
+  }
+  .rail h2 { font-size:10.5px; letter-spacing:.14em; text-transform:uppercase;
+             color:var(--ink-faint); font-weight:600; margin:0 0 10px 8px; }
+  .railbtn {
+    display:block; width:100%; text-align:left; cursor:pointer;
+    background:transparent; border:1px solid transparent; border-radius:9px;
+    padding:9px 11px; margin-bottom:3px; color:var(--ink); font:inherit; line-height:1.25;
+  }
+  .railbtn:hover { background:var(--chip); }
+  .railbtn[aria-current="true"] { background:var(--sel); color:var(--sel-ink); font-weight:600; }
+  .railbtn .k { display:block; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
+                color:var(--ink-faint); font-weight:600; margin-top:2px; }
+  .railbtn[aria-current="true"] .k { color:var(--sel-ink); opacity:.72; }
+
+  .main { flex:1 1 auto; min-width:0; padding:26px 18px calc(60px + env(safe-area-inset-bottom, 0px)); }
+
+  header.doc { border-bottom:2px solid var(--ink); padding-bottom:13px; margin-bottom:18px; }
+  .eyebrow { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-soft); font-weight:600; }
+  h1 { font-size:clamp(22px,5vw,30px); line-height:1.15; margin:.3em 0 .16em; text-wrap:balance;
+       font-weight:700; letter-spacing:-.01em; }
+  .sub { color:var(--ink-soft); font-size:13.5px; margin:0; }
+
+  .figures { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:1px;
+             background:var(--rule); border:1px solid var(--rule); border-radius:10px; overflow:hidden; margin-bottom:14px; }
+  .fig { background:var(--surface); padding:12px 14px; }
+  .fig dt { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft);
+            font-weight:600; margin:0 0 5px; }
+  .fig dd { margin:0; font-family:"IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+            font-size:19px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .fig small { display:block; font-family:inherit; font-size:11.5px; font-weight:400; color:var(--ink-faint); margin-top:3px; }
+  .fig.end dd { color:var(--mark); }
+
+  .controls { border:1px solid var(--rule); border-radius:10px; background:var(--surface);
+              padding:11px 12px; margin-bottom:16px; }
+  .ctlrow { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; }
+  .ctlrow + .ctlrow { margin-top:10px; padding-top:10px; border-top:1px solid var(--rule-soft); }
+  .ctllabel { font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+              color:var(--ink-faint); font-weight:600; }
+  .ctlsection { flex:0 0 auto; min-width:62px; font-size:10.5px; letter-spacing:.12em;
+                text-transform:uppercase; color:var(--ink); font-weight:700; }
+  .seg { display:inline-flex; border:1px solid var(--rule); border-radius:8px; overflow:hidden; }
+  .seg button { background:var(--surface); border:0; border-right:1px solid var(--rule);
+                padding:6px 12px; font:inherit; font-size:13px; color:var(--ink-soft); cursor:pointer; }
+  .seg button:last-child { border-right:0; }
+  .seg button[aria-pressed="true"] { background:var(--sel); color:var(--sel-ink); font-weight:600; }
+  label.chk { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--ink-soft); cursor:pointer; }
+  #allSeg { display:inline-flex; gap:6px; }
+  .allbtn { display:inline-flex; align-items:center; gap:6px; background:var(--surface);
+            border:1px solid var(--rule); border-radius:8px; padding:6px 11px;
+            font:inherit; font-size:13px; color:var(--ink); cursor:pointer; }
+  .allbtn:hover { border-color:var(--ink-faint); background:var(--chip); }
+  .allbtn .g { display:inline-flex; align-items:center; justify-content:center;
+               width:15px; height:15px; border:1px solid var(--ink-faint); border-radius:3px;
+               font-family:ui-monospace, monospace; font-size:11px; line-height:1; color:var(--ink-soft); }
+  select { font:inherit; font-size:13px; padding:5px 8px; border:1px solid var(--rule); border-radius:7px;
+           background:var(--surface); color:var(--ink); max-width:100%; }
+  .pv { display:inline-flex; align-items:center; gap:6px; }
+  .pv span { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); font-weight:600; }
+
+  .groups { padding-top:9px; }
+  .ghint { font-size:11.5px; color:var(--ink-faint); }
+  .grouplist { display:flex; flex-wrap:wrap; gap:6px 8px; margin-top:9px; }
+  .groupitem { display:inline-flex; align-items:center; gap:7px; background:var(--surface);
+               border:1px solid var(--rule); border-radius:8px; padding:5px 9px; font-size:12.5px; }
+  .groupitem .gname { white-space:nowrap; font-weight:600; }
+  .groupitem .gaxis { font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+                      color:var(--ink-faint); }
+  .fx.sig { font-family:"Public Sans", system-ui, sans-serif; font-size:12px; font-weight:700; }
+  .fx.sig[aria-pressed="true"] { background:var(--sel); color:var(--sel-ink); border-color:var(--sel); }
+
+  .note { background:var(--mark-soft); border-left:3px solid var(--mark); padding:11px 13px;
+          border-radius:0 8px 8px 0; font-size:13.5px; line-height:1.5; margin:0 0 18px; }
+
+  /* work area: table, with the field panel to its right in Analysis */
+  .workarea { display:grid; grid-template-columns:minmax(0,1fr); gap:18px; align-items:start; }
+  body[data-mode="analysis"] .workarea { grid-template-columns:minmax(0,1fr) var(--panel); }
+
+  .tablewrap { overflow-x:auto; border:1px solid var(--rule); border-radius:10px; background:var(--surface); }
+  table { border-collapse:collapse; width:100%; min-width:340px; font-size:13.5px; }
+  caption { text-align:left; padding:12px 14px 0; font-size:11px; letter-spacing:.1em;
+            text-transform:uppercase; color:var(--ink-soft); font-weight:600; }
+  th { text-align:left; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-soft);
+       font-weight:600; padding:10px 10px 8px; border-bottom:1px solid var(--rule); background:var(--surface); }
+  thead tr:last-child th { border-bottom:1px solid var(--rule); }
+  thead th.grp { border-bottom:1px solid var(--rule-soft); border-left:1px solid var(--rule-soft); text-align:center; }
+  thead th.grp.num { text-align:right; }
+  td { padding:8px 10px; border-bottom:1px solid var(--rule-soft); vertical-align:baseline; }
+  tbody tr:last-child td { border-bottom:none; }
+  .num { font-family:"IBM Plex Mono", ui-monospace, "SF Mono", monospace; text-align:right;
+         font-variant-numeric:tabular-nums; white-space:nowrap; }
+  th.num { text-align:right; }
+  .bal { font-weight:600; }
+  .in { color:var(--in); }
+  .date { color:var(--ink-soft); white-space:nowrap; font-variant-numeric:tabular-nums;
+          font-family:"IBM Plex Mono", ui-monospace, monospace; font-size:12.5px; }
+  .band td { background:var(--rule-soft); font-size:11px; letter-spacing:.09em; text-transform:uppercase;
+             color:var(--ink-soft); font-weight:600; padding:7px 10px; }
+  .band.cycle td { background:var(--sel); color:var(--sel-ink); }
+  .dayhead td { background:var(--rule-soft); font-weight:600; font-size:12px; padding:6px 10px; }
+  .sublabel { font-size:10px; letter-spacing:.11em; text-transform:uppercase; font-weight:700;
+              color:var(--ink-soft); margin-right:7px; }
+  /* Alignment and figures come from .num; .split only mutes them, so the two
+     detail columns sit behind Amount rather than competing with it. */
+  .split { color:var(--ink-soft); font-size:12.5px; }
+
+  /* The ONLY highlight in the default view: today. */
+  tr.today td { background:var(--mark-soft); }
+  tr.today .desc { font-weight:600; }
+  .todaytag { display:inline-block; margin-left:8px; font-size:10px; letter-spacing:.09em;
+              text-transform:uppercase; font-weight:600; color:var(--mark); vertical-align:1px; }
+  tr.band.today td { background:var(--mark-soft); color:var(--mark); }
+
+  tfoot td { border-top:2px solid var(--ink); padding:11px 10px; font-weight:600; }
+  .tot td { font-weight:600; background:var(--rule-soft); }
+  .grouprow td { background:var(--rule-soft); font-weight:600; }
+  .empty { text-align:center; color:var(--ink-faint); padding:26px 10px; }
+
+  /* expand / collapse */
+  .tw { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px;
+        margin-right:7px; border:1px solid var(--ink-faint); border-radius:3px; background:transparent;
+        color:var(--ink-soft); font:inherit; font-size:12px; line-height:1; cursor:pointer;
+        font-family:ui-monospace, monospace; padding:0; vertical-align:-2px; }
+  .tw:hover { background:var(--chip); }
+  .date .tw { margin-right:5px; }
+  .dayhead .date { white-space:nowrap; }
+  th .tw { border-color:currentColor; }
+  .lbl { display:inline-block; }
+
+  /* field panel (Analysis only) */
+  .fieldpanel { display:none; position:sticky; top:env(safe-area-inset-top,0px); }
+  body[data-mode="analysis"] .fieldpanel { display:block; }
+  .fieldpanel h3 { display:flex; align-items:center; justify-content:space-between;
+                   font-size:10.5px; letter-spacing:.12em; text-transform:uppercase;
+                   color:var(--ink-faint); font-weight:600; margin:0 0 6px; }
+  .zclear { border:1px solid var(--rule); background:var(--surface); color:var(--ink-faint);
+            border-radius:6px; font:inherit; font-size:10px; letter-spacing:.06em; text-transform:uppercase;
+            padding:2px 7px; cursor:pointer; }
+  .zclear:hover { color:var(--ink); border-color:var(--ink-faint); }
+  .fieldpanel h3 + .zone { margin-bottom:14px; }
+  .zone { border:1px dashed var(--drop); border-radius:9px; background:var(--surface);
+          padding:7px; min-height:46px; }
+  .zone.bank { border-style:solid; border-color:var(--rule); background:transparent; }
+  .zone.over { border-color:var(--mark); background:var(--mark-soft); }
+  .zone .ph { height:2px; background:var(--mark); border-radius:2px; margin:3px 2px; }
+  .zone .none { color:var(--ink-faint); font-size:12px; padding:6px 4px; }
+  .field { display:flex; align-items:center; gap:6px; background:var(--chip); border:1px solid var(--rule);
+           border-radius:7px; padding:6px 8px; margin:0 0 5px; font-size:12.5px; cursor:grab;
+           touch-action:none; user-select:none; -webkit-user-select:none; }
+  .field:last-child { margin-bottom:0; }
+  .field .grip { color:var(--ink-faint); font-size:12px; line-height:1; letter-spacing:-1px; }
+  .field .nm { flex:1 1 auto; }
+  .field .x { border:0; background:transparent; color:var(--ink-faint); cursor:pointer;
+              font:inherit; font-size:14px; line-height:1; padding:0 2px; }
+  .field .fx { border:1px solid var(--rule); background:var(--surface); color:var(--ink-soft);
+               border-radius:3px; font-family:ui-monospace, monospace; font-size:11px; line-height:1;
+               width:16px; height:16px; padding:0; cursor:pointer; }
+  .field .fx:hover { color:var(--ink); border-color:var(--ink-faint); }
+  .field .x:hover { color:var(--ink); }
+  .field.dragging { opacity:.32; }
+  .ghost { position:fixed; z-index:90; pointer-events:none; box-shadow:0 6px 18px rgba(0,0,0,.24);
+           opacity:.95; margin:0; }
+  .hint { font-size:11.5px; color:var(--ink-faint); line-height:1.45; margin:10px 0 0; }
+
+  footer { margin-top:20px; color:var(--ink-faint); font-size:12.5px; line-height:1.55; }
+  footer p { margin:.5em 0; }
+
+  .drawerbtn { display:none; }
+  .scrim { display:none; }
+
+  @media (max-width:1100px) {
+    body[data-mode="analysis"] .workarea { grid-template-columns:minmax(0,1fr); }
+    .fieldpanel { position:static; order:-1; }
+    body[data-mode="analysis"] .zone { display:flex; flex-wrap:wrap; gap:5px; }
+    body[data-mode="analysis"] .field { margin:0; }
+    body[data-mode="analysis"] .zone .ph { height:auto; width:2px; align-self:stretch; margin:2px 1px; }
+  }
+  @media (max-width:760px) {
+    .shell { display:block; }
+    .rail {
+      position:fixed; z-index:40; top:0; left:0; bottom:0; width:264px; max-height:none;
+      background:var(--paper); border-right:1px solid var(--rule);
+      transform:translateX(-102%); transition:transform .22s ease;
+      padding-top:calc(20px + env(safe-area-inset-top, 0px));
+    }
+    body[data-drawer="open"] .rail { transform:translateX(0); box-shadow:0 0 40px rgba(0,0,0,.28); }
+    body[data-drawer="open"] .scrim { display:block; position:fixed; inset:0; z-index:30; background:rgba(0,0,0,.42); }
+    .drawerbtn {
+      display:inline-flex; align-items:center; gap:8px; background:var(--surface);
+      border:1px solid var(--rule); border-radius:9px; padding:8px 12px; font:inherit; font-size:13.5px;
+      color:var(--ink); cursor:pointer; margin-bottom:14px; font-weight:600;
+    }
+    .main { padding:18px 14px calc(56px + env(safe-area-inset-bottom, 0px)); }
+    table { font-size:12.5px; min-width:0; }
+    th { padding:9px 7px 7px; font-size:10px; }
+    td { padding:7px 7px; }
+    .date { font-size:11.5px; }
+    .num { font-size:12px; }
+    /* 🚨 THREE TILES, ONE ROW, at every width (Adam, 2026-09-24 UAT).
+       `auto-fit` with a 190px minimum fits exactly two columns on a
+       phone, so the three tiles wrapped to a 2x2 grid with an empty
+       fourth cell — which reads as a missing figure rather than as a
+       layout. They are one row of three or they are nothing; the type
+       shrinks to pay for it. */
+    .figures { grid-template-columns:repeat(3,1fr); }
+    .fig { padding:10px 9px; }
+    .fig dt { font-size:9.5px; letter-spacing:.04em; margin-bottom:4px; }
+    .fig dd { font-size:15px; }
+    .fig small { font-size:10px; }
+  }
+  @media (max-width:380px) {
+    .main { padding-inline:12px; }
+    table { font-size:11.5px; }
+    th { padding:8px 5px 6px; }
+    td { padding:6px 5px; }
+    .num { font-size:11px; }
+    .date { font-size:10.5px; }
+    .fig { padding:9px 7px; }
+    .fig dt { font-size:9px; }
+    .fig dd { font-size:13.5px; }
+    .fig small { font-size:9.5px; }
+  }
+
+  @media print {
+    @page { size:A4 portrait; margin:14mm 12mm; }
+    :root { --paper:#fff; --surface:#fff; --ink:#000; --ink-soft:#333; --ink-faint:#555;
+            --rule:#bbb; --rule-soft:#e4e4e4; --in:#0a5c36; --sel:#000; --sel-ink:#fff; }
+    body { background:#fff; font-size:10.5pt; }
+    .rail, .drawerbtn, .controls, .scrim, .themebtn, .fieldpanel { display:none !important; }
+    .shell { display:block; max-width:none; }
+    .main { padding:0; }
+    .workarea { display:block; }
+    .tablewrap { overflow:visible; border:1px solid var(--rule); border-radius:0; }
+    table { min-width:0; }
+    thead { display:table-header-group; }
+    tr, .fig { break-inside:avoid; page-break-inside:avoid; }
+    .printcard { break-before:page; page-break-before:always; }
+    .printcard:first-child { break-before:auto; page-break-before:auto; }
+    #live { display:none !important; }
+    #printAll { display:block !important; }
+    .printfoot { display:block; margin-top:8mm; font-size:9pt; color:#555; }
+  }
+  #printAll { display:none; }
+  .themebtn { position:fixed; right:14px; bottom:calc(14px + env(safe-area-inset-bottom,0px));
+              z-index:20; background:var(--surface); border:1px solid var(--rule); border-radius:999px;
+              padding:8px 14px; font:inherit; font-size:12.5px; color:var(--ink-soft); cursor:pointer; }
+</style>
+</head>
+<body>
+
+<div class="scrim" id="scrim"></div>
+
+<div class="shell">
+  <nav class="rail" id="rail" aria-label="Accounts in this statement">
+    <h2>This statement</h2>
+    <div id="railList"></div>
+  </nav>
+
+  <main class="main">
+    <button class="drawerbtn" id="drawerBtn" aria-expanded="false">&#9776; <span id="drawerLabel">Personal</span></button>
+
+    <div id="live">
+      <header class="doc">
+        <div class="eyebrow" id="eyebrow"></div>
+        <h1 id="title"></h1>
+        <p class="sub" id="sub"></p>
+      </header>
+
+      <dl class="figures" id="figures"></dl>
+
+      <div class="controls">
+        <div class="ctlrow" id="rowView">
+          <span class="ctlsection">View</span>
+          <div class="seg" id="modeSeg">
+            <button data-mode="statement">Statement</button>
+            <button data-mode="analysis">Analysis</button>
+          </div>
+          <span class="ctllabel" id="groupLabel">Group</span>
+          <div class="seg" id="groupSeg">
+            <button data-group="flat">Flat</button>
+            <button data-group="day">Per day</button>
+          </div>
+          <span class="ctllabel" id="rangeLabel">Range</span>
+          <div class="seg" id="rangeSeg">
+            <button data-range="selected">Selected dates</button>
+            <button data-range="full">Full cycles</button>
+          </div>
+          <span id="allSeg">
+            <button class="allbtn" id="expandAll"><span class="g">+</span> Expand all</button>
+            <button class="allbtn" id="collapseAll"><span class="g">−</span> Collapse all</button>
+          </span>
+        </div>
+
+        <div class="ctlrow" id="rowPreset" hidden>
+          <span class="ctlsection">Preset</span>
+          <div class="seg" id="presetSeg">
+            <button data-preset="direction">Direction</button>
+            <button data-preset="category">Category</button>
+            <button data-preset="catdesc">Category &rsaquo; Description</button>
+            <button data-preset="daycat">Day &times; Category</button>
+            <button data-preset="catcycle">Category &times; Cycle</button>
+          </div>
+        </div>
+
+        <div class="ctlrow" id="rowLayout">
+          <span class="ctlsection">Layout</span>
+          <div class="seg" id="layoutSeg">
+            <button data-layout="compact">Compact</button>
+            <button data-layout="tabular">Tabular</button>
+          </div>
+          <span class="ctllabel" id="subLabel">Subtotals</span>
+          <div class="seg" id="subSeg">
+            <button data-subtotals="top">Top</button>
+            <button data-subtotals="bottom">Bottom</button>
+          </div>
+          <label class="chk" id="subShowWrap"><input type="checkbox" id="subShowChk" checked> Show subtotals</label>
+          <label class="chk" id="splitWrap"><input type="checkbox" id="splitChk"> Capital / interest</label>
+        </div>
+
+        <div class="ctlrow" id="rowValue" hidden>
+          <span class="ctlsection">Value</span>
+          <div class="seg" id="valueSeg">
+            <button data-value="sum">Sum</button>
+            <button data-value="count">Count</button>
+          </div>
+        </div>
+
+        <div class="ctlrow" id="rowFilters">
+          <span class="ctlsection">Filters</span>
+          <label class="chk"><input type="checkbox" id="showCleared" checked> Show cleared</label>
+          <label class="pv" id="dirWrap"><span>Direction</span><select id="pvDir">
+            <option value="all">All</option><option value="out">Outgoing</option><option value="in">Incoming</option>
+          </select></label>
+          <label class="pv" id="catWrap"><span>Category</span><select id="pvCat"></select></label>
+        </div>
+      </div>
+
+      <div class="controls groups" id="groupsPanel">
+        <div class="ctlrow">
+          <span class="ctlsection">Groups</span>
+          <span class="ghint" id="groupsHint"></span>
+        </div>
+        <div class="grouplist" id="groupList"></div>
+      </div>
+
+      <p class="note" id="note" hidden></p>
+
+      <div class="workarea">
+        <div class="tablewrap"><table id="tbl"></table></div>
+
+        <aside class="fieldpanel" id="fieldPanel" aria-label="Pivot fields">
+          <h3>Fields</h3>
+          <div class="zone bank" id="zoneBank" data-zone="bank"></div>
+          <h3>Rows <button class="zclear" data-clear="rows">Clear</button></h3>
+          <div class="zone" id="zoneRows" data-zone="rows"></div>
+          <h3>Columns <button class="zclear" data-clear="cols">Clear</button></h3>
+          <div class="zone" id="zoneCols" data-zone="cols"></div>
+          <p class="hint">Drag a field into <strong>Rows</strong> or <strong>Columns</strong>, and drag
+          again to reorder. Order is the nesting order. Use <strong>&times;</strong> to take a field
+          out, and the <strong>+</strong> / <strong>&minus;</strong> buttons in the table to open and
+          close a group.</p>
+        </aside>
+      </div>
+
+      <footer>
+        <p><strong>Cleared</strong> means the money has actually left the account.
+        <strong>Still to come</strong> are the regular payments the app knows about and expects before the
+        end of the window &mdash; direct debits, standing orders and the weekly shop.</p>
+        <p id="openingLine"></p>
+        <p id="genLine"></p>
+      </footer>
+    </div>
+
+    <div id="printAll"></div>
+  </main>
+</div>
+
+<button class="themebtn" id="themeBtn">Theme: auto</button>
+
+<script id="statement-data" type="application/json">__DATA__</script>
+<script>
+(function () {
+  "use strict";
+
+  var DATA  = JSON.parse(document.getElementById('statement-data').textContent);
+  var META  = DATA.meta;
+  var CARDS = DATA.cards;
+
+  var SEP = String.fromCharCode(1);
+
+  /* The dimensions a pivot can be built from. Order here is the order they
+     appear in the Fields bank, nothing more. */
+  var DIMS = [
+    { k:'day',       label:'Day' },
+    { k:'cycle',     label:'Cycle' },
+    { k:'direction', label:'Direction' },
+    { k:'category',  label:'Category' },
+    { k:'description', label:'Description' },
+    { k:'status',    label:'Cleared / to come' }
+  ];
+
+  var state = {
+    card: CARDS[0].id,
+    mode: 'statement',
+    group: 'day',
+    subtotals: 'top',
+    split: false,
+    range: 'full',
+    showCleared: true,
+    preset: 'direction',
+    pivot: { rows:['direction'], cols:[], value:'sum', dir:'all', cat:'all' },
+    layout: 'compact',
+    showSubtotals: true,
+    hiddenSubFields: {},
+    collapsedRows: {},
+    collapsedCols: {},
+    collapsedDays: {},
+    theme: 'auto'
+  };
+
+  /* ── formatting ──────────────────────────────────────────────
+     The file NEVER computes a balance. Every row arrives with the running
+     balance the app's own engine calculated. All this does is print it,
+     and sum amounts for the Analysis totals. */
+  function money(n) {
+    var neg = n < 0, v = Math.abs(n).toFixed(2);
+    v = v.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return (neg ? '−£' : '£') + v;
+  }
+  function signed(n) { var s = money(n); return n > 0 ? '+' + s : s; }
+
+  var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function shortDate(iso) {
+    var p = iso.split('-');
+    return parseInt(p[2], 10) + ' ' + MONTHS[parseInt(p[1], 10) - 1];
+  }
+  function longDate(iso) {
+    var p = iso.split('-');
+    return parseInt(p[2], 10) + ' ' + MONTHS[parseInt(p[1], 10) - 1] + ' ' + p[0];
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
+    });
+  }
+  /* The +/− disclosure button. Shared by the day groups in Statement and the
+     row/column groups in Analysis, so the two can never drift apart. */
+  function twBtn(kind, key, isCollapsed) {
+    return '<button class="tw" data-tw="' + kind + '" data-path="' + esc(key) + '" '
+         + 'aria-expanded="' + (!isCollapsed) + '" '
+         + 'title="' + (isCollapsed ? 'Expand' : 'Collapse') + '">'
+         + (isCollapsed ? '+' : '−') + '</button>';
+  }
+
+  function cardById(id) {
+    for (var i = 0; i < CARDS.length; i++) if (CARDS[i].id === id) return CARDS[i];
+    return CARDS[0];
+  }
+  function cycle(key) {
+    for (var i = 0; i < META.cycles.length; i++) if (META.cycles[i].key === key) return META.cycles[i];
+    return { key:key, label:key, start:'' };
+  }
+  function cycleLabel(key) { return cycle(key).label; }
+
+  /* The window is SYMMETRIC (§0.5 O2). The file always holds the full cycles
+     that contain the chosen dates; the toggle trims the VIEW at both ends. */
+  function windowBounds(range) {
+    range = range || state.range;
+    return range === 'selected'
+      ? { start: META.selectedStart,  end: META.selectedEnd }
+      : { start: META.fullRangeStart, end: META.fullRangeEnd };
+  }
+
+  /* Subtotals are switched per FIELD — the thing dropped into Rows, or Day in
+     a per-day statement — not per individual group. One tick governs every
+     group belonging to that field. */
+  function subVisible(field) {
+    return state.showSubtotals && !state.hiddenSubFields[field];
+  }
+
+  /* The fields that actually have something nested beneath them. The last
+     field in a zone has nothing below it, so it can be neither collapsed nor
+     given a subtotal, and is deliberately not listed. */
+  function collapsibleFields() {
+    /* Statement is not listed here: its one field already carries a toggle on
+       every day row, and Expand all / Collapse all covers the rest. A panel
+       with a single entry duplicating both would be noise. */
+    if (state.mode === 'statement') return [];
+
+    var out = [];
+    state.pivot.rows.forEach(function (d, i) {
+      if (i < state.pivot.rows.length - 1) {
+        /* Subtotals are switchable in BOTH layouts. Tabular has a separate
+           subtotal row; compact carries the figures on the group's own
+           heading row, and switching them off blanks those figures while
+           keeping the heading - which is what Excel does. */
+        out.push({ axis:'rows', field:d, label:dimLabel(d), depth:i, canSub:true });
+      }
+    });
+    state.pivot.cols.forEach(function (d, i) {
+      if (i < state.pivot.cols.length - 1) {
+        out.push({ axis:'cols', field:d, label:dimLabel(d), depth:i, canSub:false });
+      }
+    });
+    return out;
+  }
+
+  /* Collapse or expand every item of one field at once. Shared by the field
+     chips and the Groups panel, so the two can never behave differently. */
+  function setFieldCollapsed(axis, depth, collapsed) {
+    if (axis === 'day') {
+      state.collapsedDays = {};
+      if (collapsed) rowsFor(cardById(state.card)).forEach(function (r) {
+        state.collapsedDays[r.date] = true;
+      });
+      return;
+    }
+    var dims = axis === 'rows' ? state.pivot.rows : state.pivot.cols;
+    var set  = axis === 'rows' ? state.collapsedRows : state.collapsedCols;
+    (function walk(n) {
+      n.children.forEach(function (c) {
+        if (c.path.length === depth + 1) {
+          if (collapsed) set[pathKey(c.path)] = true; else delete set[pathKey(c.path)];
+        } else if (c.path.length < depth + 1) walk(c);
+      });
+    })(buildTree(currentFiltered(), dims));
+  }
+
+  function toggleCollapse(kind, key) {
+    var set = kind === 'day' ? state.collapsedDays
+            : kind === 'row' ? state.collapsedRows
+            : state.collapsedCols;
+    if (set[key]) delete set[key]; else set[key] = true;
+  }
+
+  function rowsFor(card, opts) {
+    opts = opts || {};
+    var w = windowBounds(opts.range);
+    var showCleared = opts.showCleared !== undefined ? opts.showCleared : state.showCleared;
+    return card.rows.filter(function (r) {
+      if (r.date < w.start || r.date > w.end) return false;
+      if (!showCleared && r.status === 'cleared') return false;
+      return true;
+    });
+  }
+
+  /* ── STATEMENT ─────────────────────────────────────────────── */
+  function statementTable(card, rows) {
+    /* The capital / interest split only exists where the app supplied one —
+       a loan repayment. An overpayment is all capital, which is precisely
+       why the split is worth showing. */
+    var showSplit = state.split && card.hasSplit;
+    var NC = showSplit ? 6 : 4;
+    var byDay = (state.group === 'day');
+    var atTop = (state.subtotals === 'top');
+
+    var h = '';
+    h += '<caption>Statement &middot; ' + rows.length + ' ' + (rows.length === 1 ? 'entry' : 'entries') + '</caption>';
+    h += '<thead><tr><th scope="col">Date</th><th scope="col">Description</th>'
+       + (showSplit ? '<th scope="col" class="num">Capital</th><th scope="col" class="num">Interest</th>' : '')
+       + '<th scope="col" class="num">Amount</th>'
+       + '<th scope="col" class="num">' + esc(card.balanceLabel || 'Balance') + '</th></tr></thead><tbody>';
+
+    if (!rows.length) {
+      return h + '<tr><td colspan="' + NC + '" class="empty">Nothing in this window.</td></tr></tbody>';
+    }
+
+    /* The ONLY highlight: today. If nothing is dated today the marker moves to
+       the "Still to come" band — the same line said differently, the boundary
+       between what has happened and what has not. */
+    var hasToday = rows.some(function (r) { return r.date === META.today; });
+
+    /* Two columns of plain figures. No unit labels in the cells: the column
+       headings already say which is which, and repeating it on every row is
+       noise in a table read for its numbers. */
+    function splitCells(r) {
+      if (!showSplit) return '';
+      if (r.capital === null || r.capital === undefined)
+        return '<td class="num split"></td><td class="num split"></td>';
+      return '<td class="num split">' + esc(money(r.capital)) + '</td>'
+           + '<td class="num split">' + esc(money(r.interest)) + '</td>';
+    }
+
+    /* A subtotal row leaves no column blank: where a day has any split at all,
+       its capital and interest are totalled like everything else. */
+    function splitSubtotal(day) {
+      if (!showSplit) return '';
+      var any = day.rows.some(function (x) { return x.capital !== null && x.capital !== undefined; });
+      if (!any) return '<td class="num split"></td><td class="num split"></td>';
+      var cap = day.rows.reduce(function (a, x) { return a + (x.capital || 0); }, 0);
+      var itr = day.rows.reduce(function (a, x) { return a + (x.interest || 0); }, 0);
+      return '<td class="num split">' + esc(money(cap)) + '</td>'
+           + '<td class="num split">' + esc(money(itr)) + '</td>';
+    }
+
+    /* Group consecutive rows into days. A day never spans a cycle boundary or
+       the cleared/pending boundary, because both are decided by the date. */
+    var days = [];
+    rows.forEach(function (r) {
+      var last = days[days.length - 1];
+      if (last && last.date === r.date) last.rows.push(r);
+      else days.push({ date:r.date, cycle:r.cycle, status:r.status, rows:[r] });
+    });
+
+    function subtotalRow(day, isCollapsed) {
+      var net = day.rows.reduce(function (a, x) { return a + x.amount; }, 0);
+      var close = day.rows[day.rows.length - 1].balance;
+      var isToday = day.date === META.today;
+      return '<tr class="dayhead' + (isToday ? ' today' : '') + '">'
+           + '<td class="date">' + twBtn('day', day.date, isCollapsed)
+           + esc(longDate(day.date)) + '</td>'
+           + '<td><span class="sublabel">Subtotal</span>' + day.rows.length + ' '
+           + (day.rows.length === 1 ? 'transaction' : 'transactions')
+           + (isToday ? '<span class="todaytag">today</span>' : '') + '</td>'
+           + splitSubtotal(day)
+           + '<td class="num' + (net > 0 ? ' in' : '') + '">' + esc(signed(net)) + '</td>'
+           + '<td class="num bal">' + esc(money(close)) + '</td></tr>';
+    }
+
+    var lastCycle = null, pendingDone = false;
+    days.forEach(function (day) {
+      if (day.cycle !== lastCycle) {
+        h += '<tr class="band cycle"><td colspan="' + NC + '">' + esc(cycleLabel(day.cycle)) + '</td></tr>';
+        lastCycle = day.cycle;
+      }
+      if (!pendingDone && day.status === 'pending') {
+        h += '<tr class="band' + (hasToday ? '' : ' today') + '"><td colspan="' + NC + '">'
+           + 'Still to come &mdash; scheduled, not yet taken'
+           + (hasToday ? '' : '<span class="todaytag">as at ' + esc(shortDate(META.today)) + '</span>')
+           + '</td></tr>';
+        pendingDone = true;
+      }
+
+      var isToday = day.date === META.today;
+      /* A day collapses to its subtotal. Only when grouped per day: a flat
+         view has no groups to collapse. */
+      var dayCollapsed = byDay && !!state.collapsedDays[day.date];
+
+      /* A collapsed day always keeps its subtotal: it is the only thing left
+         representing that day, so hiding it would make the day disappear. */
+      var showSub = byDay && (dayCollapsed || subVisible('day'));
+      if (showSub && atTop) h += subtotalRow(day, dayCollapsed);
+
+      if (!dayCollapsed) day.rows.forEach(function (r, idx) {
+        /* With the day's subtotal row hidden, its disclosure would vanish with
+           it and the day could never be reopened. So the toggle - and the date
+           it sits beside - move to the day's FIRST transaction. */
+        var carriesToggle = byDay && !showSub && idx === 0;
+        var showDate = ((!byDay && idx === 0) || carriesToggle) ? shortDate(r.date) : '';
+        var tagHere = isToday && idx === 0 && (!byDay || carriesToggle);
+        h += '<tr' + (isToday ? ' class="today"' : '') + '>'
+           + '<td class="date">'
+           + (carriesToggle ? twBtn('day', day.date, dayCollapsed) : '')
+           + esc(showDate) + '</td>'
+           + '<td class="desc">' + esc(r.description)
+           + (tagHere ? '<span class="todaytag">today</span>' : '') + '</td>'
+           + splitCells(r)
+           + '<td class="num' + (r.amount > 0 ? ' in' : '') + '">' + esc(signed(r.amount)) + '</td>'
+           + '<td class="num bal">' + esc(money(r.balance)) + '</td></tr>';
+      });
+
+      if (showSub && !atTop) h += subtotalRow(day, dayCollapsed);
+    });
+
+    /* 🚨 The date is the WINDOW'S END, never the last row's own date
+       (Adam, 2026-09-24 UAT). A window running to 24 Dec whose last
+       payment falls on 27 Nov was labelled "Projected balance, 27 Nov",
+       which reads as though the projection stops there — and disagrees
+       with the app, which always quotes its projected figure at the
+       cycle end. The FIGURE is still the last row's balance, because
+       that is what the app computed and nothing here folds anything.
+       Only the label changes. */
+    h += '</tbody><tfoot><tr><td colspan="' + (NC - 1) + '">Projected balance, '
+       + esc(longDate(windowBounds().end)) + '</td>'
+       + '<td class="num bal">' + esc(money(rows[rows.length - 1].balance)) + '</td></tr></tfoot>';
+    return h;
+  }
+
+  /* ── ANALYSIS: one pivot engine ───────────────────────────────
+     Rows and Columns are ORDERED LISTS of dimensions. Every preset is just
+     a saved pair of those lists — there is no second code path per
+     grouping, which is how two groupings start disagreeing about a total. */
+  function dimValue(r, dim) {
+    switch (dim) {
+      case 'day':       return shortDate(r.date);
+      case 'cycle':     return cycleLabel(r.cycle);
+      case 'direction': return r.direction === 'in' ? 'Incoming' : 'Outgoing';
+      case 'category':  return r.category;
+      case 'description': return r.description;
+      case 'status':    return r.status === 'cleared' ? 'Cleared' : 'Still to come';
+      default:          return 'All';
+    }
+  }
+  /* 🚨 Sort by a real ordering key, never by the displayed label. Cycle
+     labels sort "14 Oct" before "14 Sep" alphabetically, which put the
+     cycles in the wrong order (Adam, 2026-09-24). */
+  function dimSortKey(r, dim) {
+    switch (dim) {
+      case 'day':       return r.date;
+      case 'cycle':     return cycle(r.cycle).start;
+      case 'direction': return r.direction === 'in' ? '0' : '1';
+      case 'status':    return r.status === 'cleared' ? '0' : '1';
+      default:          return dimValue(r, dim);
+    }
+  }
+  function dimLabel(dim) {
+    for (var i = 0; i < DIMS.length; i++) if (DIMS[i].k === dim) return DIMS[i].label;
+    return dim;
+  }
+  function pathKey(arr) { return arr.join(SEP); }
+
+  function buildTree(rows, dims) {
+    var root = { label:null, path:[], children:[], idx:{} };
+    var index = {};
+    rows.forEach(function (r) {
+      var node = root;
+      for (var i = 0; i < dims.length; i++) {
+        var v = dimValue(r, dims[i]);
+        if (!node.idx[v]) {
+          var child = { label:v, dim:dims[i], path:node.path.concat([v]),
+                        children:[], idx:{}, sortKey:dimSortKey(r, dims[i]) };
+          node.idx[v] = child;
+          node.children.push(child);
+          index[pathKey(child.path)] = child;
+        }
+        node = node.idx[v];
+      }
+    });
+    (function sortRec(n) {
+      n.children.sort(function (a, b) {
+        return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0;
+      });
+      n.children.forEach(sortRec);
+    })(root);
+    root.index = index;
+    return root;
+  }
+
+  /* Every node, in document order, skipping the children of collapsed ones. */
+  function visibleRowNodes(root, collapsed) {
+    var out = [];
+    (function walk(node) {
+      node.children.forEach(function (c) {
+        var isCollapsed = !!collapsed[pathKey(c.path)];
+        out.push({ node:c, collapsed:isCollapsed, hasKids:c.children.length > 0, depth:c.path.length - 1 });
+        if (c.children.length && !isCollapsed) walk(c);
+      });
+    })(root);
+    return out;
+  }
+  /* A collapsed node becomes a leaf column in its own right. */
+  function leafColNodes(root, collapsed) {
+    var out = [];
+    (function walk(node) {
+      node.children.forEach(function (c) {
+        var isCollapsed = !!collapsed[pathKey(c.path)];
+        if (c.children.length && !isCollapsed) walk(c);
+        else out.push(c);
+      });
+    })(root);
+    return out;
+  }
+
+  /* Every transaction currently in play: the window, minus the two filters.
+     Shared by the table and by the whole-field expand/collapse controls, so
+     they can never disagree about which rows exist. */
+  function currentFiltered() {
+    var p = state.pivot;
+    return rowsFor(cardById(state.card)).filter(function (r) {
+      if (p.dir !== 'all' && r.direction !== p.dir) return false;
+      if (p.cat !== 'all' && r.category !== p.cat) return false;
+      return true;
+    });
+  }
+
+  function analysisTable(card, rows) {
+    var p = state.pivot;
+    var tabular = state.layout === 'tabular';
+    var atTop = state.subtotals === 'top';
+
+    var filtered = rows.filter(function (r) {
+      if (p.dir !== 'all' && r.direction !== p.dir) return false;
+      if (p.cat !== 'all' && r.category !== p.cat) return false;
+      return true;
+    });
+
+    var caption = '<caption>'
+      + esc(p.rows.length ? p.rows.map(dimLabel).join(' \u203a ') : 'All')
+      + (p.cols.length ? ' &times; ' + esc(p.cols.map(dimLabel).join(' \u203a ')) : '')
+      + ' &middot; ' + esc(tabular ? 'tabular' : 'compact')
+      + ' &middot; ' + filtered.length + ' ' + (filtered.length === 1 ? 'entry' : 'entries') + '</caption>';
+
+    if (!filtered.length) {
+      return caption + '<tbody><tr><td class="empty">Nothing matches these filters.</td></tr></tbody>';
+    }
+
+    var rowTree = buildTree(filtered, p.rows);
+    var colTree = buildTree(filtered, p.cols);
+    var leaves = p.cols.length
+      ? leafColNodes(colTree, state.collapsedCols)
+      : [{ label:'Total', path:[], children:[] }];
+
+    var tagged = filtered.map(function (r) {
+      return {
+        amount: r.amount,
+        rp: p.rows.map(function (d) { return dimValue(r, d); }),
+        cp: p.cols.map(function (d) { return dimValue(r, d); })
+      };
+    });
+    function agg(rowPath, colPath) {
+      var sum = 0, count = 0, any = false, i, t;
+      outer:
+      for (i = 0; i < tagged.length; i++) {
+        t = tagged[i];
+        for (var a = 0; a < rowPath.length; a++) if (t.rp[a] !== rowPath[a]) continue outer;
+        for (var b = 0; b < colPath.length; b++) if (t.cp[b] !== colPath[b]) continue outer;
+        sum += t.amount; count++; any = true;
+      }
+      if (!any) return null;
+      return p.value === 'count' ? count : sum;
+    }
+    function render(v) {
+      if (v === null) return '<span style="color:var(--ink-faint)">&middot;</span>';
+      return p.value === 'count' ? String(v) : esc(signed(v));
+    }
+    function cellClass(v) {
+      return 'num' + (v !== null && p.value === 'sum' && v > 0 ? ' in' : '');
+    }
+    function tw(kind, path, isCollapsed) { return twBtn(kind, pathKey(path), isCollapsed); }
+
+    function blankCells() {
+      var n = leaves.length + (leaves.length > 1 ? 1 : 0);
+      return new Array(n + 1).join('<td></td>');
+    }
+
+    function valueCells(rowPath, extraClass) {
+      var out = '';
+      leaves.forEach(function (lf) {
+        var v = agg(rowPath, lf.path);
+        out += '<td class="' + cellClass(v) + (extraClass || '') + '">' + render(v) + '</td>';
+      });
+      if (leaves.length > 1) {
+        var t = agg(rowPath, []);
+        out += '<td class="' + cellClass(t) + ' bal">' + render(t) + '</td>';
+      }
+      return out;
+    }
+
+    /* ── header ────────────────────────────────────────────────────────
+       Compact puts every row field in ONE column and indents. Tabular gives
+       each row field a column of its own, as Excel does. */
+    var levels = Math.max(1, p.cols.length);
+    var rowCols = tabular ? Math.max(1, p.rows.length) : 1;
+
+    var h = caption + '<thead>';
+    for (var l = 0; l < levels; l++) {
+      h += '<tr>';
+      if (l === 0) {
+        if (tabular && p.rows.length) {
+          p.rows.forEach(function (d) {
+            h += '<th scope="col" rowspan="' + levels + '">' + esc(dimLabel(d)) + '</th>';
+          });
+        } else {
+          h += '<th scope="col" rowspan="' + levels + '">'
+             + esc(p.rows.length ? p.rows.map(dimLabel).join(' \u203a ') : '') + '</th>';
+        }
+      }
+      var i = 0;
+      while (i < leaves.length) {
+        var lf = leaves[i];
+        if (lf.path.length <= l) { i++; continue; }
+        if (lf.path.length === l + 1) {
+          var collapsedHere = !!state.collapsedCols[pathKey(lf.path)];
+          h += '<th scope="col" class="grp num" colspan="1" rowspan="' + (levels - l) + '">'
+             + (lf.children && lf.children.length ? tw('col', lf.path, collapsedHere) : '')
+             + '<span class="lbl">' + esc(lf.label) + '</span></th>';
+          i++;
+        } else {
+          var ancKey = pathKey(lf.path.slice(0, l + 1));
+          var j = i;
+          while (j < leaves.length && pathKey(leaves[j].path.slice(0, l + 1)) === ancKey) j++;
+          var ancNode = colTree.index[ancKey];
+          h += '<th scope="col" class="grp" colspan="' + (j - i) + '">'
+             + (ancNode && ancNode.children.length ? tw('col', ancNode.path, false) : '')
+             + '<span class="lbl">' + esc(lf.path[l]) + '</span></th>';
+          i = j;
+        }
+      }
+      if (l === 0 && leaves.length > 1) {
+        h += '<th scope="col" class="num" rowspan="' + levels + '">Total</th>';
+      }
+      h += '</tr>';
+    }
+    h += '</thead><tbody>';
+
+    /* ── body ─────────────────────────────────────────────────────────── */
+    if (!tabular) {
+      var rowNodes = p.rows.length
+        ? visibleRowNodes(rowTree, state.collapsedRows)
+        : [{ node:{ label:'All', path:[], children:[] }, collapsed:false, hasKids:false, depth:0 }];
+      rowNodes.forEach(function (rn) {
+        var isGroup = rn.hasKids;
+        /* Compact carries a group's figures on its own heading row, so that row
+           IS its subtotal. Switching subtotals off blanks the figures and keeps
+           the heading - Excel's behaviour. A COLLAPSED group always keeps them:
+           they are the only thing representing it. */
+        var showVals = !isGroup || rn.collapsed || subVisible(p.rows[rn.depth]);
+        h += '<tr' + (isGroup ? ' class="grouprow"' : '') + '>'
+           + '<td style="padding-left:' + (10 + rn.depth * 16) + 'px">'
+           + (isGroup ? tw('row', rn.node.path, rn.collapsed) : '')
+           + '<span class="lbl">' + esc(rn.node.label) + '</span></td>'
+           + (showVals ? valueCells(rn.node.path) : blankCells());
+        h += '</tr>';
+      });
+    } else {
+      /* Tabular: leaf rows carry every level's value in its own column, and a
+         group gets its own subtotal row rather than a value on its heading. */
+      var entries = [];
+      if (!p.rows.length) {
+        entries.push({ kind:'row', node:{ label:'All', path:[], children:[] } });
+      } else {
+        (function walk(node) {
+          node.children.forEach(function (c) {
+            var isCollapsed = !!state.collapsedRows[pathKey(c.path)];
+            if (!c.children.length || isCollapsed) {
+              entries.push({ kind:'row', node:c, collapsed:isCollapsed });
+            } else {
+              var wantSub = subVisible(p.rows[c.path.length - 1]);
+              if (wantSub && atTop) entries.push({ kind:'sub', node:c });
+              walk(c);
+              if (wantSub && !atTop) entries.push({ kind:'sub', node:c });
+            }
+          });
+        })(rowTree);
+      }
+
+      var prev = [];
+      entries.forEach(function (e) {
+        var path = e.node.path;
+        if (e.kind === 'sub') {
+          h += '<tr class="grouprow">';
+          for (var c = 0; c < rowCols; c++) {
+            if (c === path.length - 1) {
+              h += '<td>' + tw('row', path, false)
+                 + '<span class="lbl">' + esc(e.node.label) + ' total</span></td>';
+            } else if (c < path.length - 1) {
+              h += '<td></td>';
+            } else {
+              h += '<td></td>';
+            }
+          }
+          h += valueCells(path) + '</tr>';
+          prev = [];
+          return;
+        }
+
+        h += '<tr>';
+        for (var k = 0; k < rowCols; k++) {
+          if (k >= path.length) { h += '<td></td>'; continue; }
+          /* Blank a label that repeats from the row above, unless the reader
+             has asked for it back. Excel calls this "repeat item labels". */
+          var same = prev.length > k && prev.slice(0, k + 1).join('\u0001') === path.slice(0, k + 1).join('\u0001');
+          var isLastSeg = (k === path.length - 1);
+          h += '<td>'
+             + (isLastSeg && e.collapsed ? tw('row', path, true) : '')
+             + '<span class="lbl">' + (same ? '' : esc(path[k])) + '</span></td>';
+        }
+        h += valueCells(path) + '</tr>';
+        prev = path;
+      });
+    }
+
+    h += '</tbody><tfoot><tr class="tot"><td colspan="' + rowCols + '">Total</td>'
+       + valueCells([]) + '</tr></tfoot>';
+    return h;
+  }
+
+  /* ── field panel ─────────────────────────────────────────── */
+  function fieldChip(dim, zone, index, isLast) {
+    /* Expand / collapse the WHOLE field, the way Excel does it: every item of
+       this field at once, rather than one group at a time. Meaningless on the
+       last field in a zone — there is nothing nested beneath it. */
+    var fieldCtl = (zone === 'bank' || isLast) ? '' :
+        '<button class="fx" data-fx="collapse" data-zone="' + zone + '" data-index="' + index + '"'
+      + ' title="Collapse this whole field" aria-label="Collapse the ' + esc(dimLabel(dim)) + ' field">' + '−' + '</button>'
+      + '<button class="fx" data-fx="expand" data-zone="' + zone + '" data-index="' + index + '"'
+      + ' title="Expand this whole field" aria-label="Expand the ' + esc(dimLabel(dim)) + ' field">+</button>';
+    return '<div class="field" data-dim="' + dim + '" data-zone="' + zone + '">'
+         + '<span class="grip" aria-hidden="true">⋮⋮</span>'
+         + '<span class="nm">' + esc(dimLabel(dim)) + '</span>'
+         + fieldCtl
+         + (zone === 'bank' ? '' : '<button class="x" title="Remove" aria-label="Remove ' + esc(dimLabel(dim)) + '">×</button>')
+         + '</div>';
+  }
+  function renderPanel() {
+    var used = state.pivot.rows.concat(state.pivot.cols);
+    var bank = DIMS.filter(function (d) { return used.indexOf(d.k) === -1; }).map(function (d) { return d.k; });
+    document.getElementById('zoneBank').innerHTML =
+      bank.length ? bank.map(function (d) { return fieldChip(d, 'bank', 0, true); }).join('')
+                  : '<div class="none">All fields are in use.</div>';
+    document.getElementById('zoneRows').innerHTML =
+      state.pivot.rows.length
+        ? state.pivot.rows.map(function (d, i) { return fieldChip(d, 'rows', i, i === state.pivot.rows.length - 1); }).join('')
+        : '<div class="none">Drop a field here</div>';
+    document.getElementById('zoneCols').innerHTML =
+      state.pivot.cols.length
+        ? state.pivot.cols.map(function (d, i) { return fieldChip(d, 'cols', i, i === state.pivot.cols.length - 1); }).join('')
+        : '<div class="none">Drop a field here</div>';
+  }
+
+  /* Pointer-based drag: HTML5 drag-and-drop does not work on iOS Safari,
+     and this has to work on the phone. */
+  var drag = null;
+  function pointerDown(e) {
+    var chip = e.target.closest('.field');
+    if (!chip) return;
+    if (e.target.closest('.x')) return;
+    e.preventDefault();
+    var r = chip.getBoundingClientRect();
+    drag = { chip:chip, dim:chip.dataset.dim, from:chip.dataset.zone,
+             dx:e.clientX - r.left, dy:e.clientY - r.top, w:r.width,
+             x0:e.clientX, y0:e.clientY, started:false, ghost:null, ph:null, zone:null, index:0 };
+    chip.setPointerCapture(e.pointerId);
+  }
+  function pointerMove(e) {
+    if (!drag) return;
+    if (!drag.started) {
+      if (Math.abs(e.clientX - drag.x0) + Math.abs(e.clientY - drag.y0) < 5) return;
+      drag.started = true;
+      drag.ghost = drag.chip.cloneNode(true);
+      drag.ghost.className = 'field ghost';
+      drag.ghost.style.width = drag.w + 'px';
+      document.body.appendChild(drag.ghost);
+      drag.chip.classList.add('dragging');
+      drag.ph = document.createElement('div');
+      drag.ph.className = 'ph';
+    }
+    drag.ghost.style.left = (e.clientX - drag.dx) + 'px';
+    drag.ghost.style.top  = (e.clientY - drag.dy) + 'px';
+
+    var el = document.elementFromPoint(e.clientX, e.clientY);
+    var zone = el && el.closest ? el.closest('.zone') : null;
+    document.querySelectorAll('.zone').forEach(function (z) { z.classList.toggle('over', z === zone); });
+
+    if (!zone) { if (drag.ph.parentNode) drag.ph.parentNode.removeChild(drag.ph); drag.zone = null; return; }
+    drag.zone = zone.dataset.zone;
+
+    var kids = Array.prototype.filter.call(zone.querySelectorAll('.field'),
+                                           function (k) { return k !== drag.chip; });
+    var horizontal = window.matchMedia('(max-width:1100px)').matches;
+    var idx = kids.length;
+    for (var i = 0; i < kids.length; i++) {
+      var kr = kids[i].getBoundingClientRect();
+      var mid = horizontal ? kr.left + kr.width / 2 : kr.top + kr.height / 2;
+      var pos = horizontal ? e.clientX : e.clientY;
+      if (pos < mid) { idx = i; break; }
+    }
+    drag.index = idx;
+    var none = zone.querySelector('.none');
+    if (none) none.remove();
+    if (idx >= kids.length) zone.appendChild(drag.ph);
+    else zone.insertBefore(drag.ph, kids[idx]);
+  }
+  function pointerUp() {
+    if (!drag) return;
+    var d = drag; drag = null;
+    document.querySelectorAll('.zone').forEach(function (z) { z.classList.remove('over'); });
+    if (d.ghost) d.ghost.remove();
+    if (d.ph && d.ph.parentNode) d.ph.parentNode.removeChild(d.ph);
+    if (d.chip) d.chip.classList.remove('dragging');
+    if (!d.started) return;
+
+    state.pivot.rows = state.pivot.rows.filter(function (x) { return x !== d.dim; });
+    state.pivot.cols = state.pivot.cols.filter(function (x) { return x !== d.dim; });
+    if (d.zone === 'rows') state.pivot.rows.splice(d.index, 0, d.dim);
+    else if (d.zone === 'cols') state.pivot.cols.splice(d.index, 0, d.dim);
+    state.preset = 'custom';
+    state.collapsedRows = {}; state.collapsedCols = {};
+    renderPanel(); render();
+  }
+
+  document.getElementById('fieldPanel').addEventListener('pointerdown', pointerDown);
+  document.addEventListener('pointermove', pointerMove);
+  document.addEventListener('pointerup', pointerUp);
+  document.addEventListener('pointercancel', pointerUp);
+
+  document.getElementById('fieldPanel').addEventListener('click', function (e) {
+    var fx = e.target.closest('.fx');
+    if (fx) {
+      /* Expand or collapse an ENTIRE field: every node at that depth at once.
+         Collapsing field i hides fields i+1 and below, exactly as in Excel. */
+      setFieldCollapsed(fx.dataset.zone, parseInt(fx.dataset.index, 10),
+                        fx.dataset.fx === 'collapse');
+      render();
+      return;
+    }
+
+    var x = e.target.closest('.x'); if (!x) return;
+    var dim = x.closest('.field').dataset.dim;
+    state.pivot.rows = state.pivot.rows.filter(function (d) { return d !== dim; });
+    state.pivot.cols = state.pivot.cols.filter(function (d) { return d !== dim; });
+    state.preset = 'custom';
+    state.collapsedRows = {}; state.collapsedCols = {};
+    renderPanel(); render();
+  });
+
+  /* expand / collapse */
+  document.getElementById('tbl').addEventListener('click', function (e) {
+    var b = e.target.closest('.tw'); if (!b) return;
+    toggleCollapse(b.dataset.tw, b.dataset.path);
+    render();
+  });
+  document.getElementById('groupList').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-gfx]'); if (!b) return;
+    setFieldCollapsed(b.dataset.axis, parseInt(b.dataset.depth, 10), b.dataset.gfx === 'collapse');
+    render();
+  });
+
+  document.getElementById('groupList').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-subfield]'); if (!b) return;
+    var f = b.dataset.subfield;
+    if (state.hiddenSubFields[f]) delete state.hiddenSubFields[f];
+    else state.hiddenSubFields[f] = true;
+    render();
+  });
+
+  document.getElementById('subShowChk').addEventListener('change', function (e) {
+    state.showSubtotals = e.target.checked;
+    render();
+  });
+
+  document.getElementById('expandAll').addEventListener('click', function () {
+    state.collapsedRows = {}; state.collapsedCols = {}; state.collapsedDays = {}; render();
+  });
+  document.getElementById('collapseAll').addEventListener('click', function () {
+    var card = cardById(state.card), rows = rowsFor(card), p = state.pivot;
+
+    /* Statement: collapse every day in the current window. */
+    if (state.mode === 'statement') {
+      state.collapsedDays = {};
+      rows.forEach(function (r) { state.collapsedDays[r.date] = true; });
+      render();
+      return;
+    }
+
+    var f = rows.filter(function (r) {
+      if (p.dir !== 'all' && r.direction !== p.dir) return false;
+      if (p.cat !== 'all' && r.category !== p.cat) return false;
+      return true;
+    });
+    state.collapsedRows = {}; state.collapsedCols = {};
+    if (p.rows.length > 1) buildTree(f, p.rows).children.forEach(function (c) {
+      state.collapsedRows[pathKey(c.path)] = true;
+    });
+    if (p.cols.length > 1) buildTree(f, p.cols).children.forEach(function (c) {
+      state.collapsedCols[pathKey(c.path)] = true;
+    });
+    render();
+  });
+
+  /* ── chrome ──────────────────────────────────────────────── */
+  /* One entry per FIELD that has something nested beneath it — the thing
+     dropped into Rows or Columns, or Day in a per-day statement. Each carries
+     the same whole-field controls as its chip, plus a tick for its subtotals.
+     Both places write the same state, so they cannot disagree. */
+  function renderGroups() {
+    var fields = collapsibleFields();
+    var panel = document.getElementById('groupsPanel');
+    panel.hidden = fields.length === 0;
+    if (!fields.length) { document.getElementById('groupList').innerHTML = ''; return; }
+
+    document.getElementById('groupsHint').textContent =
+      fields.length + ' field' + (fields.length === 1 ? '' : 's')
+      + ' \u00b7 \u2212 and + open or close every item at once, \u03a3 switches that field\u2019s subtotals';
+
+    document.getElementById('groupList').innerHTML = fields.map(function (g) {
+      return '<div class="groupitem">'
+        + '<span class="gaxis">' + esc(g.axis === 'cols' ? 'cols' : g.axis === 'day' ? 'rows' : 'rows') + '</span>'
+        + '<span class="gname">' + esc(g.label) + '</span>'
+        + '<button class="fx" data-gfx="collapse" data-axis="' + esc(g.axis) + '" data-depth="' + g.depth + '"'
+        + ' title="Close every ' + esc(g.label) + '">\u2212</button>'
+        + '<button class="fx" data-gfx="expand" data-axis="' + esc(g.axis) + '" data-depth="' + g.depth + '"'
+        + ' title="Open every ' + esc(g.label) + '">+</button>'
+        + (g.canSub
+            ? '<button class="fx sig" data-subfield="' + esc(g.field) + '"'
+              + ' aria-pressed="' + subVisible(g.field) + '"'
+              + ' title="' + (subVisible(g.field) ? 'Hide' : 'Show') + ' subtotals for '
+              + esc(g.label) + '" aria-label="Subtotals for ' + esc(g.label) + '">\u03a3</button>'
+            : '')
+        + '</div>';
+    }).join('');
+  }
+
+  function renderRail() {
+    var h = '';
+    CARDS.forEach(function (c) {
+      h += '<button class="railbtn" data-card="' + esc(c.id) + '"'
+         + ' aria-current="' + (c.id === state.card) + '">'
+         + esc(c.label) + '<span class="k">' + esc(c.kind.replace('_', ' ')) + '</span></button>';
+    });
+    document.getElementById('railList').innerHTML = h;
+  }
+
+  /* The STARTING BALANCE for the window being viewed: what the account
+     held before the first row in it.
+     🚨 It is deliberately the figure the table itself reconciles from
+     (Adam, 2026-09-24 UAT): starting balance + every row below = the
+     closing figure, checkable without reference to the app or to any
+     other document. The account's own reconciliation balance — which can
+     be months old and appears on no screen in the app — was neither
+     checkable nor useful here.
+     `card.openingBalance` is the figure at the FULL range's start, so in
+     "Selected dates" the tile was labelled with one date while showing
+     another date's figure. For a trimmed view it is the balance after the
+     last row before it — which is READING a balance the app already
+     computed, not computing one, so B11.1 stands. */
+  function openingFor(card, w) {
+    var before = card.rows.filter(function (r) { return r.date < w.start; });
+    return before.length ? before[before.length - 1].balance : card.openingBalance;
+  }
+
+  function renderFigures(card, rows, w) {
+    var opening = openingFor(card, w);
+    var cleared = rows.filter(function (r) { return r.status === 'cleared'; });
+    var todayBal = cleared.length ? cleared[cleared.length - 1].balance : opening;
+    var endBal   = rows.length ? rows[rows.length - 1].balance : opening;
+
+    document.getElementById('figures').innerHTML =
+        '<div class="fig"><dt>Starting balance</dt><dd>'
+      + esc(money(opening)) + '</dd><small>' + esc(shortDate(w.start))
+      + ', before the first row</small></div>'
+      + '<div class="fig"><dt>Balance today</dt><dd>' + esc(money(todayBal))
+      + '</dd><small>' + esc(shortDate(META.today)) + ', everything cleared</small></div>'
+      /* 🚨 The window's end, never the last row's date — see the tfoot. */
+      + '<div class="fig end"><dt>Projected ' + esc(shortDate(w.end)) + '</dt><dd>'
+      + esc(money(endBal)) + '</dd><small>after everything still to come</small></div>';
+  }
+
+  function render() {
+    var card = cardById(state.card);
+    var rows = rowsFor(card);
+
+    document.body.setAttribute('data-mode', state.mode);
+    document.getElementById('drawerLabel').textContent = card.label;
+
+    var w = windowBounds();
+    document.getElementById('eyebrow').textContent =
+      card.sub.toUpperCase() + ' · ' + longDate(w.start) + ' – ' + longDate(w.end);
+    document.getElementById('title').textContent =
+      state.mode === 'statement' ? 'Every payment in this window' : 'Where the money goes';
+    document.getElementById('sub').textContent =
+      state.mode === 'statement'
+        ? 'Running balance from the start of the window to the end of it.'
+        : 'Grouped totals. There is no running balance here — a balance only means something in date order.';
+
+    renderFigures(card, rowsFor(card, { showCleared: true }), w);
+
+    /* A window clamped to the reconciliation point says so, in the document
+       itself — a shortened statement that does not explain why is a
+       statement you cannot trust. */
+    var noteEl = document.getElementById('note');
+    if (META.clamp && META.clamp.requestedStart) {
+      noteEl.hidden = false;
+      noteEl.innerHTML = '<strong>You asked for ' + esc(longDate(META.clamp.requestedStart))
+        + '. The earliest data held is ' + esc(longDate(META.earliestAvailable)) + '.</strong> '
+        + esc(META.clamp.reason || '')
+        + ' Everything before that date is already inside the opening balance.';
+    } else {
+      noteEl.hidden = true;
+      noteEl.innerHTML = '';
+    }
+
+    /* Section visibility. Each row is hidden outright when nothing inside it
+       applies, so the panel never shows an empty labelled strip. */
+    var analysis   = state.mode === 'analysis';
+    var perDay     = state.group === 'day';
+    var tabular    = state.layout === 'tabular';
+    var nestedRows = state.pivot.rows.length > 1;
+    var nestedCols = state.pivot.cols.length > 1;
+
+    // VIEW
+    ['groupLabel', 'groupSeg', 'rangeLabel', 'rangeSeg'].forEach(function (id) {
+      document.getElementById(id).hidden = analysis;
+    });
+    document.getElementById('allSeg').hidden =
+      analysis ? !(nestedRows || nestedCols) : !perDay;
+
+    // PRESET
+    document.getElementById('rowPreset').hidden = !analysis;
+
+    // LAYOUT
+    /* Subtotals exist for day groups in Statement and for tabular groups in
+       Analysis. Compact carries a group's figures on its heading row, so there
+       is no separate subtotal to show, hide or position. */
+    var hasSubtotals = analysis ? (tabular && nestedRows) : perDay;
+    var showSplit    = !analysis && card.hasSplit;
+    document.getElementById('layoutSeg').hidden   = !analysis;
+    document.getElementById('subLabel').hidden    = !hasSubtotals;
+    document.getElementById('subSeg').hidden      = !hasSubtotals;
+    document.getElementById('subShowWrap').hidden = !hasSubtotals;
+    document.getElementById('splitWrap').hidden   = !showSplit;
+    document.getElementById('subShowChk').checked = state.showSubtotals;
+    document.getElementById('splitChk').checked   = state.split;
+    document.getElementById('rowLayout').hidden =
+      !(analysis || hasSubtotals || showSplit);
+
+    renderGroups();
+
+    // VALUE
+    document.getElementById('rowValue').hidden = !analysis;
+
+    // FILTERS
+    document.getElementById('dirWrap').hidden = !analysis;
+    document.getElementById('catWrap').hidden = !analysis;
+
+    document.getElementById('tbl').innerHTML =
+      state.mode === 'statement' ? statementTable(card, rows) : analysisTable(card, rows);
+
+    document.getElementById('openingLine').textContent =
+      'Starting balance on ' + longDate(windowBounds().start) + ' is ' + money(openingFor(card, windowBounds()))
+      + ' — every row below runs from it.';
+    document.getElementById('genLine').textContent =
+      'Generated by ' + META.appName + ' on ' + longDate(META.today)
+      + '. Every figure is the app’s own — nothing in this file recalculates a balance.';
+
+    syncSegs();
+  }
+
+  function syncSegs() {
+    SEGS.forEach(function (sg) {
+      var el = document.getElementById(sg.id); if (!el) return;
+      var cur = sg.get();
+      Array.prototype.forEach.call(el.querySelectorAll('button'), function (b) {
+        b.setAttribute('aria-pressed', String(b.dataset[sg.attr] === cur));
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.railbtn'), function (b) {
+      b.setAttribute('aria-current', String(b.dataset.card === state.card));
+    });
+  }
+
+  function buildPrintAll() {
+    var h = '';
+    CARDS.forEach(function (c) {
+      var rows = rowsFor(c, { showCleared: true });
+      h += '<section class="printcard">'
+         + '<header class="doc"><div class="eyebrow">' + esc(c.sub.toUpperCase()) + '</div>'
+         + '<h1>' + esc(c.label) + '</h1>'
+         + '<p class="sub">' + esc(longDate(windowBounds().start)) + ' – '
+         + esc(longDate(windowBounds().end))
+         + (state.mode === 'analysis'
+              ? ' · ' + esc((state.pivot.rows.map(dimLabel).join(' › ') || 'All')
+                  + (state.pivot.cols.length ? ' × ' + state.pivot.cols.map(dimLabel).join(' › ') : ''))
+              : '')
+         + '</p></header>'
+         + '<div class="tablewrap"><table>'
+         + (state.mode === 'analysis' ? analysisTable(c, rows) : statementTable(c, rows))
+         + '</table></div>'
+         + '<p class="printfoot">' + esc(META.appName) + ' · generated '
+         + esc(longDate(META.today)) + '</p></section>';
+    });
+    document.getElementById('printAll').innerHTML = h;
+  }
+  window.addEventListener('beforeprint', buildPrintAll);
+
+  /* 🚨 ONE table. It used to be two — a list that wired up the clicks and a
+     separate list that set aria-pressed — and a control added to one but not
+     the other worked perfectly while never looking selected. That is exactly
+     how Layout and Subtotals shipped unhighlighted (Adam, 2026-09-24). */
+  var SEGS = [
+    { id:'modeSeg',   attr:'mode',      get:function () { return state.mode; },       set:function (v) { state.mode = v; } },
+    { id:'groupSeg',  attr:'group',     get:function () { return state.group; },      set:function (v) { state.group = v; } },
+    { id:'rangeSeg',  attr:'range',     get:function () { return state.range; },      set:function (v) { state.range = v; } },
+    { id:'subSeg',    attr:'subtotals', get:function () { return state.subtotals; },  set:function (v) { state.subtotals = v; } },
+    { id:'layoutSeg', attr:'layout',    get:function () { return state.layout; },     set:function (v) { state.layout = v; } },
+    { id:'valueSeg',  attr:'value',     get:function () { return state.pivot.value; },set:function (v) { state.pivot.value = v; } },
+    { id:'presetSeg', attr:'preset',    get:function () { return state.preset; },
+      set:function (v) { state.preset = v; applyPreset(v); } }
+  ];
+
+  SEGS.forEach(function (sg) {
+    var el = document.getElementById(sg.id); if (!el) return;
+    el.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      sg.set(b.dataset[sg.attr]);
+      render();
+    });
+  });
+
+  function applyPreset(p) {
+    var conf = {
+      direction: { rows:['direction'],          cols:[] },
+      category:  { rows:['category'],           cols:[] },
+      catdesc:   { rows:['category','description'], cols:[] },
+      daycat:    { rows:['day'],                cols:['category'] },
+      catcycle:  { rows:['category'],           cols:['cycle'] }
+    }[p];
+    if (!conf) return;
+    state.pivot.rows = conf.rows.slice();
+    state.pivot.cols = conf.cols.slice();
+    state.collapsedRows = {}; state.collapsedCols = {};
+    renderPanel();
+  }
+
+  document.getElementById('railList').addEventListener('click', function (e) {
+    var b = e.target.closest('.railbtn'); if (!b) return;
+    state.card = b.dataset.card;
+    document.body.removeAttribute('data-drawer');
+    document.getElementById('drawerBtn').setAttribute('aria-expanded', 'false');
+    /* Collapse state PERSISTS across cards (Adam, 2026-09-24). A collapsed
+       path that does not exist on the new card simply matches nothing. */
+    rebuildCategoryFilter();
+    render();
+  });
+
+  document.getElementById('showCleared').addEventListener('change', function (e) {
+    state.showCleared = e.target.checked;
+    render();
+  });
+
+  document.getElementById('splitChk').addEventListener('change', function (e) {
+    state.split = e.target.checked;
+    render();
+  });
+
+  document.getElementById('fieldPanel').addEventListener('click', function (e) {
+    var b = e.target.closest('.zclear'); if (!b) return;
+    if (b.dataset.clear === 'rows') state.pivot.rows = [];
+    else state.pivot.cols = [];
+    state.preset = 'custom';
+    state.collapsedRows = {}; state.collapsedCols = {};
+    renderPanel(); render();
+  });
+
+  function rebuildCategoryFilter() {
+    var cats = [];
+    cardById(state.card).rows.forEach(function (r) {
+      if (cats.indexOf(r.category) === -1) cats.push(r.category);
+    });
+    cats.sort();
+    document.getElementById('pvCat').innerHTML =
+      '<option value="all">All</option>' + cats.map(function (c) {
+        return '<option value="' + esc(c) + '">' + esc(c) + '</option>';
+      }).join('');
+    state.pivot.cat = 'all';
+  }
+  rebuildCategoryFilter();
+
+  ['pvDir','pvCat'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', function (e) {
+      state.pivot[id === 'pvDir' ? 'dir' : 'cat'] = e.target.value;
+      render();
+    });
+  });
+
+  var drawerBtn = document.getElementById('drawerBtn');
+  drawerBtn.addEventListener('click', function () {
+    var open = document.body.getAttribute('data-drawer') === 'open';
+    if (open) document.body.removeAttribute('data-drawer');
+    else document.body.setAttribute('data-drawer', 'open');
+    drawerBtn.setAttribute('aria-expanded', String(!open));
+  });
+  document.getElementById('scrim').addEventListener('click', function () {
+    document.body.removeAttribute('data-drawer');
+    drawerBtn.setAttribute('aria-expanded', 'false');
+  });
+
+  var themeBtn = document.getElementById('themeBtn');
+  themeBtn.addEventListener('click', function () {
+    state.theme = state.theme === 'auto' ? 'light' : state.theme === 'light' ? 'dark' : 'auto';
+    if (state.theme === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', state.theme);
+    themeBtn.textContent = 'Theme: ' + state.theme;
+  });
+
+  renderRail();
+  renderPanel();
+  render();
+})();
+</script>
+</body>
+</html>

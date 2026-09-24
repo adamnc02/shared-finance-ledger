@@ -1500,6 +1500,43 @@ export function creditCardPreviousCyclePeriods(card: CreditCard, asOfDate: Date,
   return periods
 }
 
+/**
+ * This card's own periods whose DUE DATE falls inside `[startDate,
+ * endDate]` — the arbitrary-window counterpart of
+ * `creditCardCyclePeriods`, which only walks forward from "now" by a
+ * fixed count, and of `creditCardPreviousCyclePeriods`, which only walks
+ * backward. Built for the downloadable cycle statement (TECHNICAL.md
+ * §"The cycle statement"), whose window is a date range the person picks.
+ *
+ * 🚨 Every period still comes from `creditCardPeriodForDueDate` and
+ * `creditCardDueDateForMonth` — a card's periods are its OWN statement
+ * windows, never the household pay cycle (PROMPT-01 Part B), and a second
+ * definition of one would put a charge in a different period on the
+ * statement than on the card.
+ */
+export function creditCardCyclePeriodsInRange(card: CreditCard, startDate: Date, endDate: Date): { windowStart: Date; windowEnd: Date; dueDate: Date }[] {
+  const startIso = toIso(startDate)
+  const endIso = toIso(endDate)
+  if (endIso < startIso) return []
+
+  const periods: { windowStart: Date; windowEnd: Date; dueDate: Date }[] = []
+  // Walk whole months from the month before the window opens (a due date
+  // early in a month belongs to a period that opened in the previous one)
+  // to the month after it closes, keeping only the due dates that land
+  // inside the window itself.
+  let cursor = new Date(startDate.getFullYear(), startDate.getMonth() - 1, 1)
+  const last = new Date(endDate.getFullYear(), endDate.getMonth() + 1, 1)
+  let guard = 0
+  while (cursor <= last && guard < 660) {
+    const due = creditCardDueDateForMonth(card, cursor)
+    const dueIso = toIso(due)
+    if (dueIso >= startIso && dueIso <= endIso) periods.push(creditCardPeriodForDueDate(card, due))
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
+    guard++
+  }
+  return periods
+}
+
 export interface CreditCardCycleSection {
   windowStart: Date
   windowEnd: Date

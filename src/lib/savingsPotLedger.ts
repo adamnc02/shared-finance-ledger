@@ -585,8 +585,20 @@ export function buildSavingsPotScheduleRows(
   asOfDate: Date = new Date(),
   transferTemplates: RecurringTemplate[] = [],
   payCycle?: PayCycleConfig,
+  /**
+   * An EXPLICIT window, in place of `schedulePreviewWindow`'s fixed
+   * last-2-months-to-next-year ramp. Added 2026-09-24 for the
+   * downloadable cycle statement (TECHNICAL.md §"The cycle statement"),
+   * whose range is a date range the person picks and can sit outside that
+   * ramp at either end — a statement for next November would otherwise
+   * come back empty for a savings pot while every other card had rows,
+   * which reads as missing data rather than as a window that was never
+   * generated. Every caller that wants the modal's own ramp simply omits
+   * it, so the preview window stays the one definition of that ramp.
+   */
+  window?: { start: Date; end: Date },
 ): SavingsPotScheduleRow[] {
-  const { start, end } = schedulePreviewWindow(pot, asOfDate)
+  const { start, end } = window ?? schedulePreviewWindow(pot, asOfDate)
   const potStored = stored.filter((t) => transactionTouchesSavingsPot(t, pot.id) && t.date >= toIso(start) && t.date <= toIso(end))
   const storedDates = new Set(potStored.map((t) => `${t.type}:${t.date}`))
 

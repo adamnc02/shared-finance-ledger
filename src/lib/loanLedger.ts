@@ -107,6 +107,40 @@ export function loanCyclePeriods(loan: Loan, asOfDate: Date, count: number): Loa
 }
 
 /**
+ * The loan's own periods whose DUE DATE falls inside `[startDate,
+ * endDate]` — the arbitrary-window counterpart of `loanCyclePeriods`,
+ * which only walks forward from "now" by a fixed count.
+ *
+ * Built for the downloadable cycle statement (TECHNICAL.md §"The cycle
+ * statement"), whose window is a date range the person picks and which
+ * can reach into past cycles as well as beyond `three_cycles`.
+ *
+ * 🚨 The period bounds are built exactly as `loanCyclePeriods` builds
+ * them — `(previous due date, this due date]`, with the first period
+ * opening at the loan's advance date — rather than being re-derived
+ * here. A loan period is not a pay cycle and never has been (see
+ * `loanCyclePeriods`' own comment); a second definition of one would put
+ * a payment in a different period on the statement than on the card.
+ */
+export function loanCyclePeriodsInRange(loan: Loan, startDate: Date, endDate: Date): LoanCyclePeriod[] {
+  const schedule = buildLoanSchedule(loan)
+  if (schedule.length === 0) return []
+
+  const dates = schedule.map((e) => e.date)
+  const startIso = toLocalIsoDate(startDate)
+  const endIso = toLocalIsoDate(endDate)
+
+  const periods: LoanCyclePeriod[] = []
+  for (let i = 0; i < dates.length; i++) {
+    if (dates[i] < startIso || dates[i] > endIso) continue
+    const dueDate = parseLocalDate(dates[i])
+    const windowStart = i > 0 ? addDays(parseLocalDate(dates[i - 1]), 1) : parseLocalDate(loan.advanceDate ?? loan.startDate)
+    periods.push({ windowStart, windowEnd: dueDate, dueDate })
+  }
+  return periods
+}
+
+/**
  * Every payment toward this loan — stored rows plus the generated ones
  * that haven't materialised yet — as they should appear on the LOAN's own
  * ledger: **positive**, because from the loan's point of view the money is

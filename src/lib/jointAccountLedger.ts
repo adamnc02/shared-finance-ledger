@@ -99,17 +99,43 @@ export function computeJointAccountProjection(
   horizon: ProjectionHorizon,
   asOfDate: Date = new Date(),
 ): JointAccountProjectionResult | null {
+  const cycles = horizonCycles(data, data.primaryPersonId, horizon, asOfDate)
+  return computeJointAccountProjectionToDate(data, cycles[cycles.length - 1].end, asOfDate)
+}
+
+/**
+ * The same joint projection, bounded by an EXPLICIT end date rather than
+ * one of the two named horizons — the joint counterpart of
+ * projection.ts's computeProjectionToDate, extracted for the downloadable
+ * cycle statement (TECHNICAL.md §"The cycle statement"), whose window is
+ * a date range the person picks and can sit well beyond `three_cycles`.
+ * computeJointAccountProjection is now a thin wrapper over it, so the two
+ * cannot disagree by construction — the same precedent computeProjection
+ * already follows.
+ *
+ * 🚨 Generation still starts at the CURRENT cycle's start, never at the
+ * window's start, exactly as computeProjectionToDate does. A statement
+ * reaching into past cycles is served by STORED history alone, which is
+ * complete because autoClear.ts materialises every occurrence as it falls
+ * due. Generating into the past instead would invent occurrences for
+ * bills that were since deleted or changed — rows that never happened,
+ * sitting in a document that reads as a record of what did.
+ */
+export function computeJointAccountProjectionToDate(
+  data: AppDataV2,
+  horizonEndDate: Date,
+  asOfDate: Date = new Date(),
+): JointAccountProjectionResult | null {
   if (!data.jointAccount) return null
   const { openingBalance, openingBalanceDate } = data.jointAccount
 
-  const cycles = horizonCycles(data, data.primaryPersonId, horizon, asOfDate)
-  const horizonEndDate = cycles[cycles.length - 1].end
+  const currentCycleStart = horizonCycles(data, data.primaryPersonId, 'current_cycle', asOfDate)[0].start
   const horizonEndIso = toIso(horizonEndDate)
 
   // Visibility floor, same rule as a personal ledger's own opening
   // balance date (projection.ts) — nothing before it is shown or counted.
   const openingDateObj = parseLocalDate(openingBalanceDate)
-  const genStart = cycles[0].start > openingDateObj ? cycles[0].start : openingDateObj
+  const genStart = currentCycleStart > openingDateObj ? currentCycleStart : openingDateObj
 
   const stored = data.transactions.filter(
     (t) => t.date >= openingBalanceDate && (t.location === 'joint' || t.type === 'joint_deposit' || t.type === 'joint_withdrawal' || (t.type === 'transfer' && transferTouchesJoint(t.fromLocation, t.toLocation))),
