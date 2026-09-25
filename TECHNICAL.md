@@ -1022,6 +1022,19 @@ personal leg** (Pot ↔ Pot, Savings ↔ Joint) gets `location: 'joint'` or `'po
 what correctly keeps it off the personal ledger. `locationTypeForTransfer` resolves to
 `'personal'` whenever personal is *either* endpoint.
 
+**🚨 A payday-following transfer lands on its OWNER's payday, whoever is looking.** A
+`followsPayday` / `followsCycleStart` template's dates come from `payCycleForTemplate(template,
+payCycles, fallback)` (`schedule.ts`), never from "the primary person's cycle". In a two-person
+household those are different days, and using the viewer's does not drop the transfer, it **moves**
+it. That is far harder to spot. The pot generators (`generatePotDepositTransactions`,
+`generatePotWithdrawalTransferTransactions`) therefore take **every** person's cycle and resolve per
+template, with the pot's owner as fallback, so no caller can pass the wrong one. The real case
+(2026-09-25) was Adam's £256.03 Bills deposit, due on his payday of 30 September, generated on
+Ella's payday of 8 October. The server alert then reported the pot £225.00 short on 1 October.
+A pot is shown only to its owner, so no screen ever showed it; only the household-wide alert did.
+Expenses' recurring-transfers list, which shows everyone's transfers, previews each on its owner's
+cycle for the same reason. `verify-pot-transfer-owner-cycle.ts` runs both people as primary.
+
 ---
 
 ## 21. Round-ups and the Coin Jar
@@ -2387,8 +2400,9 @@ Reintroducing it as a boundary brings back all three defects at once.
 
 ### 🚨 A `followsPayday` transfer follows its OWNER's payday (2026-09-23)
 
-`payCycleForTemplate` in `schedule.ts`, used by `computeJointAccountProjection` and by `autoClear`'s
-non-personal transfer step. A `kind: 'transfer'` template never carries `location: 'joint'`, so both
+`payCycleForTemplate` in `schedule.ts`, used by `computeJointAccountProjection`, by `autoClear`'s
+non-personal transfer step, and (since 2026-09-25, when they were found still using the primary's)
+inside the pot generators. See §20. A `kind: 'transfer'` template never carries `location: 'joint'`, so both
 callers used to reach for the only pay cycle to hand — the primary person's — and resolved **every**
 household member's payday-following transfer against that one person's payday.
 
