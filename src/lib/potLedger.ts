@@ -20,7 +20,7 @@
 import { addDays, addMonths } from 'date-fns'
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
 import { earlyMoveLookaheadDays, isOccurrenceAdjusted } from './occurrenceOverrides'
-import { generateTransactionsForTemplate } from './schedule'
+import { generateTransactionsForTemplate, payCycleForTemplate } from './schedule'
 import { generateLoanPaymentTransactions } from './ledgerLoans'
 import { generateMinimumPaymentTransactions } from './creditCards'
 import { dedupeKey, horizonCycles, previousCycles, THREE_CYCLES_AHEAD, type ProjectionHorizon } from './projection'
@@ -132,8 +132,16 @@ function walkPotDepositOccurrences(pot: Pot, rangeStart: Date, rangeEnd: Date): 
  * comment describes (2026-09-04 session) — Pot's legacy fields never had
  * a live UI writing to them, but are kept for the same backup-loading
  * safety.
+ *
+ * 🚨 `payCycles` is EVERY person's cycle, not one — each template resolves against its OWNER's
+ * (APP-KNOWLEDGE §1.31c). This used to take the primary person's single cycle, so on a device (or
+ * the server) where the primary was Ella, Adam's £256.03 payday-following deposit into his own
+ * Bills pot landed on HER payday — 8 October instead of 30 September — and the pot alert fired
+ * "£225.00 short" on a pot that was never short (2026-09-25). The resolution now happens here,
+ * per template, so no caller can hand in the wrong person's cycle. `pot.personId` is the fallback
+ * for a template with no owner — the pot's owner is the only person it can mean.
  */
-export function generatePotDepositTransactions(pot: Pot, rangeStart: Date, rangeEnd: Date, transferTemplates: RecurringTemplate[] = [], payCycle?: PayCycleConfig): Omit<Transaction, 'id'>[] {
+export function generatePotDepositTransactions(pot: Pot, rangeStart: Date, rangeEnd: Date, transferTemplates: RecurringTemplate[] = [], payCycles: PayCycleConfig[] = []): Omit<Transaction, 'id'>[] {
   // PROMPT-13 B5, restriction 3 of 4 — no recurring deposits into a Coin
   // Jar. It fills from round-up uplifts and from ad-hoc transfers in,
   // nothing else. A standing monthly deposit would make it an ordinary
@@ -157,17 +165,17 @@ export function generatePotDepositTransactions(pot: Pot, rangeStart: Date, range
 
   const fromTransfers = transferTemplates
     .filter((t) => t.kind === 'transfer' && t.active && transferTouchesPot(t.transferFrom, t.transferTo, pot.id))
-    .flatMap((t) => generateTransactionsForTemplate(t, rangeStart, rangeEnd, payCycle))
+    .flatMap((t) => generateTransactionsForTemplate(t, rangeStart, rangeEnd, payCycleForTemplate(t, payCycles, pot.personId)))
     .filter((t) => t.toLocation?.type === 'pot' && t.toLocation.potId === pot.id)
 
   return [...legacy, ...fromTransfers]
 }
 
-/** The withdrawal-side equivalent — a transfer template with THIS pot as `transferFrom` (e.g. a recurring Pot → Savings sweep). No legacy equivalent existed. */
-export function generatePotWithdrawalTransferTransactions(pot: Pot, rangeStart: Date, rangeEnd: Date, transferTemplates: RecurringTemplate[] = [], payCycle?: PayCycleConfig): Omit<Transaction, 'id'>[] {
+/** The withdrawal-side equivalent — a transfer template with THIS pot as `transferFrom` (e.g. a recurring Pot → Savings sweep). No legacy equivalent existed. `payCycles` as above: every person's, resolved per template owner. */
+export function generatePotWithdrawalTransferTransactions(pot: Pot, rangeStart: Date, rangeEnd: Date, transferTemplates: RecurringTemplate[] = [], payCycles: PayCycleConfig[] = []): Omit<Transaction, 'id'>[] {
   return transferTemplates
     .filter((t) => t.kind === 'transfer' && t.active && transferTouchesPot(t.transferFrom, t.transferTo, pot.id))
-    .flatMap((t) => generateTransactionsForTemplate(t, rangeStart, rangeEnd, payCycle))
+    .flatMap((t) => generateTransactionsForTemplate(t, rangeStart, rangeEnd, payCycleForTemplate(t, payCycles, pot.personId)))
     .filter((t) => t.fromLocation?.type === 'pot' && t.fromLocation.potId === pot.id)
 }
 
@@ -547,8 +555,8 @@ export function computePotProjectionToDate(data: AppDataV2, pot: Pot, horizonEnd
   const existingKeys = new Set(stored.map(dedupeKey).filter((k): k is string => k !== null))
 
   const generated: Omit<Transaction, 'id'>[] = [
-    ...generatePotDepositTransactions(pot, genStart, horizonEndDate, data.recurringTemplates, data.payCycles.find((c) => c.personId === data.primaryPersonId)),
-    ...generatePotWithdrawalTransferTransactions(pot, genStart, horizonEndDate, data.recurringTemplates, data.payCycles.find((c) => c.personId === data.primaryPersonId)),
+    ...generatePotDepositTransactions(pot, genStart, horizonEndDate, data.recurringTemplates, data.payCycles),
+    ...generatePotWithdrawalTransferTransactions(pot, genStart, horizonEndDate, data.recurringTemplates, data.payCycles),
     ...generatePotOutgoingTransactions(data, pot, genStart, horizonEndDate),
   ]
 
@@ -607,10 +615,8 @@ export function buildPotScheduleRows(data: AppDataV2, pot: Pot, asOfDate: Date =
     (t) => transactionTouchesPot(t, pot.id) && t.date >= toIso(start) && t.date <= toIso(end),
   )
   const storedKeys = new Set(potStored.map((t) => `${t.type}:${t.sourceId ?? ''}:${t.date}`))
-  const payCycle = data.payCycles.find((c) => c.personId === data.primaryPersonId)
-
-  const generatedDeposits = generatePotDepositTransactions(pot, start, end, data.recurringTemplates, payCycle).filter((t) => !storedKeys.has(`${t.type}:${t.sourceId ?? ''}:${t.date}`))
-  const generatedWithdrawals = generatePotWithdrawalTransferTransactions(pot, start, end, data.recurringTemplates, payCycle).filter((t) => !storedKeys.has(`${t.type}:${t.sourceId ?? ''}:${t.date}`))
+  const generatedDeposits = generatePotDepositTransactions(pot, start, end, data.recurringTemplates, data.payCycles).filter((t) => !storedKeys.has(`${t.type}:${t.sourceId ?? ''}:${t.date}`))
+  const generatedWithdrawals = generatePotWithdrawalTransferTransactions(pot, start, end, data.recurringTemplates, data.payCycles).filter((t) => !storedKeys.has(`${t.type}:${t.sourceId ?? ''}:${t.date}`))
   // Card minimum payments carry no sourceId, so they dedupe on the card id (dedupeKey) instead.
   const storedCardKeys = new Set(potStored.map(dedupeKey).filter((k): k is string => k !== null))
   const generatedOutgoing = generatePotOutgoingTransactions(data, pot, start, end).filter((t) =>

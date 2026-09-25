@@ -29,6 +29,7 @@ import {
   type TemplateSchedule,
   occurrenceSlotForDate,
   templateOccurrenceAdjusted,
+  payCycleForTemplate,
 } from '../lib/schedule'
 import { transferLocationLabel, buildTransferLocationOptions, transferLocationKey, locationsEqual, type TransferLocationOption } from '../lib/transferLedger'
 import { LocationStep, FrequencyStep, DateStep, TransferFrequencySelect, TRANSFER_FREQUENCY_LABELS, type TransferFrequencyChoice, resolveTransferFrequencyChoice, transferFrequencyChoiceFor } from '../components/TransferSteps'
@@ -597,7 +598,10 @@ export function Expenses() {
                 savingsPots={data.savingsPots}
                 pots={data.pots}
                 locationOptions={transferLocationOptions}
-                payCycle={data.payCycles.find((pc) => pc.personId === data.primaryPersonId)}
+                // Its OWNER's cycle, not the viewer's (APP-KNOWLEDGE §1.31c) — this list shows every
+                // person's transfers, so on Ella's phone Adam's payday-following transfer would
+                // otherwise preview on her payday.
+                payCycle={payCycleForTemplate(template, data.payCycles, data.primaryPersonId)}
                 onUpdate={(u) => updateRecurringTemplate(template.id, u)}
                 onRemove={() => removeRecurringTemplate(template.id)}
                 shouldFlashOnMount={justCreatedTransferId === template.id}

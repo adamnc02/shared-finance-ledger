@@ -1101,6 +1101,17 @@ which is far harder to notice. The `autoClear` call site is the worse of the two
 A template with no `ownerId` (a joint-location bill has `''`) still falls back to the primary —
 there is no better answer, and `kind: 'bill'` ignores `followsPayday` anyway.
 
+**The pot generators were missed, and it happened again (2026-09-25).** `computePotProjectionToDate`
+and `buildPotScheduleRows` still passed the primary's cycle to `generatePotDepositTransactions` /
+`generatePotWithdrawalTransferTransactions`. Adam's £256.03 Bills deposit (his payday, 30 Sep) was
+generated on Ella's, 8 Oct, and the nightly alert said *"2 payments totalling £232.00 on 1 October
+leave you £225.00 short. Next scheduled money in on 8 October"* on a pot that was never short. No
+screen showed it, because a pot is shown only to its owner (correct, and not to be changed); only the
+household-wide server alert walks every pot. 🚨 **The resolution now lives inside the generators**,
+which take every person's cycle, so the rule no longer depends on each caller remembering it. A
+fix applied caller by caller is how this one survived the first fix.
+`verify-pot-transfer-owner-cycle.ts`.
+
 ### 1.31a There is deliberately NO deposit alert (2026-09-22, Adam)
 
 **Adam, 2026-09-22: *"I also want to remove the joint account deposit alerts please. I only want the
