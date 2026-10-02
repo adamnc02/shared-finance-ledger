@@ -334,6 +334,32 @@ contractual one and the bar tops out short of full before the loan closes (mum's
 pair; `totalBalance` and `nominalRemaining` are kept for the contractual view. The two totals are
 identical for a loan with no overpayments, which is why this was invisible for so long.
 
+### 1.18a The progress SECTION's current figures take no as-of date (2026-10-02)
+
+Extends §1.18. `summarizeLoansProgress(loans, horizonEndDate?)` calls
+`summarizeLoanProgress(l)` with **no argument**, so everything it reports as *current* is as of the
+real `new Date()`. Only the **projected** pair accepts a date. That is right for the app — the
+progress section on Home shows progress now — but it has one consequence worth knowing before
+reading a figure or writing a check:
+
+🚨 **A pinned-date figure and the aggregate's `percentPaid` are not comparable.** They are two
+different days, and the difference is invisible until a schedule entry falls due between them.
+`verify-overpayment-recognition.ts` compared exactly that pair and went red on **2026-09-28** — the
+day the £7,171.93 entry absorbing mum's £7,000 overpayment was recognised (§1.17) — reading 96.5%
+against 94.52% for a week in all three repos. **Both figures were correct and the two code paths
+agree**; only the comparison did not. A session reading that red row will reasonably conclude the
+engine disagrees with itself. It does not.
+
+**To assert the invariant at a pinned date, go through the projected channel:**
+`summarizeLoansProgress([loan], when).projectedPercentPaid` equals
+`summarizeLoanProgress(loan, when).percentPaid`. That is fair because `amortisedTotalPayable` is
+built from the schedule, not from a date, so the denominator is identical either way — asserted as
+its own row rather than assumed.
+
+**The generalisable lesson:** when a check pins "today" and the function under test does not take a
+date, the check is pinning only one side of its own comparison. It will pass until the calendar
+moves past the next event in the data, then fail for ever with nothing wrong.
+
 ### 1.19 The progress bar's tooltip is positioned in percentages, on purpose (2026-09-18, PROMPT-08b)
 
 `ProgressBar`'s mini-tooltip arrows must land exactly on the end of the fill. The mechanism is that
