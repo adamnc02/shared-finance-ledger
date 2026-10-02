@@ -18,6 +18,7 @@ import { FormButtonRow, CancelButton, SaveButton } from '../components/FormButto
 import { useSavedFlash, SavedFlashOverlay } from '../components/SavedFlash'
 import { EffectiveDatedChangeFlow, type RecurringChangeField, type ChangeScope } from '../components/EffectiveDatedChangeFlow'
 import { peopleWithIncomeCount } from '../lib/household'
+import { visibleToMe } from '../lib/householdView'
 import { isBillTemplate } from '../lib/bills'
 import { shouldOfferLocationPicker } from '../lib/pickerFirst'
 import {
@@ -196,8 +197,14 @@ export function Bills() {
 
   const billTemplates = data.recurringTemplates.filter(isBillTemplate)
 
-  const visibleBills = billTemplates
-    .slice()
+  // Page-level visibility only (lib/householdView.ts): with two or more
+  // people, a bill owned by the other person is not listed here. A joint bill
+  // is listed whatever its owner is — in a real two-person household every
+  // joint bill carries an empty `ownerId` anyway. Nothing here reaches an
+  // engine: `billTemplates` is still the whole set everywhere else.
+  const myBills = visibleToMe(data, billTemplates, (t) => t.ownerId, (t) => t.location === 'joint')
+
+  const visibleBills = myBills
     .filter((t) => locationFilter === 'all' || t.location === locationFilter)
     .sort((a, b) => parseLocalDate(a.anchorDate).getDate() - parseLocalDate(b.anchorDate).getDate())
 
@@ -206,7 +213,7 @@ export function Bills() {
   // would do something" instinct as the whole row's own visibility guard
   // below (which now also fires once a bill is pot-located, not just
   // joint).
-  const filterOptions: ('all' | BillLocation)[] = ['all', 'personal', ...(billTemplates.some((t) => t.location === 'joint') ? (['joint'] as const) : []), ...(billTemplates.some((t) => t.location === 'pot') ? (['pot'] as const) : [])]
+  const filterOptions: ('all' | BillLocation)[] = ['all', 'personal', ...(myBills.some((t) => t.location === 'joint') ? (['joint'] as const) : []), ...(myBills.some((t) => t.location === 'pot') ? (['pot'] as const) : [])]
 
   return (
     <div className="max-w-md mx-auto px-4 pt-6">

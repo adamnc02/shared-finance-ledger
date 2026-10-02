@@ -538,6 +538,23 @@ set back to the standing amount is not adjusted, and a paused occurrence shows "
 twelve. Compared by the **displayed** date, so a payment moved earlier counts by its moved date, and
 a payment due today is the "last payment", not an upcoming one. The open card is `[data-no-swipe]`.
 
+**Its trigger is ONE control, rendered unconditionally.** A full-width pill with a `1px solid
+var(--color-track)` border, white text, and `py-1.5 text-xs` — one step shorter than
+`CancelButton`'s `py-2 text-sm`, so a form's Cancel/Save pair still reads as the primary pair on the
+card. Text and chevron are centred together; the chevron points down to expand and up to collapse.
+Its fill is an **8% white overlay**, not a palette colour, because the control appears both on an
+ordinary `--color-surface` card and on the `--color-bg-elevated` open card: an overlay lands
+slightly lighter than whichever is behind it, so one value is right everywhere and a new call site
+needs no decision. A fixed `--color-surface` fill is invisible on a surface card — only its border
+shows.
+
+🚨 **The trigger renders OUTSIDE the open card, in the same DOM position either way.** Rendering it
+inside that card — or as two elements, one per branch of a ternary — puts the card's own `p-3` above
+it, so the button drops 12px the moment the section opens and rises again on close.
+`verify-manage-upcoming-trigger.ts` asserts one element, rendered unconditionally, outside the card,
+and compares its height to `CancelButton`'s own classes rather than a hardcoded value, so restyling
+Cancel cannot silently make this the taller of the two.
+
 **Date-moving transfers are range-checked by the date they are PAID.** A `followsPayday` /
 `followsCycleStart` transfer's slot resolves to a later date, up to a full pay period later. A range
 starting between the slot and the payday used to drop that payment silently. Those walks now start
@@ -1676,7 +1693,7 @@ blocked while anything still points at it.
 
 ## 34. Testing: the verify suite
 
-**The house testing idiom** is `scripts/verify-*.ts` — 154 plain `tsx` executables printing ✓/✗
+**The house testing idiom** is `scripts/verify*.ts` — **166** plain `tsx` executables printing ✓/✗
 (2026-09-23), each with a header explaining the real bug it prevents. Several read the fixtures in
 `scripts/fixtures/`. **Write one alongside any change to `src/lib/`.**
 
@@ -1700,10 +1717,14 @@ blocked while anything still points at it.
 npx tsc -b                 # must be clean
 npx vitest run             # 45 tests: SavingsPotForm, LedgerProvider, OverdraftField, BillOwner
 npm run check:divergence   # must pass: no un-registered difference from personal-ledger
-for f in scripts/verify-*.ts; do out=$(npx tsx "$f" 2>&1); rc=$?; \
+for f in scripts/verify*.ts; do out=$(npx tsx "$f" 2>&1); rc=$?; \
   if [ $rc -ne 0 ] || echo "$out" | grep -qE "✗|^FAIL|Error:"; then \
   echo "FAIL: $f"; echo "$out" | grep -E "✗|^FAIL|Error:" | head -5; fi; done; echo DONE
 ```
+
+🚨 **The glob has NO hyphen.** `scripts/verify-*.ts` does not match `scripts/verify.ts`, which
+holds 48 of the checks above, so a hyphenated sweep silently skips them. **After adding a verify
+file, run `ls scripts/verify*.ts | wc -l` and check the sweep's own count matches.**
 
 **The sweep is strict on purpose:** a non-zero exit, a `✗`, a line starting `FAIL`, or an `Error:`
 all fail. The old `✗`-only grep once let eight crashing or `FAIL:`-printing scripts count as
@@ -2731,3 +2752,59 @@ never by number: one citation has to be true in three repos at once.
 **Nothing about the statement is sync-specific.** It reads the engines and writes a file; it touches
 no Supabase table, no PowerSync stream and no `writes.ts` mutation, which is why it produced no
 `DIVERGENCE.md` row.
+
+---
+
+## 47. Household page visibility
+
+
+Once `data.people` holds more than one person, **Wallet, Bills, Transactions and Borrowing list only
+what belongs to the person this device is** (`primaryPersonId`). `lib/householdView.ts` is the whole
+rule: `isSharedHousehold`, `isSomeoneElses`, `visibleToMe`, `touchesJointAccount`.
+
+| Page | What is filtered |
+|---|---|
+| Wallet | Pots, Savings, Pensions — and their section seeds, post-import resync and empty states. **Salary is not**: that section shows the household's earners |
+| Bills | The bill list, and the location chip row, which now only offers a location in use among the bills it can show |
+| Transactions | All four pills, the recurring-deposit rows, the past-overpayment lists, the "log one against" pickers, and the Transfer and Overpayments pills' own visibility |
+| Borrowing | Loans and credit cards. `existingLoans` is deliberately still the whole set — the new-loan form checks a name against every loan in the household |
+
+Three rules that look like edge cases and are not:
+
+- **Unowned is not someone else's.** An `ownerId` of `''` means nobody in particular, and every
+  joint bill in a two-person household carries one. Those rows stay visible to everyone: a bill
+  nobody can see is a bill nobody pays.
+- **A dangling owner is not either.** An `ownerId` naming a person who no longer exists stays
+  visible, because the alternative is a row that has silently vanished from every page with no way
+  to reach it.
+- **Joint is shared.** A joint bill, a joint transaction and a transfer with a joint endpoint are
+  listed whatever their `ownerId` says. A transfer is judged on `fromLocation`/`toLocation`, never on
+  its derived `location`.
+
+🚨 **It is a view filter and nothing else.** Every engine still receives the whole dataset: the
+projections, auto-clear, the pot and savings-pot ledgers, the credit-card replay, the loan
+schedules, Home's Household and Joint cards, and the statement. A hidden bill is still deducted; a
+hidden pot is still funded.
+
+**THE TRAP:** narrowing `data` once, high up, and passing the smaller object down. It reads as
+tidier and it silently rewrites the household's money — the other person's bills stop being
+deducted, their pots stop being funded, and every household figure quietly becomes a single-person
+figure with nothing on screen to show it. `verify-household-view.ts` walks `src/lib` and
+`src/context` and fails if anything there imports `householdView`, and proves the other half
+directly: a bill of the other person's is absent from the Bills list while
+`computeHouseholdProjections` still generates its payments — with a control proving that check
+reads *that* bill rather than any row.
+
+**Not filtered, deliberately:**
+
+- **Home.** `lib/deck.ts` already builds the hero deck as `myBillsPots` / `myCards` / `myPots`, each
+  `personId`/`ownerId` `=== primaryPersonId && active`, and the loan card filters the same way — so
+  the other person's pot, card and loan never had a hero card. Home is *stricter* than this filter:
+  an unowned pot gets no hero card but is listed on the pages. No real backup has an unowned pot,
+  savings pot, card or loan; `''` appears on bills and transactions, which Home reaches through the
+  projections rather than the deck.
+- **The transfer wizard's destination picker.** `buildTransferLocationOptions` may offer any pot: a
+  jar you cannot empty is a trap, and a transfer is allowed in and out of any location. Pinned by
+  `verify-coin-jar-restrictions.ts` as well, so the two checks cannot drift into contradiction.
+- **Form pickers** — the card picker inside the expense editor, the pot pickers inside the loan and
+  bill funding editors. They decide where money goes, which is not visual filtering.

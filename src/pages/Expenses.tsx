@@ -90,6 +90,7 @@ type RecurringFrequency = keyof typeof RECURRING_FREQUENCY_LABELS
 
 import { todayIso, toLocalIsoDate } from '../lib/date'
 import { fundablePots, unroundedAmount, roundUpAvailable, roundUpTarget, roundUpUplift, coinJarForOwner } from '../lib/roundUp'
+import { visibleToMe, touchesJointAccount } from '../lib/householdView'
 
 type PageMode = 'transactions' | 'recurring' | 'transfer' | 'overpayments'
 
@@ -362,14 +363,23 @@ export function Expenses() {
   // occurrence carries type 'expense'/'income' same as a hand-logged one,
   // so `sourceType` is what tells the two apart here — same test
   // credit_card_spend already used for its own generated/logged split.
-  const adHocTransactions = data.transactions
+  // Page-level visibility only (lib/householdView.ts): with two or more
+  // people, the four lists on this page leave out what belongs to the other
+  // person. Anything touching the joint account is listed whatever its owner
+  // is, and an unowned row is listed too.
+  //
+  // Nothing here reaches an engine. `data.transactions` is still passed whole
+  // to every balance, projection and ledger on every other page — a hidden
+  // row is still spent money.
+  const myPots = visibleToMe(data, data.pots, (pot) => pot.personId)
+  const mySavingsPots = visibleToMe(data, data.savingsPots, (pot) => pot.personId)
+
+  const adHocTransactions = visibleToMe(data, data.transactions, (t) => t.ownerId, touchesJointAccount)
     .filter((t) => ((t.type === 'expense' || t.type === 'income') && !t.sourceType) || t.type === 'bonus' || (t.type === 'credit_card_spend' && !t.sourceType))
-    .slice()
     .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1))
 
-  const recurringTransactions = data.recurringTemplates
+  const recurringTransactions = visibleToMe(data, data.recurringTemplates, (t) => t.ownerId, (t) => t.location === 'joint')
     .filter((t) => t.kind === 'transaction')
-    .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
 
   // ── Transfer (2026-09-04 session) — replaces the Savings/Joint/Pots
@@ -385,9 +395,8 @@ export function Expenses() {
   // instead of typed in here. Excluding them left TransferRowItem's own
   // sourceType === 'salary_sort' coral-arrow special-casing below
   // permanently unreachable.
-  const transferTransactions = data.transactions
+  const transferTransactions = visibleToMe(data, data.transactions, (t) => t.ownerId, touchesJointAccount)
     .filter((t) => t.type === 'transfer' && (!t.sourceType || t.sourceType === 'salary_sort'))
-    .slice()
     .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1))
 
   // Recurring transfers — shown INSIDE the Transfer pill (not the generic
@@ -395,9 +404,8 @@ export function Expenses() {
   // from an entity's own Wallet-page card ("single clean consistent
   // method to create them throughout", Adam-specified 2026-09-04) —
   // both write the exact same RecurringTemplate.
-  const recurringTransfers = data.recurringTemplates
+  const recurringTransfers = visibleToMe(data, data.recurringTemplates, (t) => t.ownerId, (t) => t.location === 'joint')
     .filter((t) => t.kind === 'transfer')
-    .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
 
   // UAT 2026-09-07 (bug 2.2): shared options list for editing an
@@ -414,10 +422,16 @@ export function Expenses() {
   // `activeLoans`/`activeCards` (below) are the full set offered as a
   // destination when creating a NEW overpayment, since a loan/card with
   // nothing logged yet is still a valid target.
-  const loansWithOverpayments = data.loans.filter((l) => l.overpayments.length > 0)
-  const cardsWithLumpPayments = data.creditCards.filter((c) => c.lumpPayments.length > 0)
-  const activeLoans = data.loans.filter((l) => l.active)
-  const activeCards = data.creditCards.filter((c) => c.active)
+  // Page-level visibility (lib/householdView.ts) applies to all four: with two
+  // or more people, neither the past-overpayments list nor the "log one
+  // against" picker offers the other person's loan or card. A credit card has
+  // no joint split, so it is judged on its owner alone.
+  const myLoans = visibleToMe(data, data.loans, (l) => l.ownerId, (l) => l.location === 'joint')
+  const myCreditCards = visibleToMe(data, data.creditCards, (c) => c.ownerId)
+  const loansWithOverpayments = myLoans.filter((l) => l.overpayments.length > 0)
+  const cardsWithLumpPayments = myCreditCards.filter((c) => c.lumpPayments.length > 0)
+  const activeLoans = myLoans.filter((l) => l.active)
+  const activeCards = myCreditCards.filter((c) => c.active)
 
   // The Transfer pill appears once there's somewhere to transfer TO — a
   // savings pot, the joint account, or a pot; the Overpayments pill
@@ -427,7 +441,7 @@ export function Expenses() {
   const pageModes: PageMode[] = [
     'transactions',
     'recurring',
-    ...(data.savingsPots.length > 0 || data.jointAccount || data.pots.length > 0 ? (['transfer'] as const) : []),
+    ...(mySavingsPots.length > 0 || data.jointAccount || myPots.length > 0 ? (['transfer'] as const) : []),
     ...(activeLoans.length > 0 || activeCards.length > 0 ? (['overpayments'] as const) : []),
   ]
   const modeLabel: Record<PageMode, string> = { transactions: 'Transactions', recurring: 'Recurring', transfer: 'Transfers', overpayments: 'Overpayments' }
@@ -545,7 +559,7 @@ export function Expenses() {
                 deposit" button (same underlying SavingsPot fields either
                 way — see RecurringTransactionForm's onSaveSavingsRecurring
                 comment). */}
-            {data.savingsPots
+            {mySavingsPots
               .filter((p) => p.recurringDepositAmount)
               .map((pot) => (
                 <SavingsRecurringDepositRow
@@ -559,12 +573,12 @@ export function Expenses() {
                 shows here regardless of whether it was set up from THIS
                 pill or the Wallet page's own "+ Add a recurring deposit"
                 button (same underlying Pot fields either way). */}
-            {data.pots
+            {myPots
               .filter((p) => p.recurringDepositAmount)
               .map((pot) => (
                 <PotRecurringDepositRow key={pot.id} pot={pot} onSave={(updates) => updatePot(pot.id, updates)} />
               ))}
-            {recurringTransactions.length === 0 && !data.savingsPots.some((p) => p.recurringDepositAmount) && !data.pots.some((p) => p.recurringDepositAmount) && !adding && (
+            {recurringTransactions.length === 0 && !mySavingsPots.some((p) => p.recurringDepositAmount) && !myPots.some((p) => p.recurringDepositAmount) && !adding && (
               <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">
                 No recurring transactions yet. Add a recurring income or expense to have it show up automatically in the Summary ledger.
               </p>

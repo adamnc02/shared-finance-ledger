@@ -163,7 +163,11 @@ check('the three ad-hoc expense/income location pickers filter', expenses.split(
 check('the TRANSFER wizard is NOT filtered — transfers in and out are allowed', expenses.includes('buildTransferLocationOptions(data.savingsPots, data.pots,'), true)
 // NOT applied: the wallet stack (the jar has its own card) or the
 // rebalance targets (a rebalance is a transfer by another name).
-check('the Wallet stack still lists every pot, jar included', salary.includes('data.pots.map((pot) => ('), true)
+// The Wallet's pot list is page-level filtered by owner (householdView.ts),
+// so it is `myPots`, not `data.pots` — but it is still never narrowed by
+// fundablePots, which is what would cost the jar its card.
+check('the Wallet stack lists the pots it shows without fundablePots', /const myPots = visibleToMe\(data, data\.pots,/.test(salary) && salary.includes('myPots.map((pot) => ('), true)
+check('...and nothing on the Wallet page drops a jar from that list', /fundablePots\(/.test(salary.replace(/\/\/.*$/gm, '')), false)
 check('the rebalance targets still include every pot', salary.includes('data.pots.filter((p) => p.personId === data.primaryPersonId)'), true)
 
 // ── B4 (Adam, 2026-09-20) — WHERE the round-up toggle lives ───────────────

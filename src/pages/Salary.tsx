@@ -95,6 +95,7 @@ import { addDays } from 'date-fns'
 import { manageUpcomingRange, trimToManageUpcoming } from '../lib/occurrenceOverrides'
 import { todayIso, toLocalIsoDate, parseLocalDate } from '../lib/date'
 import { payPeriodWeeks } from '../lib/payCycle'
+import { visibleToMe } from '../lib/householdView'
 
 function emptySalaryFields() {
   return {
@@ -2770,10 +2771,23 @@ export function Salary() {
   // on every render, or a save elsewhere (e.g. a Pension added from a
   // future different flow) would unexpectedly snap the section open/shut
   // under the user.
+  // Page-level visibility only (lib/householdView.ts): with two or more
+  // people this page lists only the pots, savings pots and pensions of the
+  // person this device is. Salary is deliberately NOT filtered — the Salary
+  // section shows the household's earners.
+  //
+  // Every row below is still handed the WHOLE `data.transactions` and
+  // `data.recurringTemplates`, because a pot's balance, its checklist and its
+  // trend are computed from the full dataset. This decides what is LISTED,
+  // never what anything is worth.
+  const myPots = visibleToMe(data, data.pots, (pot) => pot.personId)
+  const mySavingsPots = visibleToMe(data, data.savingsPots, (pot) => pot.personId)
+  const myPensions = visibleToMe(data, data.pensions, (pension) => pension.personId)
+
   const [salarySectionOpen, setSalarySectionOpen] = useState(data.people.some(hasSalaryConfigured))
-  const [pensionsSectionOpen, setPensionsSectionOpen] = useState(data.pensions.length > 0)
-  const [savingsSectionOpen, setSavingsSectionOpen] = useState(data.savingsPots.length > 0)
-  const [potsSectionOpen, setPotsSectionOpen] = useState(data.pots.length > 0)
+  const [pensionsSectionOpen, setPensionsSectionOpen] = useState(myPensions.length > 0)
+  const [savingsSectionOpen, setSavingsSectionOpen] = useState(mySavingsPots.length > 0)
+  const [potsSectionOpen, setPotsSectionOpen] = useState(myPots.length > 0)
 
   // Batch 7 (2026-09-07, bug 7) — a backup import replaces `data` wholesale,
   // but the four section-open flags above (and the expanded-row ids below)
@@ -2791,9 +2805,9 @@ export function Salary() {
   // renamed, or removed outright.
   useEffect(() => {
     setSalarySectionOpen(data.people.some(hasSalaryConfigured))
-    setPensionsSectionOpen(data.pensions.length > 0)
-    setSavingsSectionOpen(data.savingsPots.length > 0)
-    setPotsSectionOpen(data.pots.length > 0)
+    setPensionsSectionOpen(myPensions.length > 0)
+    setSavingsSectionOpen(mySavingsPots.length > 0)
+    setPotsSectionOpen(myPots.length > 0)
     setExpandedPersonId(data.primaryPersonId ?? null)
     setExpandedPensionId(null)
     setExpandedPotId(null)
@@ -3095,7 +3109,7 @@ export function Salary() {
       <CollapsibleSection
         title="Pensions"
         className="mb-8"
-        defaultOpen={data.pensions.length > 0}
+        defaultOpen={myPensions.length > 0}
         open={pensionsSectionOpen}
         onOpenChange={setPensionsSectionOpen}
         headerExtra={
@@ -3125,7 +3139,7 @@ export function Salary() {
             }}
             onCancel={() => {
               setPickingPensionPerson(false)
-              if (data.pensions.length === 0) setPensionsSectionOpen(false)
+              if (myPensions.length === 0) setPensionsSectionOpen(false)
             }}
           />
         )}
@@ -3135,7 +3149,7 @@ export function Salary() {
             defaultPersonId={pensionDefaultPersonId}
             onCancel={() => {
               setAddingPension(false)
-              if (data.pensions.length === 0) setPensionsSectionOpen(false)
+              if (myPensions.length === 0) setPensionsSectionOpen(false)
             }}
             onSave={(personId, fields) => {
               // UAT 2026-09-08 (9-wallet-pension): used to force this row
@@ -3151,7 +3165,7 @@ export function Salary() {
           />
         )}
         <div className="flex flex-col gap-3">
-          {data.pensions.map((pension) => {
+          {myPensions.map((pension) => {
             const person = data.people.find((p) => p.id === pension.personId)
             const payCycle = data.payCycles.find((pc) => pc.personId === pension.personId)
             const isFollowed = payCycle?.followsIncomeSource?.type === 'pension' && payCycle.followsIncomeSource.pensionId === pension.id
@@ -3171,14 +3185,14 @@ export function Salary() {
               />
             )
           })}
-          {data.pensions.length === 0 && !addingPension && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No pensions yet.</p>}
+          {myPensions.length === 0 && !addingPension && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No pensions yet.</p>}
         </div>
       </CollapsibleSection>
 
       <CollapsibleSection
         title="Savings"
         className="mb-8"
-        defaultOpen={data.savingsPots.length > 0}
+        defaultOpen={mySavingsPots.length > 0}
         open={savingsSectionOpen}
         onOpenChange={setSavingsSectionOpen}
         headerExtra={
@@ -3200,7 +3214,7 @@ export function Salary() {
             }}
             onCancel={() => {
               setPickingSavingsPerson(false)
-              if (data.savingsPots.length === 0) setSavingsSectionOpen(false)
+              if (mySavingsPots.length === 0) setSavingsSectionOpen(false)
             }}
           />
         )}
@@ -3211,7 +3225,7 @@ export function Salary() {
             locationOptions={transferLocationOptions}
             onCancel={() => {
               setAddingSavingsFor(null)
-              if (data.savingsPots.length === 0) setSavingsSectionOpen(false)
+              if (mySavingsPots.length === 0) setSavingsSectionOpen(false)
             }}
             onSave={(personId, fields) => {
               const id = addSavingsPot(
@@ -3263,7 +3277,7 @@ export function Salary() {
           />
         )}
         <div className="flex flex-col gap-3">
-          {data.savingsPots.map((pot) => (
+          {mySavingsPots.map((pot) => (
             <SavingsPotRow
               key={pot.id}
               pot={pot}
@@ -3286,7 +3300,7 @@ export function Salary() {
               onFlashedOnMount={() => setJustCreatedSavingsPotId(null)}
             />
           ))}
-          {data.savingsPots.length === 0 && !addingSavingsFor && (
+          {mySavingsPots.length === 0 && !addingSavingsFor && (
             <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No savings pots yet.</p>
           )}
         </div>
@@ -3303,7 +3317,7 @@ export function Salary() {
       <CollapsibleSection
         title="Pots"
         className="mb-8"
-        defaultOpen={data.pots.length > 0}
+        defaultOpen={myPots.length > 0}
         open={potsSectionOpen}
         onOpenChange={setPotsSectionOpen}
         headerExtra={
@@ -3325,7 +3339,7 @@ export function Salary() {
             }}
             onCancel={() => {
               setPickingBillsPotPerson(false)
-              if (data.pots.length === 0) setPotsSectionOpen(false)
+              if (myPots.length === 0) setPotsSectionOpen(false)
             }}
           />
         )}
@@ -3333,7 +3347,7 @@ export function Salary() {
           <PotForm
             onCancel={() => {
               setAddingBillsPotFor(null)
-              if (data.pots.length === 0) setPotsSectionOpen(false)
+              if (myPots.length === 0) setPotsSectionOpen(false)
             }}
             onSave={({ name, openingBalance, openingDate }) => {
               const personId = addingBillsPotFor
@@ -3353,7 +3367,7 @@ export function Salary() {
           />
         )}
         <div className="flex flex-col gap-3">
-          {data.pots.map((pot) => (
+          {myPots.map((pot) => (
             <PotRow
               key={pot.id}
               pot={pot}
@@ -3379,7 +3393,7 @@ export function Salary() {
               roundUp={coinJarRoundUpProps(pot)}
             />
           ))}
-          {data.pots.length === 0 && !addingBillsPotFor && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No pots yet.</p>}
+          {myPots.length === 0 && !addingBillsPotFor && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No pots yet.</p>}
         </div>
       </CollapsibleSection>
 
