@@ -40,6 +40,7 @@ import { shouldOfferLocationPicker } from '../lib/pickerFirst'
 
 import { parseLocalDate, todayIso } from '../lib/date'
 import { fundablePots } from '../lib/roundUp'
+import { visibleToMe } from '../lib/householdView'
 
 // The pre-seeded "Loan" category (see categories.ts) — LoanForm defaults
 // new loans onto this rather than falling through to whatever happens to
@@ -165,6 +166,19 @@ export function Loans() {
     addCategory,
     assignLoanLocation,
   } = useLedgerData()
+
+  // Page-level visibility only (lib/householdView.ts): with two or more
+  // people, this page lists only the loans and credit cards of the person
+  // this device is. A joint loan is listed whatever its owner is; a credit
+  // card has no joint split, so it is listed by its owner alone.
+  //
+  // `existingLoans` below is deliberately still `data.loans` — the new-loan
+  // form checks a name against every loan in the household, not just the
+  // visible ones. And each row is handed the whole dataset, because a loan's
+  // schedule and a card's replay are computed from every transaction there
+  // is: this decides what is LISTED, never what anything is worth.
+  const myLoans = visibleToMe(data, data.loans, (loan) => loan.ownerId, (loan) => loan.location === 'joint')
+  const myCreditCards = visibleToMe(data, data.creditCards, (card) => card.ownerId)
   const [addingLoan, setAddingLoan] = useState(false)
   // Same "if multiple people, person-selector first; otherwise straight
   // to the form" flow now applied consistently across Salary/Pension/
@@ -324,7 +338,7 @@ export function Loans() {
         )}
 
         <div className="flex flex-col gap-3">
-          {data.loans.map((loan) => {
+          {myLoans.map((loan) => {
             const summary = summarizeLoan(loan)
             const progress = summarizeLoanProgress(loan)
             const category = data.categories.find((c) => c.id === loan.categoryId)
@@ -356,7 +370,7 @@ export function Loans() {
               />
             )
           })}
-          {data.loans.length === 0 && !addingLoan && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No loans yet.</p>}
+          {myLoans.length === 0 && !addingLoan && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No loans yet.</p>}
         </div>
       </CollapsibleSection>
 
@@ -409,7 +423,7 @@ export function Loans() {
         )}
 
         <div className="flex flex-col gap-3">
-          {data.creditCards.map((storedCard) => {
+          {myCreditCards.map((storedCard) => {
             // The row shows what's actually owed right now — the stored
             // anchor with every payment and spend since replayed onto it.
             // The card handed down to CreditCardRow is the LIVE one, but
@@ -449,7 +463,7 @@ export function Loans() {
               />
             )
           })}
-          {data.creditCards.length === 0 && !addingCard && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No credit cards yet.</p>}
+          {myCreditCards.length === 0 && !addingCard && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No credit cards yet.</p>}
         </div>
       </CollapsibleSection>
     </div>

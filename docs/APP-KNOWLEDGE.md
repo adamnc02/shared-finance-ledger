@@ -1347,6 +1347,40 @@ Never recompute from state; state can have moved since the id was minted.
 coverage those shapes have. Every "generic" round-trip check passed vacuously over the five tables no
 real backup fills (§53, §63). When a fixture is added for a shape, assert the count it exercised.
 
+### 1.36 A page filter must never reach an engine (2026-10-02)
+
+With more than one person in `data`, Wallet, Bills, Transactions and Borrowing list only what belongs
+to `primaryPersonId`. The whole rule is `lib/householdView.ts`, and it is applied **at the `.map`
+that renders a list** — never to anything an engine is given.
+
+**The trap, and it is the attractive implementation:** narrow `data` once, high up, and pass the
+smaller object down. It reads as tidier and it silently rewrites the household's money. The other
+person's bills stop being deducted, their pots stop being funded, and every household figure becomes
+a single-person figure with nothing on any screen to show it.
+
+So the guard is structural, not a convention: `verify-household-view.ts` walks `src/lib` and
+`src/context` and fails if anything there imports `householdView`. Its other half proves the
+positive — a bill of the other person's is absent from the Bills list while
+`computeHouseholdProjections` still generates its payments, with a control proving the check reads
+that bill rather than any row.
+
+Three rules that look like edge cases and are not:
+
+- **Unowned is not someone else's.** `ownerId: ''` means nobody in particular. Every joint bill in
+  the real production file carries one — nine of them — and ~80 rows across the two live backups have
+  `''` for `ownerId` or `payee`. They stay visible to everyone.
+- **A dangling owner is not either.** An `ownerId` naming a person who no longer exists stays
+  visible, or the row has vanished from every page with no way to reach it.
+- **Joint is shared.** Judged on `fromLocation`/`toLocation` for a transfer, never on its derived
+  `location` (§1.4).
+
+**Home needs no filter and must not get one.** `lib/deck.ts` already builds the hero deck as
+`myBillsPots`/`myCards`/`myPots`, each `=== primaryPersonId && active`. It is *stricter* than the
+page filter: an unowned pot gets no hero card but is listed on the pages. Harmless today — no real
+backup has an unowned pot, savings pot, card or loan. The Household and Joint cards aggregate
+everyone on purpose (§1.8a), which makes them the place a "filter reached the engine" regression
+would show first.
+
 ## 2. The credit-card engine is the single most fragile area
 
 **One reported symptom — "balance never reaches zero" — took five separate fixes**, each a

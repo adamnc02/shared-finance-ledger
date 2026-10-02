@@ -103,6 +103,12 @@ overpayments) and What-if. The finance engines are the same files.
 See **`TECHNICAL.md`** for the full reference — it is this repo's own copy of the offline app's
 technical documentation, with the sync layer added on top.
 
+🚨 **One of those screens behaves differently here, and this is the app where it matters:** with
+more than one person in the household, Wallet, Bills, Transactions and Borrowing list only what
+belongs to the person this device is set to. Joint and unowned rows stay visible to both of you, and
+**nothing is hidden from the maths** — see `personal-ledger`'s README, "With two people in the app",
+and `TECHNICAL.md` §47.
+
 What follows is only what this app adds.
 
 ---
