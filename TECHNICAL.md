@@ -2808,3 +2808,29 @@ reads *that* bill rather than any row.
   `verify-coin-jar-restrictions.ts` as well, so the two checks cannot drift into contradiction.
 - **Form pickers** — the card picker inside the expense editor, the pot pickers inside the loan and
   bill funding editors. They decide where money goes, which is not visual filtering.
+
+### Whose transfer is this?
+
+The joint exemption above is what makes the question real: on Transactions →
+Transfers, a transfer in or out of the joint account is listed whoever owns it,
+so it may be the other person's with nothing on the row to say so.
+`components/OwnerBadge.tsx` names the owner, on both row types on that page —
+one-off transfers on the date line, recurring ones on the frequency line.
+
+**The badge marks the exception, never every row.** Badging all of them prints
+the viewer's own name on nearly every line; no badge means "mine", exactly as
+the Bills page's "Joint" and pot pills work. An unowned row gets none, and with
+one person in the app none can render.
+
+🚨 **The obvious rule is wrong.** `ownerId !== primaryPersonId` is true for an
+*unowned* row in a single-person household, so a page written that way badges a
+lone user's own data. The page asks `isSomeoneElses`, which requires the owner
+to be a person who exists and is not me. `verify-owner-badge.ts` carries that
+single-person control with the naive rule as its counter-example.
+
+It is the same neutral outlined pill as the bill badges rather than a fill of
+`Person.color`: that field is not used as an identity colour anywhere in this
+app, so white on whatever it holds would be an untested contrast gamble, and an
+outlined pill reads against any background.
+
+The Transactions pill is deliberately NOT badged — only Transfers.

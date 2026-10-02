@@ -90,7 +90,8 @@ type RecurringFrequency = keyof typeof RECURRING_FREQUENCY_LABELS
 
 import { todayIso, toLocalIsoDate } from '../lib/date'
 import { fundablePots, unroundedAmount, roundUpAvailable, roundUpTarget, roundUpUplift, coinJarForOwner } from '../lib/roundUp'
-import { visibleToMe, touchesJointAccount } from '../lib/householdView'
+import { visibleToMe, touchesJointAccount, isSomeoneElses } from '../lib/householdView'
+import { OwnerBadge } from '../components/OwnerBadge'
 
 type PageMode = 'transactions' | 'recurring' | 'transfer' | 'overpayments'
 
@@ -371,6 +372,13 @@ export function Expenses() {
   // Nothing here reaches an engine. `data.transactions` is still passed whole
   // to every balance, projection and ledger on every other page — a hidden
   // row is still spent money.
+  // Whose is this? Only answered for a row that is NOT mine — see
+  // components/OwnerBadge.tsx. Joint rows stay visible to both people
+  // (householdView.ts), so without this a transfer in or out of the joint
+  // account could be the other person's with nothing on the row to say so.
+  const ownerBadgeFor = (ownerId: string | undefined) =>
+    isSomeoneElses(data, ownerId) ? data.people.find((person) => person.id === ownerId) : undefined
+
   const myPots = visibleToMe(data, data.pots, (pot) => pot.personId)
   const mySavingsPots = visibleToMe(data, data.savingsPots, (pot) => pot.personId)
 
@@ -609,6 +617,7 @@ export function Expenses() {
               <TransferRecurringRow
                 key={template.id}
                 template={template}
+                owner={ownerBadgeFor(template.ownerId)}
                 savingsPots={data.savingsPots}
                 pots={data.pots}
                 locationOptions={transferLocationOptions}
@@ -632,6 +641,7 @@ export function Expenses() {
               renderRow={(t) => (
                 <TransferRowItem
                   t={t}
+                  owner={ownerBadgeFor(t.ownerId)}
                   savingsPots={data.savingsPots}
                   pots={data.pots}
                   locationOptions={transferLocationOptions}
@@ -2167,6 +2177,7 @@ function OverpaymentCreateForm({
 /** Transfer row — swipe to delete, tap to expand/edit. Mirrors the old SavingsTransactionRowItem/JointTransactionRowItem/PotTransactionRowItem shape, generalised across all three "other side" kinds. */
 function TransferRowItem({
   t,
+  owner,
   savingsPots,
   pots,
   locationOptions,
@@ -2176,6 +2187,8 @@ function TransferRowItem({
   onFlashedOnMount,
 }: {
   t: Transaction
+  /** Set only when this transfer belongs to someone else — see OwnerBadge. */
+  owner?: { name: string }
   savingsPots: SavingsPot[]
   pots: Pot[]
   locationOptions: TransferLocationOption[]
@@ -2237,9 +2250,12 @@ function TransferRowItem({
                 </>
               )}
             </p>
-            <p className="text-xs text-[var(--color-ink-muted)]">
-              {t.date}
-              {t.status === 'pending' ? ' · Pending' : ''}
+            <p className="text-xs text-[var(--color-ink-muted)] flex items-center gap-1.5">
+              <span className="truncate">
+                {t.date}
+                {t.status === 'pending' ? ' · Pending' : ''}
+              </span>
+              {owner && <OwnerBadge name={owner.name} />}
             </p>
           </div>
           <p className="text-sm font-mono font-semibold shrink-0" style={{ color: touchesPersonal ? (isWithdrawal ? 'var(--color-positive)' : 'var(--color-ink)') : 'var(--color-ink)' }}>
@@ -2797,6 +2813,7 @@ function LoanRecurringOverpaymentEditForm({
  */
 function TransferRecurringRow({
   template,
+  owner,
   savingsPots,
   pots,
   locationOptions,
@@ -2807,6 +2824,8 @@ function TransferRecurringRow({
   onFlashedOnMount,
 }: {
   template: RecurringTemplate
+  /** Set only when this transfer belongs to someone else — see OwnerBadge. */
+  owner?: { name: string }
   savingsPots: SavingsPot[]
   pots: Pot[]
   locationOptions: TransferLocationOption[]
@@ -3148,11 +3167,14 @@ function TransferRecurringRow({
                 </span>
               )}
             </p>
-            <p className="text-xs text-[var(--color-ink-faint)]">
-              {RECURRING_FREQUENCY_LABELS[template.frequency as RecurringFrequency] ?? template.frequency}
-              {template.followsPayday ? ' · Follows payday' : ''}
-              {template.followsCycleStart ? ' · Follows cycle start' : ''}
-              {nextOccurrence ? ` · Next ${nextOccurrence.date}` : ''}
+            <p className="text-xs text-[var(--color-ink-faint)] flex items-center gap-1.5">
+              <span className="truncate">
+                {RECURRING_FREQUENCY_LABELS[template.frequency as RecurringFrequency] ?? template.frequency}
+                {template.followsPayday ? ' · Follows payday' : ''}
+                {template.followsCycleStart ? ' · Follows cycle start' : ''}
+                {nextOccurrence ? ` · Next ${nextOccurrence.date}` : ''}
+              </span>
+              {owner && <OwnerBadge name={owner.name} />}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0 pt-0.5">
