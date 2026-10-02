@@ -85,7 +85,32 @@ check('...so the progress bar is no longer stuck at 13%', Math.round(after.progr
 // Not a tautology: summarizeLoansProgress is the call the progress SECTION
 // makes (both the bar and the ring in its modal), and it aggregates
 // independently of summarizeLoanProgress's own percentage. They must agree.
-check('the progress section\'s own aggregate agrees with the loan\'s figure', round2(summarizeLoansProgress([withOverpayment]).percentPaid), round2(after.progress.percentPaid))
+//
+// 🚨 BUT THEY MUST BE ASKED ABOUT THE SAME DAY, and the aggregate's CURRENT
+// figures take no as-of date at all — `summarizeLoansProgress` calls
+// `summarizeLoanProgress(l)` with no argument, so they are always as of the
+// real `new Date()`. Only the PROJECTED pair accepts a date
+// (`horizonEndDate`).
+//
+// This row used to compare the aggregate's `percentPaid` against the figure
+// pinned to TODAY above, which is two different days. It passed until
+// 2026-09-28 — the day the £7,171.93 schedule entry that absorbs this
+// overpayment fell due — and then read 96.5 vs 94.52 for the rest of time,
+// with nothing wrong in either code path. Both figures were correct; only the
+// comparison was not.
+//
+// So the invariant is asserted twice, and neither row can rot:
+//   · at the PINNED date, through the projected channel, which does take one;
+//   · at the real today, where both sides float together.
+const pinnedAggregate = summarizeLoansProgress([withOverpayment], TODAY)
+check('the aggregate\'s denominator is date-independent, so these comparisons are fair', round2(pinnedAggregate.totalAmortisedPayable), round2(amortisedTotalPayable(withOverpayment, buildLoanSchedule(withOverpayment))))
+check('the progress section\'s aggregate agrees with the loan\'s figure, at the pinned date', round2(pinnedAggregate.projectedPercentPaid!), round2(after.progress.percentPaid))
+check('…and at the real today, whenever that is', round2(summarizeLoansProgress([withOverpayment]).percentPaid), round2(summarizeLoanProgress(withOverpayment, new Date()).percentPaid))
+// The control, so neither row above can pass vacuously: the aggregate must be
+// dividing by the AMORTISED total, not the contractual one (APP-KNOWLEDGE
+// §1.18). Against the nominal denominator this loan reads ~75%, not ~96%.
+const nominalPercent = round2((pinnedAggregate.totalPaid / pinnedAggregate.totalBalance) * 100)
+check('(control) a nominal-denominator aggregate would read something else entirely', nominalPercent !== round2(summarizeLoansProgress([withOverpayment]).percentPaid), true)
 check('capital remaining agrees with the owed figure', after.progress.capitalRemaining, after.summary.remainingBalance)
 check('reduce_term shortens the loan: 49 months left becomes 3', { before: before.summary.monthsRemaining, after: after.summary.monthsRemaining }, { before: 49, after: 3 })
 
