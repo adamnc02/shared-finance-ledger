@@ -1039,6 +1039,31 @@ personal leg** (Pot ↔ Pot, Savings ↔ Joint) gets `location: 'joint'` or `'po
 what correctly keeps it off the personal ledger. `locationTypeForTransfer` resolves to
 `'personal'` whenever personal is *either* endpoint.
 
+**🚨 A transfer's `location` is DERIVED, and is re-derived on every load.**
+`reconcilePersonReferences` (`lib/household.ts`) sets every transfer template's `location` from its
+endpoints (`deriveTransferLocation`), so a template stored with the wrong value heals rather than
+staying on the wrong ledger. Two mechanisms once stored the wrong value:
+
+- **`fallBackDanglingPot` must never touch a transfer.** It turns a `location: 'pot'` item whose flat
+  `potId` is missing into `'personal'` — right for a bill paid from a deleted pot. A transfer
+  template's flat `potId` is *always* empty (its pot lives on `transferFrom`/`transferTo`), so every
+  Savings → Pot, Pot → Pot and Pot → Savings transfer was rewritten to `'personal'` on every load.
+  The generator gives a transfer `direction: 'in'` whenever personal is not its source, so the
+  personal projection booked it as **income** to the current account, while the pot and savings
+  ledgers (which read the endpoints) stayed correct. From its first due date `autoClear` would have
+  written it down as a permanent cleared row on the current account. Transfers are checked endpoint
+  by endpoint in `fallBackDanglingTransfer` instead.
+- **An endpoint edit must re-derive.** `updateRecurringTemplate` re-derives `location` and
+  `categoryId` when `transferFrom`/`transferTo` change, and `updateTransaction` passes a transfer
+  whose endpoints changed through `retargetTransferRow` (`transferLedger.ts`; also used by the delete
+  guard), which re-derives `location`, `direction`, `categoryId` and the flat pot ids. Merging the new
+  endpoints alone left an edited transfer on the ledger of its old route.
+
+`verify-transfer-location-derived.ts` runs the first real file with such a transfer
+(`finance-ledger-backup-2026-10-05-mum.json`); nine of its checks fail on the old code, and two
+controls (a bill paid from a deleted pot still falls back; a transfer into a deleted pot is still
+switched off) pass either way.
+
 **🚨 A payday-following transfer lands on its OWNER's payday, whoever is looking.** A
 `followsPayday` / `followsCycleStart` template's dates come from `payCycleForTemplate(template,
 payCycles, fallback)` (`schedule.ts`), never from "the primary person's cycle". In a two-person
@@ -1131,6 +1156,49 @@ stored salary; a round-up switch is instantaneous and re-dates nothing, so any d
 
 **Whose jar:** the expense's own `ownerId`, gated on that person's own switch. There is no
 household-wide jar.
+
+### Recurring transactions round too
+
+A `kind: 'transaction'` recurring card expense rounds by the same predicate, occurrence by
+occurrence, against the switch on **that payment's own date**. `roundRecurringOccurrences`
+(`roundUp.ts`) applies `roundUpFields` to the rows `generateTransactionsForTemplate` produces, and it
+is called in the three places a recurring occurrence becomes a figure: the personal projection
+(`projection.ts`), materialisation (`autoClear.ts` Step 2) and the Coin Jar's own projection
+(`generatedCoinJarCreditRows` in `potLedger.ts`).
+
+- **Rounded ahead of its date**, as a future-dated one-off is rounded the moment it is saved. The
+  projection, the statement and the jar agree before the payment, and nothing moves on the day it
+  clears, because the stored row is the row the projection showed.
+- **The jar's preview credit dedupes against stored rows** by `dedupeKey`. A stored occurrence's
+  credit already comes from `coinJarCreditRows` over the stored list; counting the generated one too
+  would credit the same 50p twice.
+- **"Not this one" is stored at two levels**, never inferred (the reason is the per-transaction
+  opt-out's, above): `RecurringTemplate.roundUpSkipped` is the standing choice, effective-dated
+  exactly like the amount (`roundUpSkippedEffectiveFrom` / `roundUpSkippedHistory`, walked by
+  `resolveTemplateRoundUpSkipped`), and `RecurringOccurrenceOverride.roundUpSkipped` is one payment's
+  choice either way, which beats it (`resolveOccurrenceRoundUpSkipped`). The generator carries the
+  resolved choice on each row as `roundUpSkipped`.
+- **Where it is set:** the add wizard's final *Round up?* step (same rule as the one-off wizard's);
+  the expanded form's checkbox, which goes through the *just a single payment / every payment from
+  then on* flow (`applyTemplateSingleOccurrenceRoundUpChange` / `applyTemplateRoundUpChange`); and a
+  toggle on each payment under *Manage upcoming payments* (`PausedOccurrencesControl`'s `roundUp`).
+
+> 🚨 **The reconciler compares a materialised row's PRICE, never its amount.**
+> `reconcileRecurringTemplateTransactions` repaints a stored occurrence from the template. A rounded
+> row stores £8.00 for a £7.50 price, so comparing the price against `amount` sees a change on every
+> load: assigning the price would reset the row to £7.50 and strand its `roundedFrom`, and
+> re-rounding it rewrites every rounded row on every load. It compares against `unroundedAmount(t)`
+> and recomputes rounding **only when the price or that payment's choice changed**, which is also
+> what keeps a payment that cleared before recurring rounding existed exactly as it cleared.
+
+> 🚨 **Three functions rebuild occurrence overrides field by field** — `setPausedTemplateOccurrences`,
+> `applyTemplateAmountChange` and `applyTemplateScheduleChange`. Each must carry `roundUpSkipped`, or
+> pausing a different payment silently drops a payment's round-up choice. A schedule change also
+> moves the standing choice's boundary with its payment, exactly as it moves the amount's.
+
+`verify-round-up-recurring.ts` (on the real PROD file's Coin Jar): rounding ahead of time, single and
+from-then-on opt-outs, a stored payment left untouched on a second load (the control that restores
+the old comparison fails it), no retroactive rounding, and the overrides surviving each rewrite.
 
 ---
 
@@ -1307,6 +1375,20 @@ never reads this function.
 `amountSign` is threaded as an override throughout, so a non-personal ledger with its own
 type-derived convention (`potSignedAmount`, `loanSignedAmount`, `jointAccountSignedAmount`) reuses
 the same list components.
+
+### The stack figure
+
+While the wallet stack is fanned out, each card **behind** the front one shows its current figure on
+the card-type row, left of the type ("£1,000.00 Savings"): the first row of that card's hero —
+Current balance, or what is owed **today** for a credit card or loan. `WalletStack` provides
+`StackSliverContext` to the back cards only; `BankCard` reads it and renders its `sliverValue`. The
+front card, a single card and the collapsed stack never show it.
+
+> 🚨 **Hiding is instant; only showing is animated, after the fan-out.** The strips shrink over
+> 0.5 s on collapse, so a figure that fades out is seen sliding under the card in front.
+> 🚨 **The figure is never truncated.** A clipped amount reads as a different amount ("£10,643." for
+> £10,643.36). While it shows, the name is held to one line so the type row stays inside the strip.
+> `verify-hero-sliver-value.ts`.
 
 ### Grouping
 
@@ -1905,6 +1987,16 @@ writes. That is why each one has a check.
   `verify-alert-engine-bundle.ts` §5 builds the PostgREST shape explicitly and carries the
   control.
 - **Pot `recurringDeposit*` is not synced** (superseded).
+- **A recurring card expense's round-up choice is four columns**: `round_up_skipped`,
+  `round_up_skipped_effective_from` and `round_up_skipped_history` (jsonb) on `recurring_templates`,
+  and `round_up_skipped` on `recurring_template_occurrence_overrides` only — the pension and
+  savings-pot override tables share the `OVERRIDE` column set and have no such column, so it is
+  added per row in `toRows` rather than in `overrideRows`. A single payment's `false` is a real
+  choice (round this one under a standing off) and survives as `false`.
+  `verify-round-up-recurring-sync.ts`.
+  🚨 **The migration adding them must be live before any build carrying them uploads from a device.**
+  An upload naming a column the database does not have is not a fatal response code, so the
+  connector retries it forever and that device's whole upload queue stops (MIGRATION-LESSONS §34).
 - **Order.** Every array-backed table has a `position`. An append gets `last + 1`; a mid-list
   insert takes the midpoint of its neighbours; **a delete never renumbers**; reads sort by
   `(position, id)`. That is what preserves §12's index-based tie-breaks across a database that has
@@ -2702,6 +2794,22 @@ the closing figure, checkable without reference to the app. It is deliberately *
 own reconciliation balance, which can be months old and appears on no screen. That reconciliation is
 asserted on every cash card, and deliberately **not** on loans or credit cards, where it is false by
 design (capital folding, and a card's own replay through `cardBalanceAsOf`).
+
+### Reset to default
+
+The View row's **Reset to default** puts every view setting back as the file opened — View, Group,
+Range, Preset, Layout, Subtotals, Value, Show cleared, both filters, the pivot fields and every
+collapsed group. The account being viewed and the theme are kept (`KEPT_ON_RESET`). It is disabled
+while nothing differs.
+
+- The default is a snapshot of the `state` literal taken **before start-up writes to it**, and the
+  reset copies every key of it, so a setting added later is covered without a list to forget.
+- "Show cleared" and the Direction filter are read from the DOM and never set by `render()`, so the
+  reset sets them back itself; otherwise the controls show the old choice over a table showing the new.
+- It has its own class (`resetbtn`): `verify-cycle-statement.ts` counts the two Expand / Collapse all
+  actions by `allbtn`.
+
+`verify-statement-reset.ts`.
 
 ### Getting it out of the app
 
