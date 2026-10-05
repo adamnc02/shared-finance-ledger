@@ -59,6 +59,16 @@ from/to fields directly for exactly this reason.
 transfer rows; `pot_id`/`savings_pot_id` are convenience denormalisations. Do not build sync or
 RLS logic that assumes the flat fields identify a transfer's pot.
 
+**Re-derived on every load (2026-10-05).** `reconcilePersonReferences` sets every transfer
+template's `location` from its endpoints, so a wrong stored value heals. Two things once stored one:
+`fallBackDanglingPot` read a transfer's always-empty flat `potId` as a deleted pot and turned every
+Savings → Pot / Pot → Pot transfer `'personal'` — the personal projection then booked it as income
+(`direction` is `'in'` whenever personal is not the source), and `autoClear` would have cleared it
+onto the current account; and endpoint edits merged the new endpoints without re-deriving.
+**Anything that changes a transfer's endpoints goes through `retargetTransferRow` (a row) or
+re-derives `location`/`categoryId` (a template); anything that inspects a flat `potId` must skip
+`kind === 'transfer'`.** `verify-transfer-location-derived.ts`.
+
 ### 1.5 Dedupe on materialisation is global, not per-location
 `autoClearDuePayments` builds ONE `globalExistingKeys` set (`sourceType:sourceId:date`) shared by
 every step, deliberately location-agnostic. Per-location sets caused duplicate transactions when
@@ -478,6 +488,16 @@ window keeps rounding after the switch is turned off, and an edit is the person'
 
 **Whose jar:** the expense's own `ownerId`, gated on that person's own switch (§0b Q5). In a
 two-person household Ella's card expense rounds into Ella's jar. There is no household-wide jar.
+
+**Recurring transactions round too (2026-10-05)**, occurrence by occurrence, by the switch on each
+payment's own date, and AHEAD of the date (`roundRecurringOccurrences` in the projection, autoClear
+and the jar's own projection). The opt-out is stored at two levels: the template's standing choice,
+effective-dated like its amount, and a single payment's override, which beats it.
+🚨 **A reconciler that repaints stored rows from a template must compare the row's PRICE
+(`unroundedAmount`), never its `amount`**, and must re-round only when the price or that payment's
+choice changed — otherwise it rewrites every rounded row on every load, or rounds history that
+cleared before the rule existed. 🚨 **Every function that rebuilds occurrence overrides field by
+field must carry `roundUpSkipped`.** `verify-round-up-recurring.ts`.
 
 ### 1.19d-3 The Coin Jar is now fed by TWO apps, and only one of them rounds (2026-09-21, Listly PROMPT-05)
 

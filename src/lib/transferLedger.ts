@@ -226,6 +226,26 @@ export function buildTransferTransaction(
   }
 }
 
+/**
+ * Re-derives every field buildTransferTransaction computes from the two endpoints. Any edit that
+ * changes a transfer row's `fromLocation`/`toLocation` must go through this: merging the new
+ * endpoints alone leaves `location`/`direction` describing the OLD route, so a Personal → Pot row
+ * edited to Savings → Pot stays on the personal ledger as money leaving the current account.
+ */
+export function retargetTransferRow(t: Transaction, from: TransferLocation | undefined, to: TransferLocation | undefined): Transaction {
+  if (!from || !to) return t
+  return {
+    ...t,
+    fromLocation: from,
+    toLocation: to,
+    direction: from.type === 'personal' ? 'out' : 'in',
+    categoryId: categoryForTransfer(from, to),
+    location: locationTypeForTransfer(from, to),
+    savingsPotId: from.type === 'savings' ? from.savingsPotId : to.type === 'savings' ? to.savingsPotId : undefined,
+    potId: from.type === 'pot' ? from.potId : to.type === 'pot' ? to.potId : undefined,
+  }
+}
+
 /** True if a transfer has the given pot as either endpoint. Pass fromLocation/toLocation (a Transaction) or transferFrom/transferTo (a RecurringTemplate) directly. */
 export function transferTouchesPot(from: TransferLocation | undefined, to: TransferLocation | undefined, potId: string): boolean {
   return (from?.type === 'pot' && from.potId === potId) || (to?.type === 'pot' && to.potId === potId)

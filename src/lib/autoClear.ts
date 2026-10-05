@@ -25,7 +25,7 @@
 // settled, a second pass finds nothing left to do and is a no-op.
 
 import { nanoid } from 'nanoid'
-import { generateTransactionsForTemplate, payCycleForTemplate, resolveOccurrenceAmount, resolveTemplateOccurrenceDate } from './schedule'
+import { generateTransactionsForTemplate, payCycleForTemplate, resolveOccurrenceAmount, resolveOccurrenceRoundUpSkipped, resolveTemplateOccurrenceDate } from './schedule'
 import { generateLoanPaymentTransactions, resolveRecurringOverpaymentSource } from './ledgerLoans'
 import { generateMinimumPaymentTransactions } from './creditCards'
 import { computeNetPayForPeriod, generateSalaryTransactions } from './salaryLedger'
@@ -34,6 +34,7 @@ import { generateSavingsDepositTransactions, generateSavingsInterestTransactions
 import { generatePotDepositTransactions, generatePotOutgoingTransactions, resolvePotDepositOccurrenceAmount } from './potLedger'
 import { dedupeKey } from './projection'
 import { toLocalIsoDate, parseLocalDate } from './date'
+import { coinJarForOwner, roundRecurringOccurrences, roundUpFields, unroundedAmount } from './roundUp'
 import type { AppDataV2, Transaction } from '../types/ledger'
 
 /**
@@ -213,7 +214,7 @@ function reconcileRecurringTemplateTransactions(data: AppDataV2, asOfIso: string
     // occurrence that is later unpaused is already slot-identified
     // rather than falling back to the date derivation again.
     if (override?.deleted) return stamp(t, slot)
-    const amount = override?.amount !== undefined ? override.amount : resolveOccurrenceAmount(template, slot)
+    const price = override?.amount !== undefined ? override.amount : resolveOccurrenceAmount(template, slot)
     // 2026-09-14 (Adam-reported, joint account bill date change) — this
     // used to only reconcile amount, never date. A per-occurrence date
     // move (applyTemplateSingleOccurrenceDateChange) correctly redirected
@@ -242,10 +243,19 @@ function reconcileRecurringTemplateTransactions(data: AppDataV2, asOfIso: string
     // already stranded by this bug is corrected even on a pass where its
     // date doesn't change.
     const status: Transaction['status'] = t.status === 'cleared' && date > asOfIso ? 'pending' : t.status
-    if (amount <= 0) return stamp(t, slot)
-    if (amount === t.amount && date === t.date && status === t.status) return stamp(t, slot)
+    if (price <= 0) return stamp(t, slot)
+    // 🚨 `price` is what was spent; a rounded row STORES more (£7.50 kept as
+    // £8.00). Compared against the row's own price, never its amount, or every
+    // load would reset a rounded row to £7.50 and leave its roundedFrom behind.
+    // Rounding is recomputed only when the price or this payment's round-up
+    // choice changed: a row materialised before recurring rounding existed, or
+    // before the switch was turned on, is never rounded after the fact.
+    const roundUpSkipped = template.kind === 'transaction' && template.recurringTransactionType !== 'income' && resolveOccurrenceRoundUpSkipped(template, slot) ? true : undefined
+    const repriced = price !== unroundedAmount(t) || !!roundUpSkipped !== !!t.roundUpSkipped
+    if (!repriced && date === t.date && status === t.status) return stamp(t, slot)
     changed = true
-    return { ...stamp(t, slot), amount, date, status }
+    const money = repriced ? { ...roundUpFields({ ...t, date, amount: price, roundUpSkipped }, payCycle, coinJarForOwner(data.pots ?? [], t.ownerId)?.id), roundUpSkipped } : {}
+    return { ...stamp(t, slot), ...money, date, status }
   })
   return changed ? { ...data, transactions } : data
 
@@ -436,7 +446,8 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
 
     const candidates: Omit<Transaction, 'id'>[] = []
     for (const template of result.recurringTemplates.filter((t) => t.location === 'personal' && t.ownerId === person.id)) {
-      candidates.push(...generateTransactionsForTemplate(template, rangeStart, asOf, payCycle))
+      // Rounded exactly as projection.ts rounds it, so the stored row is the row the ledger showed.
+      candidates.push(...roundRecurringOccurrences(generateTransactionsForTemplate(template, rangeStart, asOf, payCycle), payCycle, coinJarForOwner(result.pots ?? [], person.id)?.id))
     }
     // UAT 2026-09-09 (ed-overpay-just-single) — also catches a POT-located
     // loan whose recurring overpayment is independently redirected to

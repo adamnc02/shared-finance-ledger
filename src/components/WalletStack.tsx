@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+
+/**
+ * True for a card that is BEHIND the front card while the stack is fanned out —
+ * the only state in which its header strip is fully on show. BankCard reads it
+ * to reveal its `sliverValue`. False everywhere else: the front card, a single
+ * card, and every card while collapsed, when only an 18px edge of each shows.
+ */
+export const StackSliverContext = createContext(false)
 
 interface WalletStackProps {
   /** Order: [0]=backmost .. [last]=frontmost. */
@@ -191,7 +199,7 @@ export function WalletStack({ items, onSelect, belowCards }: WalletStackProps) {
                   : undefined
               }
             >
-              {item.node}
+              <StackSliverContext.Provider value={expanded}>{item.node}</StackSliverContext.Provider>
             </div>
           )
         })}

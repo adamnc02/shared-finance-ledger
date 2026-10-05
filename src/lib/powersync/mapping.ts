@@ -288,9 +288,14 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
       amount_effective_from: up(t.amountEffectiveFrom), amount_history: jsonUp(t.amountHistory), kind: up(t.kind),
       ...transferUp('transfer_from', 'transfer_from_type', t.transferFrom), ...transferUp('transfer_to', 'transfer_to_type', t.transferTo),
       follows_payday: up(t.followsPayday), follows_cycle_start: up(t.followsCycleStart),
-      recurring_transaction_type: up(t.recurringTransactionType), person_id: idUp(t.personId), position: i,
+      recurring_transaction_type: up(t.recurringTransactionType), person_id: idUp(t.personId),
+      round_up_skipped: up(t.roundUpSkipped), round_up_skipped_effective_from: up(t.roundUpSkippedEffectiveFrom),
+      round_up_skipped_history: jsonUp(t.roundUpSkippedHistory), position: i,
     })
-    push('recurring_template_occurrence_overrides', ...overrideRows('recurring_template_id', t.id, t.occurrenceOverrides, ctx))
+    push(
+      'recurring_template_occurrence_overrides',
+      ...overrideRows('recurring_template_id', t.id, t.occurrenceOverrides, ctx).map((row, j) => ({ ...row, round_up_skipped: up(t.occurrenceOverrides![j].roundUpSkipped) })),
+    )
   })
 
   data.loans.forEach((l, i) => {
@@ -488,7 +493,8 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
       amountEffectiveFrom: s(r.amount_effective_from), amountHistory: j(r.amount_history), kind: s(r.kind),
       transferFrom: transferDown(r, 'transfer_from', 'transfer_from_type'), transferTo: transferDown(r, 'transfer_to', 'transfer_to_type'), followsPayday: b(r.follows_payday),
       followsCycleStart: b(r.follows_cycle_start), recurringTransactionType: s(r.recurring_transaction_type), personId: s(r.person_id),
-      occurrenceOverrides: rtOverrides.get(r.id)?.map(overrideDown),
+      roundUpSkipped: b(r.round_up_skipped), roundUpSkippedEffectiveFrom: s(r.round_up_skipped_effective_from), roundUpSkippedHistory: j(r.round_up_skipped_history),
+      occurrenceOverrides: rtOverrides.get(r.id)?.map((o) => obj<RecurringOccurrenceOverride>({ ...overrideDown(o), roundUpSkipped: b(o.round_up_skipped) })),
     }),
   )
 

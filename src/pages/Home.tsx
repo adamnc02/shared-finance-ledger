@@ -956,7 +956,7 @@ function DeckHero({ entry, data, horizon, averageSpendForecast }: { entry: DeckE
         ? [...buildForecastByCycle(data, { location: 'personal', ownerId: data.primaryPersonId }, data.primaryPersonId, forecastCycles).values()].reduce((sum, f) => sum + f.forecastAmount, 0)
         : 0
       return (
-        <BankCard variant="coral" bankLabel={primaryPerson?.name ?? 'Me'} accountLabel="Personal">
+        <BankCard variant="coral" bankLabel={primaryPerson?.name ?? 'Me'} accountLabel="Personal" sliverValue={projection.clearedBalance}>
           <div className="mt-6 space-y-1.5">
             <CardRow label="Current balance" value={projection.clearedBalance} />
             <CardRow label="Pending" value={pendingNetTotal(projection.transactions)} />
@@ -991,7 +991,7 @@ function DeckHero({ entry, data, horizon, averageSpendForecast }: { entry: DeckE
         ? [...buildForecastByCycle(data, { location: 'joint' }, data.primaryPersonId, cycles).values()].reduce((sum, f) => sum + f.forecastAmount, 0)
         : 0
       return (
-        <BankCard variant="light" bankLabel={primaryPerson?.name ?? 'Me'} accountLabel="Joint">
+        <BankCard variant="light" bankLabel={primaryPerson?.name ?? 'Me'} accountLabel="Joint" sliverValue={jointProjection?.clearedBalance}>
           <div className="mt-6 space-y-1.5">
             {jointProjection && <CardRow label="Current balance" value={jointProjection.clearedBalance} light />}
             {/* Hero-card consistency sweep (Adam-specified, 2026-09-12):
@@ -1023,7 +1023,7 @@ function DeckHero({ entry, data, horizon, averageSpendForecast }: { entry: DeckE
       const totalProjected = results.reduce((sum, r) => sum + r.projectedBalance, 0)
       const totalPendingOutgoing = results.reduce((sum, r) => sum + pendingNetTotal(r.transactions), 0)
       return (
-        <BankCard variant="dark" bankLabel="Household" accountLabel="Combined">
+        <BankCard variant="dark" bankLabel="Household" accountLabel="Combined" sliverValue={round2(totalCleared)}>
           <div className="mt-6 space-y-1.5">
             <CardRow label="Current balance" value={totalCleared} />
             <CardRow label="Pending" value={totalPendingOutgoing} />
@@ -1054,8 +1054,10 @@ function DeckHero({ entry, data, horizon, averageSpendForecast }: { entry: DeckE
       // charge shows the overridden figure here too rather than the
       // un-overridden computed one. See nextMinimumChargeAmount.
       const minPayment = nextMinimumChargeAmount(stored, data.transactions) ?? 0
+      // The strip shows what is owed TODAY, whatever the horizon — the "current" figure.
+      const owedToday = withLiveBalance(stored, data.transactions, new Date()).currentBalance
       return (
-        <BankCard variant="custom" customColor={card.color} bankLabel={card.name} accountLabel="Credit Card" icon={<CreditCardIcon size={18} strokeWidth={1.5} color="#fff" />}>
+        <BankCard variant="custom" customColor={card.color} bankLabel={card.name} accountLabel="Credit Card" icon={<CreditCardIcon size={18} strokeWidth={1.5} color="#fff" />} sliverValue={owedToday}>
           <div className="mt-6 space-y-1.5">
             <CardRow label="Owed" value={card.currentBalance} />
             <CardRow label="Min. due" value={minPayment} emphasized />
@@ -1080,7 +1082,7 @@ function DeckHero({ entry, data, horizon, averageSpendForecast }: { entry: DeckE
       // that made every loan card identical (Adam, 2026-09-18). See
       // Loan.color and pickNextSharedCardColor.
       return (
-        <BankCard variant="custom" customColor={loan.color} bankLabel={loan.name} accountLabel="Loan" icon={<Layers size={18} strokeWidth={1.5} color="#fff" />}>
+        <BankCard variant="custom" customColor={loan.color} bankLabel={loan.name} accountLabel="Loan" icon={<Layers size={18} strokeWidth={1.5} color="#fff" />} sliverValue={owedNow}>
           <div className="mt-6 space-y-1.5">
             <CardRow label="Owed" value={owedNow} />
             <CardRow label="Projected" value={owedProjected} emphasized />
@@ -1117,7 +1119,7 @@ function DeckHero({ entry, data, horizon, averageSpendForecast }: { entry: DeckE
       // property Personal's own pendingNetTotal is built to guarantee).
       const savingsPending = round2(projectedBalance - balance)
       return (
-        <BankCard variant="custom" customColor={pot.color} bankLabel={pot.name} accountLabel="Savings" icon={<PiggyBank size={18} strokeWidth={1.5} color="#fff" />}>
+        <BankCard variant="custom" customColor={pot.color} bankLabel={pot.name} accountLabel="Savings" icon={<PiggyBank size={18} strokeWidth={1.5} color="#fff" />} sliverValue={balance}>
           <div className="mt-6 space-y-1.5">
             <CardRow label="Current balance" value={balance} />
             <CardRow label="Pending" value={savingsPending} />
@@ -1137,7 +1139,7 @@ function DeckHero({ entry, data, horizon, averageSpendForecast }: { entry: DeckE
       if (!pot) return null
       const projection = computePotProjection(data, pot, horizon, new Date())
       return (
-        <BankCard variant="custom" customColor={pot.color} bankLabel={pot.name} accountLabel="Pot" icon={<Wallet size={18} strokeWidth={1.5} color="#fff" />}>
+        <BankCard variant="custom" customColor={pot.color} bankLabel={pot.name} accountLabel="Pot" icon={<Wallet size={18} strokeWidth={1.5} color="#fff" />} sliverValue={projection.clearedBalance}>
           <div className="mt-6 space-y-1.5">
             <CardRow label="Current balance" value={projection.clearedBalance} />
             {/* Hero-card consistency sweep (Adam-specified, 2026-09-12) —

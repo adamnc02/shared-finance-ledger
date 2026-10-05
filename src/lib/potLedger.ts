@@ -28,7 +28,7 @@ import { potTransferSignedAmount, transferTouchesPot } from './transferLedger'
 import { nanoid } from 'nanoid'
 import { SAVINGS_CATEGORY_ID } from '../types/ledger'
 import { daysBetweenInclusive, buildDailyBalanceSeries, buildDailySpendSeries, type BalanceSpendGranularity, type BalanceSpendTrendSeries } from './runningBalance'
-import { storedUplift } from './roundUp'
+import { roundRecurringOccurrences, storedUplift } from './roundUp'
 import type { AppDataV2, CreditCard, Loan, PayCycleConfig, Pot, RecurringOccurrenceOverride, RecurringTemplate, Transaction } from '../types/ledger'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -466,6 +466,29 @@ export function coinJarCreditRows(pot: Pot, allTransactions: Transaction[]): Tra
 }
 
 /**
+ * The Coin Jar credits of the owner's recurring card expenses that are not
+ * stored yet — the jar's side of an occurrence the personal projection already
+ * shows rounded (roundRecurringOccurrences). A stored row is skipped by its
+ * dedupeKey, because its credit already comes from coinJarCreditRows over the
+ * stored list; counting both would credit the same 50p twice. Generated over
+ * the same templates, pay cycle and visibility floor projection.ts uses.
+ */
+export function generatedCoinJarCreditRows(data: AppDataV2, pot: Pot, rangeStart: Date, rangeEnd: Date): Transaction[] {
+  if (!pot.isCoinJar) return []
+  const payCycle = data.payCycles.find((pc) => pc.personId === pot.personId)
+  if (!payCycle) return []
+  const floor = parseLocalDate(payCycle.openingBalanceDate)
+  const start = rangeStart > floor ? rangeStart : floor
+  const storedKeys = new Set(data.transactions.map(dedupeKey).filter((k): k is string => k !== null))
+  const occurrences = data.recurringTemplates
+    .filter((t) => t.kind === 'transaction' && t.location === 'personal' && t.ownerId === pot.personId)
+    .flatMap((t) => roundRecurringOccurrences(generateTransactionsForTemplate(t, start, rangeEnd, payCycle), payCycle, pot.id))
+    .filter((t) => !storedKeys.has(dedupeKey(t) ?? ''))
+    .map((t) => ({ ...t, id: `generated:${t.sourceId}:${t.occurrenceOriginalDate ?? t.date}` }))
+  return coinJarCreditRows(pot, occurrences)
+}
+
+/**
  * This pot's balance as of a given date: openingBalance, plus every
  * pot_deposit, minus every pot_withdrawal AND every bill_payment/
  * loan_payment funded from it (a pot-funded bill payment reduces the
@@ -558,6 +581,7 @@ export function computePotProjectionToDate(data: AppDataV2, pot: Pot, horizonEnd
     ...generatePotDepositTransactions(pot, genStart, horizonEndDate, data.recurringTemplates, data.payCycles),
     ...generatePotWithdrawalTransferTransactions(pot, genStart, horizonEndDate, data.recurringTemplates, data.payCycles),
     ...generatePotOutgoingTransactions(data, pot, genStart, horizonEndDate),
+    ...generatedCoinJarCreditRows(data, pot, genStart, horizonEndDate),
   ]
 
   const dedupedGenerated: Transaction[] = generated
@@ -623,6 +647,8 @@ export function buildPotScheduleRows(data: AppDataV2, pot: Pot, asOfDate: Date =
     t.type === 'credit_card_payment' ? !storedCardKeys.has(dedupeKey(t) ?? '') : !storedKeys.has(`${t.type}:${t.sourceId ?? ''}:${t.date}`),
   )
 
+  const generatedCredits = generatedCoinJarCreditRows(data, pot, start, end)
+
   const rows: PotScheduleRow[] = [
     // `toLocation.type === 'pot'` alone isn't enough to tell deposit from
     // withdrawal for THIS pot — a Pot A → Pot B transfer has toLocation
@@ -639,6 +665,7 @@ export function buildPotScheduleRows(data: AppDataV2, pot: Pot, asOfDate: Date =
     ...generatedDeposits.map((t) => ({ date: t.date, type: 'pot_deposit' as const, amount: t.amount, status: 'pending' as const, note: t.note })),
     ...generatedWithdrawals.map((t) => ({ date: t.date, type: 'pot_withdrawal' as const, amount: t.amount, status: 'pending' as const, note: t.note })),
     ...generatedOutgoing.map((t) => ({ date: t.date, type: t.type as 'bill_payment' | 'loan_payment' | 'credit_card_payment', amount: t.amount, status: 'pending' as const, note: t.note })),
+    ...generatedCredits.map((t) => ({ date: t.date, type: 'pot_deposit' as const, amount: t.amount, status: 'pending' as const, note: t.note })),
   ]
   return rows.sort((a, b) => a.date.localeCompare(b.date))
 }

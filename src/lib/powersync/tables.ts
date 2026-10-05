@@ -107,9 +107,16 @@ export const SYNCED_TABLES: SyncedTable[] = [
     amount_effective_from: 'text', amount_history: 'json', kind: 'text', transfer_from_type: 'text',
     transfer_from_savings_pot_id: 'text', transfer_from_pot_id: 'text', transfer_to_type: 'text',
     transfer_to_savings_pot_id: 'text', transfer_to_pot_id: 'text', follows_payday: 'bool', follows_cycle_start: 'bool',
-    recurring_transaction_type: 'text', person_id: 'text', ...P,
+    recurring_transaction_type: 'text', person_id: 'text',
+    // Round-ups on a recurring card expense: the standing choice, effective-dated
+    // like amount/amount_effective_from/amount_history. 'json' reaches the server
+    // as a jsonb VALUE (MIGRATION-LESSONS §33).
+    round_up_skipped: 'bool', round_up_skipped_effective_from: 'text', round_up_skipped_history: 'json',
+    ...P,
   }),
-  t('recurring_template_occurrence_overrides', { ...H, recurring_template_id: 'text', ...OVERRIDE, ...P }),
+  // `round_up_skipped` is this table's alone: one payment's own round-up choice.
+  // Pension and savings-pot overrides share OVERRIDE and have no such column.
+  t('recurring_template_occurrence_overrides', { ...H, recurring_template_id: 'text', ...OVERRIDE, round_up_skipped: 'bool', ...P }),
   t('loans', {
     ...H, name: 'text', monthly_payment: 'real', monthly_payment_effective_from: 'text', monthly_payment_history: 'json',
     term_months: 'integer', start_date: 'text', category_id: 'text', color: 'text', location: 'text', owner_id: 'text',

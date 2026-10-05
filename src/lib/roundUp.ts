@@ -241,6 +241,27 @@ export function coinJarForOwner(pots: Pot[], ownerId: string): Pot | undefined {
 }
 
 /**
+ * Rounds the occurrences a recurring transaction GENERATES, by the same rules as
+ * a one-off expense: shouldRoundUp on each row (card, personal, expense, the
+ * switch on for that row's own date) plus the occurrence's own round-up choice,
+ * which the generator carries as `roundUpSkipped`.
+ *
+ * An occurrence is rounded AHEAD of its date, exactly as a future-dated one-off
+ * is rounded the moment it is saved, so the projection, the statement and the
+ * Coin Jar agree before the payment and nothing moves on the day it clears.
+ * Materialisation (autoClear) rounds through here too, so the stored row is
+ * the same row the projection showed.
+ *
+ * `payCycle` and `coinJarId` must be the OWNER's (coinJarForOwner). Only
+ * `sourceType: 'recurring_template'` rows are touched; anything else passes
+ * through, so a caller can hand over a mixed candidate list.
+ */
+export function roundRecurringOccurrences<T extends Omit<Transaction, 'id'>>(rows: T[], payCycle: PayCycleConfig | undefined, coinJarId: string | undefined): T[] {
+  if (!coinJarId) return rows
+  return rows.map((r) => (r.sourceType === 'recurring_template' ? { ...r, ...roundUpFields(r, payCycle, coinJarId) } : r))
+}
+
+/**
  * The patch for switching round-ups on or off from a chosen date (B4).
  *
  * Mirrors `changePayday`'s history handling in salaryLedger.ts (~487):

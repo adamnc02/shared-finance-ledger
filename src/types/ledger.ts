@@ -614,6 +614,19 @@ export interface RecurringTemplate {
   // chosen upcoming occurrence onward" (the same "which payment should
   // this apply from" flow Bills.tsx already has).
   occurrenceOverrides?: RecurringOccurrenceOverride[]
+  // Round-ups on a 'transaction'-kind template: the standing "don't round
+  // these" choice, effective-dated exactly like amount/amountEffectiveFrom/
+  // amountHistory — `roundUpSkipped` governs from `roundUpSkippedEffectiveFrom`,
+  // earlier choices sit in `roundUpSkippedHistory`, and resolveTemplateRoundUpSkipped
+  // walks them the same way resolveTemplateAmount does. Absent = round (the
+  // default whenever the person's switch is on, same as a one-off expense).
+  // A single payment's own choice is RecurringOccurrenceOverride.roundUpSkipped,
+  // which beats this. Whether an occurrence actually rounds is still decided by
+  // shouldRoundUp on the generated row: card, personal, expense, the switch on
+  // for that row's own date, and a Coin Jar to put it in.
+  roundUpSkipped?: boolean
+  roundUpSkippedEffectiveFrom?: string
+  roundUpSkippedHistory?: { effectiveFrom: string; skipped: boolean }[]
 }
 
 export interface RecurringOccurrenceOverride {
@@ -621,6 +634,7 @@ export interface RecurringOccurrenceOverride {
   date?: string // overridden date; absent = originalDate unchanged
   amount?: number // overridden amount; absent = the template's normal resolved amount
   deleted?: boolean // true = this occurrence is skipped entirely — never generated, never shown
+  roundUpSkipped?: boolean // this one payment's round-up choice, either way; absent = the template's standing choice (RecurringTemplate.roundUpSkipped)
 }
 
 // One entry in RecurringTemplate.locationHistory / Loan.locationHistory —

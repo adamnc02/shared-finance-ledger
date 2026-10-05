@@ -28,7 +28,7 @@ import { reconcilePersonReferences } from './household'
 import { priorLocationEntry, reassignCreditCardPaymentsForLocationChange, reassignTransactionsForLocationChange } from './locationChange'
 import { reassignLoanRecurringOverpaymentTransactions } from './ledgerLoans'
 import { sweepPendingForCreditCard, sweepPendingForLoan, sweepPendingForPot, sweepPendingForSavingsPot, sweepPendingForSource } from './pendingSweep'
-import { categoryForTransfer, locationTypeForTransfer, transferLocationKey, transferLocationLabel, transferTouchesPot, transferTouchesSavingsPot } from './transferLedger'
+import { categoryForTransfer, locationTypeForTransfer, retargetTransferRow, transferLocationKey, transferLocationLabel, transferTouchesPot, transferTouchesSavingsPot } from './transferLedger'
 import { toLocalIsoDate as toIso } from './date'
 
 const todayIso = () => toIso(new Date())
@@ -592,21 +592,6 @@ function reassignToPerson(data: AppDataV2, b: DeleteBlocker, from: string, to: s
 
 function replaceSubjectEndpoint(location: TransferLocation | undefined, subject: DeleteSubject, replacement: TransferLocation): TransferLocation | undefined {
   return endpointMatchesSubject(location, subject) ? replacement : location
-}
-
-/** Re-derives every field buildTransferTransaction computes from the two endpoints. */
-function retargetTransferRow(t: Transaction, from: TransferLocation | undefined, to: TransferLocation | undefined): Transaction {
-  if (!from || !to) return t
-  return {
-    ...t,
-    fromLocation: from,
-    toLocation: to,
-    direction: from.type === 'personal' ? 'out' : 'in',
-    categoryId: categoryForTransfer(from, to),
-    location: locationTypeForTransfer(from, to),
-    savingsPotId: from.type === 'savings' ? from.savingsPotId : to.type === 'savings' ? to.savingsPotId : undefined,
-    potId: from.type === 'pot' ? from.potId : to.type === 'pot' ? to.potId : undefined,
-  }
 }
 
 function billLocationOf(location: TransferLocation): { location: BillLocation; potId?: string } {

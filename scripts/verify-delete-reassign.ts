@@ -82,7 +82,8 @@ function danglingReferences(data: AppDataV2): string[] {
     if (t.location === 'joint') person(`template ${t.name} payee`, t.payee)
     else person(`template ${t.name} ownerId`, t.ownerId)
     person(`template ${t.name} personId`, t.personId)
-    if (t.location === 'pot' && !pots.has(t.potId ?? '')) out.push(`template ${t.name} → pot ${t.potId}`)
+    // A transfer's pot is on its endpoints, checked below; its flat potId is always empty.
+    if (t.kind !== 'transfer' && t.location === 'pot' && !pots.has(t.potId ?? '')) out.push(`template ${t.name} → pot ${t.potId}`)
     endpoint(`template ${t.name} transferFrom`, t.transferFrom)
     endpoint(`template ${t.name} transferTo`, t.transferTo)
   }

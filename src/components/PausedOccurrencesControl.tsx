@@ -94,6 +94,7 @@ export function PausedOccurrencesControl({
   onSaveAmount,
   onSaveDate,
   isAdjusted,
+  roundUp,
 }: {
   /**
    * UAT 2026-09-11 (manage-upcoming-payments-override-key-bug) —
@@ -146,6 +147,16 @@ export function PausedOccurrencesControl({
    * pensionOccurrenceAdjusted, …); the rule itself is isOccurrenceAdjusted.
    */
   isAdjusted?: (originalDate: string) => boolean
+  /**
+   * Round-ups on ONE payment of a recurring card expense, either way. `forDate`
+   * returns null for a payment that cannot round (not a card/personal expense,
+   * the switch off on that date, no Coin Jar, or an exact pound); the toggle is
+   * then not shown. Saves on tap, like un-pausing: it is undone the same way.
+   */
+  roundUp?: {
+    forDate: (originalDate: string, displayDate: string) => { rounded: boolean; target: number; uplift: number; jarName: string } | null
+    onToggle: (originalDate: string, skipped: boolean) => void
+  }
 }) {
   const [expanded, setExpanded] = useState(false)
   const [editingDate, setEditingDate] = useState<string | null>(null)
@@ -314,6 +325,26 @@ export function PausedOccurrencesControl({
                       <PauseToggleButton paused={isPaused} onClick={() => handlePauseBadgeClick(originalDate, date)} />
                     )}
                   </div>
+                  {(() => {
+                    const r = !isPaused && !isEditingAmount && !isEditingDate ? roundUp?.forDate(originalDate, date) : null
+                    if (!r) return null
+                    return (
+                      <label className="flex items-center gap-2 mt-1">
+                        <input
+                          type="checkbox"
+                          checked={r.rounded}
+                          onChange={(e) => {
+                            roundUp!.onToggle(originalDate, !e.target.checked)
+                            setFlashDate(originalDate)
+                            triggerFlash()
+                          }}
+                        />
+                        <span className="text-xs text-[var(--color-ink-muted)]">
+                          {r.rounded ? `Rounded up to £${formatCurrency(r.target)}, £${formatCurrency(r.uplift)} into ${r.jarName}` : `Not rounded up (would be £${formatCurrency(r.target)})`}
+                        </span>
+                      </label>
+                    )
+                  })()}
                 </div>
               )
             })}

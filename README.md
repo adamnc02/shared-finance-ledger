@@ -291,7 +291,8 @@ from a list, or exact dates.
 
 **Preview** opens it inside the app. **Save** gives you the file — a single self-contained HTML
 document that works with no network at all, regroups itself by day, category or as a full pivot
-table, and prints to A4, one account per page.
+table, and prints to A4, one account per page. **Reset to default** puts every view setting back as
+it opened, keeping the account you are on and the theme.
 
 ⚠️ **The saved file needs a computer.** An iPhone previews HTML without running it, so a statement
 saved to your phone shows the buttons and no table. Email or AirDrop it to a laptop — or just use
