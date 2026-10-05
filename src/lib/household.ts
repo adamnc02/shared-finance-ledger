@@ -121,7 +121,15 @@ export function reconcilePersonReferences(data: AppDataV2): AppDataV2 {
   // proactively for the normal in-app delete path; this is the same
   // self-healing backstop reconcilePersonReferences already gives every
   // other reference, for a backup/import that predates that.
-  function fallBackDanglingPot<T extends { location: BillLocation; potId?: string }>(item: T): T {
+  //
+  // 🚨 Never a transfer. A transfer template's pot lives on `transferFrom`/
+  // `transferTo` and its flat `potId` is always empty, so this test reads every
+  // Savings → Pot / Pot → Pot transfer as dangling and turns it 'personal' — on
+  // every load. The generator then books it on the current account as money IN
+  // (`direction` is 'in' whenever personal is not the source). Transfers are
+  // checked endpoint by endpoint in fallBackDanglingTransfer below.
+  function fallBackDanglingPot<T extends { location: BillLocation; potId?: string; kind?: RecurringTemplate['kind'] }>(item: T): T {
+    if (item.kind === 'transfer') return item
     if (item.location === 'pot' && !validPotIds.has(item.potId ?? '')) {
       return { ...item, location: 'personal', potId: undefined }
     }
@@ -151,6 +159,17 @@ export function reconcilePersonReferences(data: AppDataV2): AppDataV2 {
     return { ...t, transferFrom: from, transferTo: to, location: locationTypeForTransfer(from, to), categoryId: categoryForTransfer(from, to), active: false }
   }
 
+  // A transfer's `location` is derived from its endpoints (APP-KNOWLEDGE §1.4), so it is
+  // re-derived here as a STATE rule: a template stored with the wrong value — by the
+  // fallBackDanglingPot defect above, or by an endpoint edit that did not re-derive it —
+  // heals on load instead of staying on the wrong ledger. Every real backup already agrees
+  // with the derivation apart from rows damaged by those two defects.
+  function deriveTransferLocation(t: RecurringTemplate): RecurringTemplate {
+    if (t.kind !== 'transfer' || !t.transferFrom || !t.transferTo) return t
+    const location = locationTypeForTransfer(t.transferFrom, t.transferTo)
+    return t.location === location ? t : { ...t, location }
+  }
+
   // A PENDING row pointing at a missing pot/savings pot hasn't happened and
   // now never will — same rule as the sweep on delete. Checks both transfer
   // endpoints, not just the flat potId/savingsPotId (APP-KNOWLEDGE §1.4).
@@ -168,7 +187,7 @@ export function reconcilePersonReferences(data: AppDataV2): AppDataV2 {
     ...data,
     primaryPersonId: fallbackOwnerId,
     transactions,
-    recurringTemplates: data.recurringTemplates.map(reassign).map(fallBackDanglingPot).map(fallBackDanglingTransfer),
+    recurringTemplates: data.recurringTemplates.map(reassign).map(fallBackDanglingPot).map(fallBackDanglingTransfer).map(deriveTransferLocation),
     loans: data.loans
       .map(reassign)
       .map(fallBackDanglingPot)

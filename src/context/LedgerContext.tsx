@@ -20,7 +20,7 @@ import type {
   TransferLocation,
 } from '../types/ledger'
 import type { BillLocation } from '../types/models'
-import { categoryForTransfer, buildTransferTransaction, locationsEqual, locationTypeForTransfer, transferLocationLabel } from '../lib/transferLedger'
+import { categoryForTransfer, buildTransferTransaction, locationsEqual, locationTypeForTransfer, retargetTransferRow, transferLocationLabel } from '../lib/transferLedger'
 import { salarySortId, salarySortTargetId, salarySortTransactionId } from '../lib/salarySortLedger'
 import { applyCreditCardLocationChange, reassignTransactionsForLocationChange, priorLocationEntry } from '../lib/locationChange'
 
@@ -521,7 +521,10 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
       // switch is turned off, and an edit is the person's own action, not
       // the switch's.
       const rounded = (t: Transaction): Transaction => {
-        const merged = { ...t, ...updates }
+        // A transfer whose endpoints changed is re-routed, not just re-labelled:
+        // location, direction and the flat pot ids all follow the new endpoints.
+        const endpointsEdited = t.type === 'transfer' && (updates.fromLocation !== undefined || updates.toLocation !== undefined)
+        const merged = endpointsEdited ? retargetTransferRow({ ...t, ...updates }, updates.fromLocation ?? t.fromLocation, updates.toLocation ?? t.toLocation) : { ...t, ...updates }
         const payCycle = prev.payCycles.find((c) => c.personId === merged.ownerId)
         const jar = coinJarForOwner(prev.pots, merged.ownerId)
         return { ...merged, ...roundUpFields({ ...merged, amount: updates.amount ?? unroundedAmount(t) }, payCycle, jar?.id) }
@@ -777,7 +780,12 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
         // Editing the date directly makes it the intended day again — see
         // RecurringTemplate.anchorDayOfMonth.
         const anchorEdited = updates.anchorDate !== undefined && updates.anchorDate !== t.anchorDate && updates.anchorDayOfMonth === t.anchorDayOfMonth
-        return anchorEdited ? { ...t, ...updates, anchorDayOfMonth: undefined } : { ...t, ...updates }
+        const merged = anchorEdited ? { ...t, ...updates, anchorDayOfMonth: undefined } : { ...t, ...updates }
+        // A transfer's location and category are derived from its endpoints
+        // (APP-KNOWLEDGE §1.4); an endpoint edit re-derives them, or the
+        // template keeps generating on the ledger of its OLD route.
+        if (merged.kind !== 'transfer' || (updates.transferFrom === undefined && updates.transferTo === undefined)) return merged
+        return { ...merged, location: locationTypeForTransfer(merged.transferFrom, merged.transferTo), categoryId: categoryForTransfer(merged.transferFrom, merged.transferTo) }
       }),
     }))
   }
