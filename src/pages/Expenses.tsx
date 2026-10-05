@@ -19,6 +19,9 @@ import {
   applyTemplateAmountChange,
   applyTemplateSingleOccurrenceAmountChange,
   applyTemplateSingleOccurrenceDateChange,
+  applyTemplateRoundUpChange,
+  applyTemplateSingleOccurrenceRoundUpChange,
+  resolveOccurrenceRoundUpSkipped,
   resolveOccurrenceAmount,
   templateOccurrencePreviews,
   setPausedTemplateOccurrences,
@@ -3347,7 +3350,7 @@ function RecurringFrequencyEditor({
   )
 }
 
-type RecurringTransactionFormStep = 'direction' | 'amount' | 'location' | 'frequency' | 'date' | 'name' | 'category' | 'payment_method'
+type RecurringTransactionFormStep = 'direction' | 'amount' | 'location' | 'frequency' | 'date' | 'name' | 'category' | 'payment_method' | 'round_up'
 
 /**
  * 2026-09-13 (Adam-specified follow-up, "recurring transactions get the
@@ -3399,7 +3402,25 @@ function RecurringTransactionForm({
   const nonPersonalLocationOptions = pickableLocationOptions.filter((o) => o.location.type !== 'personal')
   const [locationOption, setLocationOption] = useState<TransferLocationOption>(PERSONAL_LOCATION_OPTION)
 
-  function commitSave(finalPaymentMethod: PaymentMethod) {
+  // The round-up step, exactly as ExpenseForm asks it: last, and only when the
+  // answers add up to a card, personal expense with a real uplift and a Coin Jar
+  // to put it in. Asked against the FIRST payment's date — the switch is dated,
+  // and the occurrences themselves are rounded by the rule on their own dates.
+  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<PaymentMethod | null>(null)
+  const ownerPayCycle = data.payCycles.find((c) => c.personId === defaultPersonId)
+  const coinJar = coinJarForOwner(data.pots, defaultPersonId)
+
+  function commitSave(finalPaymentMethod: PaymentMethod, roundUpSkipped?: boolean) {
+    const location = locationOption.location.type === 'joint' || locationOption.location.type === 'pot' ? locationOption.location.type : 'personal'
+    if (
+      roundUpSkipped === undefined &&
+      roundUpAvailable({ type, paymentMethod: finalPaymentMethod, location, date: anchorDate }, ownerPayCycle, coinJar?.id) &&
+      roundUpUplift(Number(amount)) > 0
+    ) {
+      setPendingPaymentMethod(finalPaymentMethod)
+      setStep('round_up')
+      return
+    }
     onSave({
       name: name.trim(),
       amount: Number(amount),
@@ -3416,7 +3437,40 @@ function RecurringTransactionForm({
       kind: 'transaction',
       recurringTransactionType: type,
       personId: type === 'income' ? defaultPersonId : undefined,
+      roundUpSkipped: roundUpSkipped || undefined,
     })
+  }
+
+  if (step === 'round_up' && pendingPaymentMethod) {
+    const amountNumber = Number(amount)
+    return (
+      <div className="rounded-2xl p-4 mb-4" style={{ background: 'var(--color-bg-elevated)' }}>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-semibold text-[var(--color-ink-muted)]">Round up?</span>
+          <button onClick={onCancel} className="text-[var(--color-ink-faint)]">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <button
+            onClick={() => commitSave(pendingPaymentMethod, false)}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-medium"
+            style={{ background: 'var(--color-coral)', color: '#fff' }}
+          >
+            Round up to £{formatCurrency(roundUpTarget(amountNumber))}
+            <span className="block text-xs font-normal opacity-90">£{formatCurrency(roundUpUplift(amountNumber))} into {coinJar?.name ?? 'the Coin Jar'} each payment</span>
+          </button>
+          <button
+            onClick={() => commitSave(pendingPaymentMethod, true)}
+            className="w-full text-left px-3 py-2 rounded-xl text-sm font-medium text-[var(--color-ink)]"
+            style={{ background: 'var(--color-surface)' }}
+          >
+            Not this one
+            <span className="block text-xs font-normal text-[var(--color-ink-muted)]">Log each payment as £{formatCurrency(amountNumber)}</span>
+          </button>
+        </div>
+      </div>
+    )
   }
 
   // 2026-09-13 (Adam-specified follow-up, "mirror transfers") — Direction
@@ -3599,7 +3653,7 @@ function RecurringTransactionEditPanel({
   // EffectiveDatedChangeFlow — true while a genuine STANDING amount
   // change is being routed through "which payment does this apply from."
   const [changingAmount, setChangingAmount] = useState(false)
-  const { changeRecurringTemplateSchedule } = useLedgerData()
+  const { changeRecurringTemplateSchedule, data } = useLedgerData()
   // 2026-09-16 (Adam-reported) — a date or frequency change now goes through
   // the same "from which payment" flow as Bills. It used to save straight
   // away, which re-created every past occurrence on the new schedule.
@@ -3607,6 +3661,19 @@ function RecurringTransactionEditPanel({
   const scheduleDiff = scheduleDiffers(template, draft)
   const scheduleChanged = scheduleDiff.date || scheduleDiff.frequency
   const dateOnlyChange = scheduleDiff.date && !scheduleDiff.frequency
+  // The round-up choice is effective-dated like the amount: changing it goes
+  // through the same "just this payment / every payment from then on" flow.
+  // The checkbox shows the STANDING choice; a single payment's own choice is
+  // set under Manage upcoming payments.
+  const roundUpChanged = !!draft.roundUpSkipped !== !!template.roundUpSkipped
+  const roundUpWord = (skipped: boolean | undefined) => (skipped ? 'Off' : 'On')
+  const ownerPayCycle = data.payCycles.find((c) => c.personId === template.ownerId)
+  const ownerCoinJar = coinJarForOwner(data.pots, template.ownerId)
+  const roundUpOffered = roundUpAvailable(
+    { type: draft.recurringTransactionType === 'income' ? 'income' : 'expense', paymentMethod: draft.paymentMethod, location: template.location, date: todayIso() },
+    ownerPayCycle,
+    ownerCoinJar?.id,
+  )
   // UAT follow-up (2026-09-04, Adam-requested app-wide sweep): dims Save
   // when nothing's changed, same as BillEditPanel's own dirty check.
   const dirty = JSON.stringify(draft) !== JSON.stringify(draftFromRecurringTemplate(template))
@@ -3629,7 +3696,7 @@ function RecurringTransactionEditPanel({
     // Same gate as Bills.tsx: a genuine STANDING amount change is routed
     // through "which payment should this apply from" — every other field
     // (name, category, frequency, active, etc.) saves immediately.
-    if ((amountChanged || scheduleChanged) && recentAndUpcomingOccurrences(template, new Date()).length > 0) {
+    if ((amountChanged || scheduleChanged || roundUpChanged) && recentAndUpcomingOccurrences(template, new Date()).length > 0) {
       setChangingAmount(true)
       return
     }
@@ -3648,7 +3715,12 @@ function RecurringTransactionEditPanel({
                   description: `${template.name}'s date is changing from ${formatFullDate(template.anchorDate)} to ${formatFullDate(draft.anchorDate)}. Just a single payment, or every payment from then on?`,
                   singleLabel: 'Just a single payment',
                 }
-              : undefined
+              : roundUpChanged && !scheduleChanged
+                ? {
+                    description: `${template.name} will ${draft.roundUpSkipped ? 'stop rounding up' : 'round up'}. Just a single payment, or every payment from then on?`,
+                    singleLabel: 'Just a single payment',
+                  }
+                : undefined
         }
         occurrences={recentAndUpcomingOccurrences(template, new Date())}
         dateStepDescription={(scope) =>
@@ -3671,6 +3743,7 @@ function RecurringTransactionEditPanel({
           } else if (scheduleDiff.date) {
             changes.push({ label: 'Date', from: formatFullDate(template.anchorDate), to: formatFullDate(draft.anchorDate) })
           }
+          if (roundUpChanged) changes.push({ label: 'Round up', from: roundUpWord(template.roundUpSkipped), to: roundUpWord(draft.roundUpSkipped) })
           return changes
         }}
         affectsClearedBalance={(effectiveFrom) => effectiveFrom <= todayIso()}
@@ -3682,6 +3755,14 @@ function RecurringTransactionEditPanel({
             const amountPatch = scope === 'single' ? applyTemplateSingleOccurrenceAmountChange(working, draft.amount, occurrenceSlotForDate(template, effectiveFrom)) : applyTemplateAmountChange(working, draft.amount, occurrenceSlotForDate(template, effectiveFrom))
             working = { ...working, ...amountPatch }
             patch = { ...patch, amount: scope === 'single' ? template.amount : draft.amount, ...amountPatch }
+          }
+          if (roundUpChanged) {
+            const slot = occurrenceSlotForDate(template, effectiveFrom)
+            const skipped = !!draft.roundUpSkipped
+            // "Just a single payment" leaves the standing choice where it was.
+            const roundUpPatch = scope === 'single' ? { ...applyTemplateSingleOccurrenceRoundUpChange(working, skipped, slot), roundUpSkipped: template.roundUpSkipped } : applyTemplateRoundUpChange(working, skipped, slot)
+            working = { ...working, ...roundUpPatch }
+            patch = { ...patch, ...roundUpPatch }
           }
           // Same split as Bills.tsx: a single-payment date move is an
           // override; anything else re-slots via changeRecurringTemplateSchedule.
@@ -3723,6 +3804,20 @@ function RecurringTransactionEditPanel({
         <CategoryPicker categories={categories} value={draft.categoryId} onChange={(categoryId) => update({ categoryId })} onAddCategory={onAddCategory} />
       </div>
       <RecurringPaymentMethodEditor value={draft.paymentMethod} onChange={(paymentMethod) => update({ paymentMethod })} />
+
+      {roundUpOffered && (
+        <label className="flex items-start gap-2 col-span-2">
+          <input type="checkbox" className="mt-0.5" checked={!draft.roundUpSkipped} onChange={(e) => update({ roundUpSkipped: e.target.checked ? undefined : true })} />
+          <span className="text-xs text-[var(--color-ink-muted)]">
+            Round up to the next pound, into {ownerCoinJar?.name ?? 'the Coin Jar'}
+            {roundUpUplift(draft.amount) > 0 && (
+              <span className="block text-[var(--color-ink-faint)]">
+                Each £{formatCurrency(draft.amount)} payment would be logged as £{formatCurrency(roundUpTarget(draft.amount))}, with £{formatCurrency(roundUpUplift(draft.amount))} going in.
+              </span>
+            )}
+          </span>
+        </label>
+      )}
 
       {/* Picker-First Flows (2026-09 session) — "Whose income" removed entirely; personId/ownerId stay whatever draftFromRecurringTemplate already carried (always your primary person, set once at creation and never re-chosen here). */}
 
@@ -3769,6 +3864,10 @@ function RecurringTransactionRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const isIncome = template.recurringTransactionType === 'income'
+  // Round-ups follow the OWNER's switch and jar, as everywhere else.
+  const { data } = useLedgerData()
+  const ownerPayCycle = data.payCycles.find((c) => c.personId === template.ownerId)
+  const ownerCoinJar = coinJarForOwner(data.pots, template.ownerId)
 
   // 2026-09-19 (PROMPT-08c Part A, Adam-specified) — "Manage upcoming
   // payments" here is now the same shared PausedOccurrencesControl, with
@@ -3837,6 +3936,15 @@ function RecurringTransactionRow({
               onSaveAmount={(originalDate, newAmount) => onUpdate(applyTemplateSingleOccurrenceAmountChange(template, newAmount, originalDate))}
               onSaveDate={(originalDate, newDate) => onUpdate(applyTemplateSingleOccurrenceDateChange(template, newDate, originalDate))}
               isAdjusted={(originalDate) => templateOccurrenceAdjusted(template, originalDate)}
+              roundUp={{
+                forDate: (originalDate, displayDate) => {
+                  const price = resolveOccurrenceAmount(template, originalDate)
+                  if (!roundUpAvailable({ type: isIncome ? 'income' : 'expense', paymentMethod: template.paymentMethod, location: template.location, date: displayDate }, ownerPayCycle, ownerCoinJar?.id)) return null
+                  if (roundUpUplift(price) <= 0) return null
+                  return { rounded: !resolveOccurrenceRoundUpSkipped(template, originalDate), target: roundUpTarget(price), uplift: roundUpUplift(price), jarName: ownerCoinJar?.name ?? 'the Coin Jar' }
+                },
+                onToggle: (originalDate, skipped) => onUpdate(applyTemplateSingleOccurrenceRoundUpChange(template, skipped, originalDate)),
+              }}
             />
           </>
         )}

@@ -121,6 +121,29 @@ export function resolveOccurrenceAmount(template: RecurringTemplate, originalDat
   return resolveTemplateAmount(template, originalDate)
 }
 
+/**
+ * The template's STANDING round-up choice on a given slot — the same walk as
+ * resolveTemplateAmount, over roundUpSkipped/roundUpSkippedEffectiveFrom/
+ * roundUpSkippedHistory, ties broken by recency of recording.
+ */
+export function resolveTemplateRoundUpSkipped(template: RecurringTemplate, dateIso: string): boolean {
+  const candidates: { effectiveFrom: string; skipped: boolean }[] = [...(template.roundUpSkippedHistory ?? [])]
+  if (template.roundUpSkippedEffectiveFrom) candidates.push({ effectiveFrom: template.roundUpSkippedEffectiveFrom, skipped: template.roundUpSkipped ?? false })
+  if (candidates.length === 0) return template.roundUpSkipped ?? false
+  const applicable = candidates
+    .map((c, index) => ({ ...c, index }))
+    .filter((c) => c.effectiveFrom <= dateIso)
+    .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom) || b.index - a.index)
+  return applicable[0]?.skipped ?? template.roundUpSkipped ?? false
+}
+
+/** One occurrence's round-up choice: its own override first ("just this payment"), then the standing choice. Keyed by the SLOT, like every override. */
+export function resolveOccurrenceRoundUpSkipped(template: RecurringTemplate, originalDate: string): boolean {
+  const override = template.occurrenceOverrides?.find((o) => o.originalDate === originalDate)
+  if (override?.roundUpSkipped !== undefined) return override.roundUpSkipped
+  return resolveTemplateRoundUpSkipped(template, originalDate)
+}
+
 /** Whether this occurrence shows the "Adjusted" badge — see isOccurrenceAdjusted. Its natural date is payday-resolved for a follows-payday/cycle-start transfer, so a weekend payday drift is never "adjusted". */
 export function templateOccurrenceAdjusted(template: RecurringTemplate, originalDate: string, payCycle?: PayCycleConfig): boolean {
   const override = template.occurrenceOverrides?.find((o) => o.originalDate === originalDate)
@@ -368,6 +391,9 @@ export function generateTransactionsForTemplate(
       // also just say "TV" instead of "TV License").
       note: template.name,
       personId: isIncome ? template.personId : undefined,
+      // The occurrence's round-up choice, carried so roundUpFields can honour
+      // it (roundRecurringOccurrences, lib/roundUp.ts). Only an expense can round.
+      roundUpSkipped: isTransactionKind && !isIncome && resolveOccurrenceRoundUpSkipped(template, occ.originalDate) ? true : undefined,
     }
   })
 }
@@ -503,10 +529,11 @@ export function setPausedTemplateOccurrences(template: RecurringTemplate, window
   for (const originalDate of windowSet) {
     const prior = priorByDate.get(originalDate)
     const isPaused = pausedSet.has(originalDate)
-    if (!isPaused && prior?.date === undefined && prior?.amount === undefined) continue
+    if (!isPaused && prior?.date === undefined && prior?.amount === undefined && prior?.roundUpSkipped === undefined) continue
     const entry: RecurringOccurrenceOverride = { originalDate }
     if (prior?.date !== undefined) entry.date = prior.date
     if (prior?.amount !== undefined) entry.amount = prior.amount
+    if (prior?.roundUpSkipped !== undefined) entry.roundUpSkipped = prior.roundUpSkipped
     if (isPaused) entry.deleted = true
     merged.push(entry)
   }
@@ -552,7 +579,7 @@ export function applyTemplateAmountChange(
   const amountHistory = priorCandidates.filter((c) => c.effectiveFrom < effectiveFrom)
   const occurrenceOverrides = (template.occurrenceOverrides ?? [])
     .map((o) => (o.originalDate >= effectiveFrom && o.amount !== undefined ? { ...o, amount: undefined } : o))
-    .filter((o) => o.date !== undefined || o.amount !== undefined || o.deleted !== undefined)
+    .filter((o) => o.date !== undefined || o.amount !== undefined || o.deleted !== undefined || o.roundUpSkipped !== undefined)
   return {
     amount: newAmount,
     amountEffectiveFrom: effectiveFrom,
@@ -579,6 +606,37 @@ export function applyTemplateSingleOccurrenceAmountChange(
   const priorEntry = existing.find((o) => o.originalDate === originalDate)
   const withoutThis = existing.filter((o) => o.originalDate !== originalDate)
   return { occurrenceOverrides: [...withoutThis, { ...priorEntry, originalDate, amount: newAmount }] }
+}
+
+/**
+ * "Every payment from then on" for the round-up choice — applyTemplateAmountChange's
+ * shape exactly: the prior choice is kept for every slot before `effectiveFrom`,
+ * anything recorded on or after it is superseded, and a single-payment choice on a
+ * slot the new rule now owns is cleared so it cannot outrank it.
+ */
+export function applyTemplateRoundUpChange(
+  template: RecurringTemplate,
+  skipped: boolean,
+  effectiveFrom: string,
+): Pick<RecurringTemplate, 'roundUpSkipped' | 'roundUpSkippedEffectiveFrom' | 'roundUpSkippedHistory' | 'occurrenceOverrides'> {
+  const priorCandidates = [...(template.roundUpSkippedHistory ?? []), { effectiveFrom: template.roundUpSkippedEffectiveFrom ?? template.anchorDate, skipped: template.roundUpSkipped ?? false }]
+  const roundUpSkippedHistory = priorCandidates.filter((c) => c.effectiveFrom < effectiveFrom)
+  const occurrenceOverrides = (template.occurrenceOverrides ?? [])
+    .map((o) => (o.originalDate >= effectiveFrom && o.roundUpSkipped !== undefined ? { ...o, roundUpSkipped: undefined } : o))
+    .filter((o) => o.date !== undefined || o.amount !== undefined || o.deleted !== undefined || o.roundUpSkipped !== undefined)
+  return { roundUpSkipped: skipped || undefined, roundUpSkippedEffectiveFrom: effectiveFrom, roundUpSkippedHistory, occurrenceOverrides }
+}
+
+/** "Just this payment" for the round-up choice — merged onto the slot's existing override, never a second entry for the same slot (see setPausedTemplateOccurrences). */
+export function applyTemplateSingleOccurrenceRoundUpChange(
+  template: RecurringTemplate,
+  skipped: boolean,
+  originalDate: string,
+): Pick<RecurringTemplate, 'occurrenceOverrides'> {
+  const existing = template.occurrenceOverrides ?? []
+  const priorEntry = existing.find((o) => o.originalDate === originalDate)
+  const withoutThis = existing.filter((o) => o.originalDate !== originalDate)
+  return { occurrenceOverrides: [...withoutThis, { ...priorEntry, originalDate, roundUpSkipped: skipped }] }
 }
 
 /**
@@ -772,7 +830,7 @@ export function applyTemplateScheduleChange(
   /** Needed only for a follows-payday/cycle-start transfer, whose picker shows payday-resolved dates. */
   payCycle?: PayCycleConfig,
 ): {
-  patch: Pick<RecurringTemplate, 'frequency' | 'intervalWeeks' | 'anchorDate' | 'anchorDayOfMonth' | 'occurrenceOverrides' | 'amountEffectiveFrom' | 'amountHistory' | 'followsPayday' | 'followsCycleStart'>
+  patch: Pick<RecurringTemplate, 'frequency' | 'intervalWeeks' | 'anchorDate' | 'anchorDayOfMonth' | 'occurrenceOverrides' | 'amountEffectiveFrom' | 'amountHistory' | 'roundUpSkippedEffectiveFrom' | 'roundUpSkippedHistory' | 'followsPayday' | 'followsCycleStart'>
   transactions: Transaction[]
 } {
   const pickedSlot = occurrenceSlotForDate(template, effectiveFromDate, payCycle)
@@ -805,6 +863,8 @@ export function applyTemplateScheduleChange(
     ...(template.occurrenceOverrides ?? []).map((o) => o.originalDate),
     ...(template.amountEffectiveFrom ? [template.amountEffectiveFrom] : []),
     ...(template.amountHistory ?? []).map((h) => h.effectiveFrom),
+    ...(template.roundUpSkippedEffectiveFrom ? [template.roundUpSkippedEffectiveFrom] : []),
+    ...(template.roundUpSkippedHistory ?? []).map((h) => h.effectiveFrom),
   ].filter((k) => k >= fromSlot)
   const lastKey = keys.reduce((max, k) => (k > max ? k : max), fromSlot)
 
@@ -851,6 +911,9 @@ export function applyTemplateScheduleChange(
       occurrenceOverrides: overrides,
       amountEffectiveFrom: remapBoundary(template.amountEffectiveFrom),
       amountHistory: template.amountHistory?.map((h) => ({ ...h, effectiveFrom: remapBoundary(h.effectiveFrom)! })),
+      // The round-up choice is effective-dated by slot exactly like the amount, so it moves the same way.
+      roundUpSkippedEffectiveFrom: remapBoundary(template.roundUpSkippedEffectiveFrom),
+      roundUpSkippedHistory: template.roundUpSkippedHistory?.map((h) => ({ ...h, effectiveFrom: remapBoundary(h.effectiveFrom)! })),
     },
     transactions: rewritten,
   }

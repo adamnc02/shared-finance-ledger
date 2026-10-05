@@ -28,6 +28,7 @@ import type { AppDataV2, PayCycleConfig, Transaction } from '../types/ledger'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
+import { coinJarForOwner, roundRecurringOccurrences } from './roundUp'
 
 export type ProjectionHorizon = 'current_cycle' | 'three_cycles'
 
@@ -239,7 +240,10 @@ export function computeProjectionToDate(
     // 'transfer' && template.followsPayday` (2026-09-04 session) — every
     // other kind ignores the 4th argument entirely, so this is safe to
     // pass unconditionally for every template this loop generates.
-    generated.push(...generateTransactionsForTemplate(template, rangeStart, horizonEndDate, payCycle))
+    // A recurring card expense rounds by the same rules as a one-off, ahead of
+    // its date (roundRecurringOccurrences). `payCycle` is this person's, and the
+    // loop only takes templates they own, so the switch and the jar are the owner's.
+    generated.push(...roundRecurringOccurrences(generateTransactionsForTemplate(template, rangeStart, horizonEndDate, payCycle), payCycle, coinJarForOwner(data.pots ?? [], personId)?.id))
   }
   // UAT 2026-09-09 (ed-overpay-just-single) — pre-filtering loans by
   // `l.location === 'personal'` alone missed the REVERSE case from the
