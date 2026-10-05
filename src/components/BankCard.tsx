@@ -1,5 +1,7 @@
 import { CreditCard } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useContext, type ReactNode } from 'react'
+import { StackSliverContext } from './WalletStack'
+import { formatCurrency } from '../lib/format'
 
 interface BankCardProps {
   variant: 'coral' | 'light' | 'dark' | 'custom'
@@ -9,9 +11,22 @@ interface BankCardProps {
   /** Only used when variant === 'custom' — e.g. a credit card's own colour. */
   customColor?: string
   icon?: ReactNode
+  /**
+   * The card's current figure (its "Current balance", or "Owed" for a card or
+   * loan), shown in the header strip ONLY while this card sits behind the front
+   * card in a fanned-out stack (StackSliverContext). Hidden on the front card,
+   * and on every card while the stack is collapsed.
+   *
+   * 🚨 It must not creep into view while the stack collapses: the strips shrink
+   * over 0.5s, so a fade-out would show the figure sliding under the card in
+   * front. Hiding is therefore instant; only showing is animated, and delayed
+   * until the cards have fanned out.
+   */
+  sliverValue?: number
 }
 
-export function BankCard({ variant, bankLabel, accountLabel, children, customColor, icon }: BankCardProps) {
+export function BankCard({ variant, bankLabel, accountLabel, children, customColor, icon, sliverValue }: BankCardProps) {
+  const showSliver = useContext(StackSliverContext)
   const isCoral = variant === 'coral'
   const isDark = variant === 'dark'
   const isCustom = variant === 'custom'
@@ -40,8 +55,20 @@ export function BankCard({ variant, bankLabel, accountLabel, children, customCol
         >
           {icon ?? <CreditCard size={18} strokeWidth={1.5} style={{ color: isDark ? 'var(--color-coral)' : undefined }} />}
         </div>
-        <div className="text-right">
-          <div className="font-display font-bold text-xl tracking-tight" style={{ color: isCoral || isCustom ? '#fff' : accentColor }}>
+        {sliverValue !== undefined && (
+          <div
+            data-sliver-value
+            aria-hidden={!showSliver}
+            className="shrink-0 px-3 h-8 flex items-center font-display tabular-nums text-base font-semibold whitespace-nowrap"
+            style={{ color: textColor, opacity: showSliver ? 1 : 0, transition: showSliver ? 'opacity 0.2s ease 0.35s' : 'none' }}
+          >
+            {sliverValue < 0 ? '-' : ''}£{formatCurrency(Math.abs(sliverValue))}
+          </div>
+        )}
+        {/* While the strip shows a figure, the NAME gives way (truncates), never the
+            figure — a clipped amount reads as a different amount. */}
+        <div className={`text-right ${showSliver && sliverValue !== undefined ? 'flex-1 min-w-0' : ''}`}>
+          <div className={`font-display font-bold text-xl tracking-tight ${showSliver && sliverValue !== undefined ? 'truncate' : ''}`} style={{ color: isCoral || isCustom ? '#fff' : accentColor }}>
             {bankLabel}
           </div>
           {accountLabel && (
