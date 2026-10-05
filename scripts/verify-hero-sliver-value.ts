@@ -6,7 +6,9 @@
 //    fades out is seen sliding under the card in front. Hiding must be instant;
 //    only showing is animated, after the fan-out.
 // 2. Clipping the figure. With a long pot or loan name, a truncated amount reads
-//    as a different amount ("£10,643." for £10,643.36). The name gives way.
+//    as a different amount ("£10,643." for £10,643.36). The figure sits on the
+//    card-type row, left of the type, and is never truncated; the name is kept
+//    to one line while it shows, so that row stays inside the visible strip.
 // 3. The front card. Its full rows are already on show; the strip figure belongs
 //    to the back cards only, so the context is provided to them alone.
 // 4. A hero face added later without a figure. Every BankCard in DeckHero passes
@@ -34,6 +36,7 @@ const home = read('src/pages/Home.tsx')
 console.log('\n── Showing and hiding ──')
 check('hiding has no transition; showing is delayed past the fan-out', /transition: showSliver \? 'opacity [^']*ease 0\.\d+s' : 'none'/.test(bankCard), true)
 check('the figure is never truncated', /data-sliver-value[\s\S]{0,200}whitespace-nowrap/.test(bankCard) && !/data-sliver-value[\s\S]{0,200}truncate/.test(bankCard), true)
+check('the figure sits on the card-type row, left of the type', /data-sliver-value[\s\S]{0,600}\{accountLabel && <span/.test(bankCard) && bankCard.indexOf('data-sliver-value') > bankCard.indexOf('{bankLabel}'), true)
 check('…the name truncates instead, only while the figure shows', /showSliver && sliverValue !== undefined \? 'truncate' : ''/.test(bankCard), true)
 
 console.log('\n── Which cards ──')

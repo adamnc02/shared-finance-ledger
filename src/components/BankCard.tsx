@@ -13,7 +13,7 @@ interface BankCardProps {
   icon?: ReactNode
   /**
    * The card's current figure (its "Current balance", or "Owed" for a card or
-   * loan), shown in the header strip ONLY while this card sits behind the front
+   * loan), shown on the card-type row, left of the type, ONLY while this card sits behind the front
    * card in a fanned-out stack (StackSliverContext). Hidden on the front card,
    * and on every card while the stack is collapsed.
    *
@@ -55,25 +55,26 @@ export function BankCard({ variant, bankLabel, accountLabel, children, customCol
         >
           {icon ?? <CreditCard size={18} strokeWidth={1.5} style={{ color: isDark ? 'var(--color-coral)' : undefined }} />}
         </div>
-        {sliverValue !== undefined && (
-          <div
-            data-sliver-value
-            aria-hidden={!showSliver}
-            className="shrink-0 px-3 h-8 flex items-center font-display tabular-nums text-base font-semibold whitespace-nowrap"
-            style={{ color: textColor, opacity: showSliver ? 1 : 0, transition: showSliver ? 'opacity 0.2s ease 0.35s' : 'none' }}
-          >
-            {sliverValue < 0 ? '-' : ''}£{formatCurrency(Math.abs(sliverValue))}
-          </div>
-        )}
-        {/* While the strip shows a figure, the NAME gives way (truncates), never the
-            figure — a clipped amount reads as a different amount. */}
-        <div className={`text-right ${showSliver && sliverValue !== undefined ? 'flex-1 min-w-0' : ''}`}>
+        {/* While the strip shows a figure, the name stays on ONE line (truncating if it
+            must), so the type row with the figure stays inside the visible strip. */}
+        <div className={`text-right ${showSliver && sliverValue !== undefined ? 'flex-1 min-w-0 ml-3' : ''}`}>
           <div className={`font-display font-bold text-xl tracking-tight ${showSliver && sliverValue !== undefined ? 'truncate' : ''}`} style={{ color: isCoral || isCustom ? '#fff' : accentColor }}>
             {bankLabel}
           </div>
-          {accountLabel && (
-            <div className="text-xs font-medium opacity-80" style={{ color: isCoral || isCustom ? '#fff' : accentColor }}>
-              {accountLabel}
+          {(accountLabel || sliverValue !== undefined) && (
+            <div className="flex items-baseline justify-end gap-2" style={{ color: isCoral || isCustom ? '#fff' : accentColor }}>
+              {sliverValue !== undefined && (
+                // Left of the card type. Never truncated: a clipped amount reads as a different amount.
+                <span
+                  data-sliver-value
+                  aria-hidden={!showSliver}
+                  className="font-display tabular-nums text-sm font-semibold whitespace-nowrap"
+                  style={{ color: textColor, opacity: showSliver ? 1 : 0, transition: showSliver ? 'opacity 0.2s ease 0.35s' : 'none' }}
+                >
+                  {sliverValue < 0 ? '-' : ''}£{formatCurrency(Math.abs(sliverValue))}
+                </span>
+              )}
+              {accountLabel && <span className="text-xs font-medium opacity-80 whitespace-nowrap">{accountLabel}</span>}
             </div>
           )}
         </div>
