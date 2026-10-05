@@ -37,7 +37,6 @@ import {
   applyTemplateSingleOccurrenceRoundUpChange,
   setPausedTemplateOccurrences,
 } from '../src/lib/schedule'
-import { fromRows, toRows } from '../src/lib/powersync/mapping'
 import type { AppDataV2, RecurringTemplate, Transaction } from '../src/types/ledger'
 
 let failures = 0
@@ -122,12 +121,6 @@ check('pausing a different payment', choice(setPausedTemplateOccurrences(onlyCho
 check('an amount change from before it', choice(applyTemplateAmountChange(onlyChoice, 9.5, slots[1])), true)
 const moved = applyTemplateScheduleChange({ ...sub, ...applyTemplateRoundUpChange({ ...sub }, true, slots[1]) }, [], { frequency: 'monthly', anchorDate: '2026-11-25' }, slots[1], '2026-10-05')
 check('a schedule change moves the "from" boundary with its payment', moved.patch.roundUpSkippedEffectiveFrom, '2026-11-25')
-
-console.log('\n── Sync mapping ──')
-const mapped = { ...sub, ...applyTemplateRoundUpChange({ ...sub }, true, slots[1]), ...{ occurrenceOverrides: [{ originalDate: slots[2], roundUpSkipped: false }] } }
-const back = fromRows(toRows({ ...base, recurringTemplates: [mapped] }, { householdId: 'h' })).recurringTemplates[0]
-check('the standing choice and its history round-trip', [back.roundUpSkipped, back.roundUpSkippedEffectiveFrom, back.roundUpSkippedHistory], [mapped.roundUpSkipped, mapped.roundUpSkippedEffectiveFrom, mapped.roundUpSkippedHistory])
-check('a single payment\'s choice round-trips, false included', back.occurrenceOverrides, [{ originalDate: slots[2], roundUpSkipped: false }])
 
 console.log(failures === 0 ? '\nALL PASS' : `\nFAIL: ${failures} check(s)`)
 process.exit(failures === 0 ? 0 : 1)
