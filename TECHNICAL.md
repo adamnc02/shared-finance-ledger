@@ -646,6 +646,14 @@ Two details that cost real time:
   `nextRuleFrom` (its new date). They differ, and 2nd → 28th makes September hold two paydays.
 - **The picker shows display dates; identity is the slot.** Always map through
   `occurrenceSlotForDate` (with the pay cycle, for follows-payday transfers).
+- **Moving the FIRST payment moves the start, exactly to the date typed.** A template's new anchor
+  is otherwise the slot of the new pattern nearest the chosen payment, after the last payment
+  before it — which keeps every earlier payment where it was. Before the first payment there are
+  none, and snapping turned a date edit into a phase edit: a schedule every 2 weeks from 21 Oct
+  could not be moved to 7 Oct (the nearest slot to 21 Oct is 21 Oct), so a new pot's transfers
+  looked frozen until then, and a not-yet-started monthly moved 21 Oct → 7 Nov went to 7 Oct.
+  `applyTemplateScheduleChange` uses the edited date as the anchor when the chosen payment is the
+  first slot. `verify-schedule-change-first-payment.ts`, with a started bill as the control.
 
 **The reconciler must resolve dates exactly as the generator does.**
 `reconcileRecurringTemplateTransactions` once used `override?.date ?? slot`, while the generator

@@ -852,7 +852,16 @@ export function applyTemplateScheduleChange(
       ? scheduleAnchorDay(template)
       : parseLocalDate(fromSlot).getDate()
   const phaseAnchor = anchorEdited ? next.anchorDate : fromSlot
-  const newAnchor = nearestSlot({ ...next, anchorDate: phaseAnchor, anchorDayOfMonth: intendedDay }, fromSlot, lastSlotBefore(template, fromSlot))
+  // 🚨 Moving the FIRST payment moves the start, exactly to the date typed.
+  // "Nearest slot to the chosen payment" exists to keep every earlier payment
+  // where it was; before the first payment there are none. Snapping instead
+  // made a not-yet-started schedule immovable to any date in the same phase —
+  // every 2 weeks from 21 Oct cannot be moved to 7 Oct, because the slot of
+  // that pattern nearest 21 Oct is 21 Oct — and sent a not-yet-started monthly
+  // moved from 21 Oct to 7 Nov to 7 Oct, the nearer of the two.
+  const previousSlot = lastSlotBefore(template, fromSlot)
+  const newAnchor =
+    anchorEdited && previousSlot === null ? next.anchorDate : nearestSlot({ ...next, anchorDate: phaseAnchor, anchorDayOfMonth: intendedDay }, fromSlot, previousSlot)
   const anchorDayOfMonth = monthBased && parseLocalDate(newAnchor).getDate() !== intendedDay ? intendedDay : undefined
   const nextSchedule: TemplateSchedule = { frequency: next.frequency, intervalWeeks: next.intervalWeeks, anchorDate: newAnchor, anchorDayOfMonth }
 
