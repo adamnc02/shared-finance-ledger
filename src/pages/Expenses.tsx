@@ -246,7 +246,7 @@ function EditSimpleTransactionForm({
   if (locations && pickingSide) {
     const otherKey = pickingSide === 'from' ? (toLocation ? transferLocationKey(toLocation) : undefined) : fromLocation ? transferLocationKey(fromLocation) : undefined
     return (
-      <div className="p-3 pt-0 border-t" style={{ borderColor: 'var(--color-track)' }}>
+      <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
         <LocationStep
           title={pickingSide === 'from' ? 'From' : 'To'}
           options={locations.options}
@@ -263,7 +263,9 @@ function EditSimpleTransactionForm({
   }
 
   return (
-    <div className="p-3 pt-0 flex flex-col gap-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
+    // The row it sits in carries the horizontal padding (TransferRowItem, `px-4 py-3`),
+    // exactly as a recurring transfer's row does, so the two expand identically.
+    <div className="mt-3 pt-3 flex flex-col gap-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
       {locations && fromLocation && toLocation && (
         <div className="flex items-center gap-2">
           <button onClick={() => setPickingSide('from')} className="flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm truncate" style={{ background: 'var(--color-bg-elevated)', color: 'var(--color-ink)' }}>
@@ -2226,10 +2228,12 @@ function TransferRowItem({
 
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={`${fromLabel} → ${toLabel}`}>
-      <div className="relative rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)' }}>
-        <button onClick={() => setIsEditing((e) => !e)} className="w-full flex items-center justify-between p-3 text-left">
+      {/* Same container, header and chevron as TransferRecurringRow, so a one-off and a recurring
+          transfer sit and expand identically in one list. */}
+      <div className="relative rounded-xl px-4 py-3" style={{ background: 'var(--color-surface)' }}>
+        <button onClick={() => setIsEditing((e) => !e)} className="w-full flex items-start justify-between gap-2 text-left">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-[var(--color-ink)] truncate flex items-center gap-1.5">
+            <p className="font-body text-sm text-[var(--color-ink)] truncate flex items-center gap-1.5">
               {isSalarySort ? (
                 <>
                   <ArrowRight size={13} className="text-[var(--color-coral)] shrink-0" />
@@ -2253,7 +2257,7 @@ function TransferRowItem({
                 </>
               )}
             </p>
-            <p className="text-xs text-[var(--color-ink-muted)] flex items-center gap-1.5">
+            <p className="text-xs text-[var(--color-ink-faint)] flex items-center gap-1.5">
               <span className="truncate">
                 {t.date}
                 {t.status === 'pending' ? ' · Pending' : ''}
@@ -2261,9 +2265,12 @@ function TransferRowItem({
               {owner && <OwnerBadge name={owner.name} />}
             </p>
           </div>
-          <p className="text-sm font-mono font-semibold shrink-0" style={{ color: touchesPersonal ? (isWithdrawal ? 'var(--color-positive)' : 'var(--color-ink)') : 'var(--color-ink)' }}>
-            {touchesPersonal ? (isWithdrawal ? '+' : '-') : ''}£{formatCurrency(t.amount)}
-          </p>
+          <div className="flex items-center gap-2 shrink-0 pt-0.5">
+            <span className="font-mono text-sm" style={{ color: touchesPersonal ? (isWithdrawal ? 'var(--color-positive)' : 'var(--color-ink)') : 'var(--color-ink)' }}>
+              {touchesPersonal ? (isWithdrawal ? '+' : '-') : ''}£{formatCurrency(t.amount)}
+            </span>
+            {isEditing ? <ChevronUp size={14} className="text-[var(--color-ink-faint)]" /> : <ChevronDown size={14} className="text-[var(--color-ink-faint)]" />}
+          </div>
         </button>
         {isEditing && (
           <EditSimpleTransactionForm
