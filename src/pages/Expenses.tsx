@@ -36,6 +36,7 @@ import {
 } from '../lib/schedule'
 import { transferLocationLabel, buildTransferLocationOptions, transferLocationKey, locationsEqual, type TransferLocationOption } from '../lib/transferLedger'
 import { TransferFromTiles } from '../components/TransferFromTiles'
+import { OneOpenRowProvider, useOneOpenRow } from '../components/OneOpenRow'
 import { groupTransfersByFrom, isSettled } from '../lib/transferGroups'
 import { LocationStep, FrequencyStep, DateStep, TransferFrequencySelect, TRANSFER_FREQUENCY_LABELS, type TransferFrequencyChoice, resolveTransferFrequencyChoice, transferFrequencyChoiceFor } from '../components/TransferSteps'
 import { findSalarySortConflicts } from '../lib/salarySortLedger'
@@ -461,6 +462,8 @@ export function Expenses() {
   const modeLabel: Record<PageMode, string> = { transactions: 'Transactions', recurring: 'Recurring', transfer: 'Transfers', overpayments: 'Overpayments' }
 
   return (
+    /* One expanded row at a time; changing pill starts with every row closed. */
+    <OneOpenRowProvider key={mode}>
     <div className="max-w-md mx-auto px-4 pt-6">
       <header className="mb-6 flex items-center justify-between">
         <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Transactions</h1>
@@ -749,6 +752,7 @@ export function Expenses() {
         </>
       )}
     </div>
+    </OneOpenRowProvider>
   )
 }
 
@@ -776,7 +780,7 @@ function AdHocTransactionRow({
   shouldFlashOnMount?: boolean
   onFlashedOnMount?: () => void
 }) {
-  const [isEditing, setIsEditing] = useState(false)
+  const [isEditing, setIsEditing] = useOneOpenRow(`transaction:${t.id}`)
   const category = data.categories.find((c) => c.id === t.categoryId)
   const card = t.creditCardId ? data.creditCards.find((c) => c.id === t.creditCardId) : undefined
   const isPositive = t.direction === 'in'
@@ -2208,7 +2212,7 @@ function TransferRowItem({
   shouldFlashOnMount?: boolean
   onFlashedOnMount?: () => void
 }) {
-  const [isEditing, setIsEditing] = useState(false)
+  const [isEditing, setIsEditing] = useOneOpenRow(`transfer:${t.id}`)
   const { active: flashActive, message: flashMessage, trigger: triggerFlash } = useSavedFlash('Transfer updated.')
   useEffect(() => {
     if (shouldFlashOnMount) {
@@ -2315,7 +2319,7 @@ function OverpaymentRowItem({
   onUpdate: (amount: number, date: string, note?: string) => void
   onRemove: () => void
 }) {
-  const [isEditing, setIsEditing] = useState(false)
+  const [isEditing, setIsEditing] = useOneOpenRow(`overpayment:${payment.id}`)
   const { active: flashActive, message: flashMessage, trigger: triggerFlash } = useSavedFlash('Payment updated.')
 
   return (
@@ -2413,7 +2417,7 @@ function LoanRecurringOverpaymentRow({
   onAssignLocation: (effectiveFrom: string, location: 'personal' | 'pot', potId?: string) => void
   onRemove: () => void
 }) {
-  const [isEditing, setIsEditing] = useState(false)
+  const [isEditing, setIsEditing] = useOneOpenRow(`recurring-overpayment:${loan.id}`)
   const { active: flashActive, message: flashMessage, trigger: triggerFlash } = useSavedFlash('Recurring overpayment updated.')
   const ownerPots = fundablePots(pots).filter((p) => p.personId === loan.ownerId)
 
@@ -2860,7 +2864,7 @@ function TransferRecurringRow({
   shouldFlashOnMount?: boolean
   onFlashedOnMount?: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useOneOpenRow(`recurring-transfer:${template.id}`)
   const [name, setName] = useState(template.name)
   // Batch 9 (2026-09-07, Bug 11) — the "Save changes"/"Save amount" button
   // below always edits an EXISTING recurring transfer, so "updated" is
@@ -3864,7 +3868,7 @@ function RecurringTransactionRow({
   shouldFlashOnMount?: boolean
   onFlashedOnMount?: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useOneOpenRow(`recurring:${template.id}`)
   const category = categories.find((c) => c.id === template.categoryId)
   // Batch 9 (2026-09-07, Bug 11) — this row is always an EXISTING
   // recurring transaction (a brand-new one flashes "Transaction saved."
@@ -3981,7 +3985,7 @@ function RecurringTransactionRow({
  * loan itself can't be deleted from Transactions either.
  */
 function SavingsRecurringDepositRow({ pot, onSave }: { pot: SavingsPot; onSave: (updates: Partial<Omit<SavingsPot, 'id' | 'personId'>>) => void }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useOneOpenRow(`savings-deposit:${pot.id}`)
   // The last deposit on or before today and the next 12, same as every
   // other "Manage upcoming payments" list (occurrenceOverrides.ts).
   // scheduledDepositDates already drops dates before the pot opened.
@@ -4053,7 +4057,7 @@ function ordinalSuffixLocal(day: number): string {
 
 /** Pots backlog item (2026-09 session) — identical shape to SavingsRecurringDepositRow above, against potLedger.ts's equivalents. */
 function PotRecurringDepositRow({ pot, onSave }: { pot: Pot; onSave: (updates: Partial<Omit<Pot, 'id' | 'personId'>>) => void }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useOneOpenRow(`pot-deposit:${pot.id}`)
   // Same window as SavingsRecurringDepositRow above.
   const { start, end } = manageUpcomingRange(new Date())
   const windowDates = trimToManageUpcoming(scheduledPotDepositDates(pot, start, end), (d) => d, new Date())
