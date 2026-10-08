@@ -174,8 +174,19 @@ for (const f of ['finance-ledger-backup-2026-09-22-PROD.json', 'finance-ledger-b
   ok(`${f}: every row says what it is and where it came from`, flat.every((d) => d.type !== '' && d.source !== ''))
 }
 
-// ── 6. Control ────────────────────────────────────────────────────────
-console.log('\n6. CONTROL: a workbook one penny out is caught')
+// ── 6. The Share Sheet gets the file alone ───────────────────────────
+console.log('\n6. SHARING: the file and nothing else')
+{
+  // iOS turns a shared `title` or `text` into a second item, and Save to
+  // Files writes it as a .txt beside every export. It cannot be seen
+  // without an iPhone, so the call itself is asserted.
+  const storage = readFileSync(new URL('../src/lib/ledgerStorage.ts', import.meta.url), 'utf8')
+  const calls = storage.match(/navigator\.share\(\{[^}]*\}\)/g) ?? []
+  ok('one share call, passing only `files`', calls.length === 1 && calls[0] === 'navigator.share({ files: [file] })', calls.join(' | '))
+}
+
+// ── 7. Control ────────────────────────────────────────────────────────
+console.log('\n7. CONTROL: a workbook one penny out is caught')
 {
   const tampered = structuredClone(fixtureDetail)
   const card = tampered.payload.cards[0]

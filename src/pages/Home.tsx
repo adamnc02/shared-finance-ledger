@@ -329,7 +329,10 @@ function StatementDownloadButton({ data }: { data: AppDataV2 }) {
           data={data}
           onCancel={() => setOpen(false)}
           onConfirm={async (range, destination, format) => {
-            setOpen(false)
+            // Preview opens OVER the sheet, which stays mounted beneath it, so
+            // closing the preview comes back to the same dates. A save is done
+            // with the sheet.
+            if (destination === 'save') setOpen(false)
             setBusy(true)
             try {
               // 🚨 ONE render, both destinations. Building separately for
