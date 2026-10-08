@@ -289,13 +289,22 @@ A button at the bottom of Home builds a **cycle statement**: one page per accoun
 date range you choose, with a running balance and the projected closing figure. Pick whole pay cycles
 from a list, or exact dates.
 
-**Preview** opens it inside the app. **Save** gives you the file — a single self-contained HTML
-document that works with no network at all, regroups itself by day, category or as a full pivot
-table, and prints to A4, one account per page. **Reset to default** puts every view setting back as
-it opened, keeping the account you are on and the theme.
+**Preview** opens it inside the app; closing it goes back to the dates you picked. **Save as**
+chooses what Save gives you:
 
-⚠️ **The saved file needs a computer.** An iPhone previews HTML without running it, so a statement
-saved to your phone shows the buttons and no table. Email or AirDrop it to a laptop — or just use
+- **Statement (HTML)** — a single self-contained file that works with no network at all, opens as
+  one flat list, regroups itself per day, by category or as a full pivot table, and prints to A4,
+  one account per page. **Reset to default** puts every view setting back as it opened, keeping the
+  account you are on and the theme.
+- **Spreadsheet (Excel)** — one sheet per account, one row per transaction across the whole cycles,
+  with every detail the app holds (type, payment method, payee, note, owner, from and to, what it
+  belongs to, where it came from, capital and interest). No totals. It opens in Numbers or Excel,
+  on the phone too. Preview is not offered for it.
+
+Either way you get the one file, nothing alongside it.
+
+⚠️ **The saved HTML file needs a computer.** An iPhone previews HTML without running it, so a
+statement saved to your phone shows the buttons and no table. Email or AirDrop it to a laptop — or just use
 Preview, which shows the same statement inside the app.
 
 ## How the sync behaves
