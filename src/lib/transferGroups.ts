@@ -46,10 +46,14 @@ export interface TransferGroup {
   oneOffs: Transaction[]
   /** What the group's recurring transfers move in the current cycle, each on its owner's cycle. */
   perCycleTotal: number
-  /** `perCycleTotal`, split by where it goes, largest first. Empty when the group has no recurring transfer due this cycle. */
+  /**
+   * `perCycleTotal`, split by where it goes, largest first — the tile's bar
+   * and the panel's key. Empty when nothing recurring is due this cycle.
+   * 🚨 Never filled from one-offs instead: a key above Recurring that
+   * describes a cleared one-off, on a tile that says "none due this cycle",
+   * reads as an unexplained payment.
+   */
   recurringByDestination: TransferDestination[]
-  /** Every one-off's amount, split by where it went, largest first. */
-  oneOffByDestination: TransferDestination[]
 }
 
 /** The amount a recurring transfer moves in its owner's cycle containing `asOf`. 0 for a paused template, or one with nothing due this cycle. */
@@ -96,7 +100,6 @@ export function groupTransfersByFrom(recurring: RecurringTemplate[], oneOffs: Tr
         oneOffs: [],
         perCycleTotal: 0,
         recurringByDestination: [],
-        oneOffByDestination: [],
       }
       groups.set(key, g)
     }
@@ -110,10 +113,6 @@ export function groupTransfersByFrom(recurring: RecurringTemplate[], oneOffs: Tr
     const thisCycle = g.recurring.map((t) => ({ to: t.transferTo, amount: transferAmountThisCycle(t, data, asOf) }))
     g.perCycleTotal = round2(thisCycle.reduce((s, x) => s + x.amount, 0))
     g.recurringByDestination = byDestination(thisCycle, data)
-    g.oneOffByDestination = byDestination(
-      g.oneOffs.map((t) => ({ to: t.toLocation, amount: t.amount })),
-      data,
-    )
   }
 
   const order = buildTransferLocationOptions(data.savingsPots, data.pots ?? [], !!data.jointAccount, data.primaryPersonId).map((o) => o.key)

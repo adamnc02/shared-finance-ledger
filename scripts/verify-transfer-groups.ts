@@ -99,7 +99,7 @@ const me = groups[0]
 check('Current Account: its per-cycle total is £150 (the paused one adds nothing)', me.perCycleTotal, 150)
 check('…split by destination, largest first', me.recurringByDestination.map((d) => [d.label, d.amount]), [['Holiday', 100], ['Bills', 50]])
 check('a group with no payment due this cycle totals 0, and has no recurring split', [groups[1].perCycleTotal, groups[1].recurringByDestination.length], [0, 0])
-check("a one-off-only group's split is its one-offs", groups[3].oneOffByDestination.map((d) => [d.label, d.amount]), [['Current Account', 25]])
+check('a one-off-only group has no split: the bar and key show only money due this cycle', [groups[3].perCycleTotal, groups[3].recurringByDestination.length], [0, 0])
 check('labels', groups.map((g) => g.label), ['Current Account', 'Joint Account', 'Holiday', 'Bills', 'Unknown'])
 
 // ── 3. The grace period ───────────────────────────────────────────────
@@ -135,6 +135,18 @@ for (const f of ['finance-ledger-backup-2026-09-22-PROD.json', 'finance-ledger-b
   check(`${f}: ${rec.length + one.length} transfers, all listed once`, listed, rec.length + one.length)
   check(`${f}: each sits under its own From`, gs.every((g) => g.recurring.every((t) => t.transferFrom && transferLocationKey(t.transferFrom) === g.key) && g.oneOffs.every((t) => t.fromLocation && transferLocationKey(t.fromLocation) === g.key)), true)
   check(`${f}: no transfer without a From`, gs.some((g) => g.key === 'unknown'), false)
+}
+
+// The reported case: three recurring transfers out of a savings pot, none
+// due in the cycle containing 8 Oct, and one cleared £600 one-off. The key
+// once fell back to that one-off and printed "£600" above Recurring.
+{
+  const raw = JSON.parse(readFileSync(F + 'finance-ledger-backup-2026-10-06-mum.json', 'utf8'))
+  const d = migrateLedgerData(raw.data ?? raw)
+  const rec = d.recurringTemplates.filter((t) => t.kind === 'transfer')
+  const one = d.transactions.filter((t) => t.type === 'transfer' && (!t.sourceType || t.sourceType === 'salary_sort'))
+  const saver = groupTransfersByFrom(rec, one, d, today).find((g) => g.from.type === 'savings')!
+  check('nothing due this cycle from the saver: no total, no key, no bar', [saver.recurring.length, saver.oneOffs.length, saver.perCycleTotal, saver.recurringByDestination.length], [3, 1, 0, 0])
 }
 
 // ── 6. Control ────────────────────────────────────────────────────────

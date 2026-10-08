@@ -58,11 +58,12 @@ export function centredScrollLeft(row: { scrollLeft: number; clientWidth: number
   return Math.max(0, Math.min(ideal, row.scrollWidth - row.clientWidth))
 }
 
-function DestinationBar({ destinations, faded, colorOf }: { destinations: TransferDestination[]; faded: boolean; colorOf: (d: TransferDestination) => string }) {
+/** This cycle's recurring money, split by destination. An empty track when nothing is due. */
+function DestinationBar({ destinations, colorOf }: { destinations: TransferDestination[]; colorOf: (d: TransferDestination) => string }) {
   return (
     <div className="flex h-1.5 rounded-full overflow-hidden gap-0.5 mt-2" style={{ background: 'var(--color-bg-elevated)' }}>
       {destinations.map((d) => (
-        <span key={d.key} style={{ flex: d.amount, background: colorOf(d), opacity: faded ? 0.4 : 1 }} />
+        <span key={d.key} style={{ flex: d.amount, background: colorOf(d) }} />
       ))}
     </div>
   )
@@ -109,7 +110,7 @@ export function TransferFromTiles({ groups, data, renderRecurring, renderOneOff,
 
   const pendingOneOffs = selected ? selected.oneOffs.filter((t) => !isSettled(t.date, t.status === 'cleared')) : []
   const settledOneOffs = selected ? selected.oneOffs.filter((t) => isSettled(t.date, t.status === 'cleared')) : []
-  const legend = selected ? (selected.recurringByDestination.length > 0 ? selected.recurringByDestination : selected.oneOffByDestination) : []
+  const legend = selected ? selected.recurringByDestination : []
 
   return (
     <div>
@@ -124,7 +125,6 @@ export function TransferFromTiles({ groups, data, renderRecurring, renderOneOff,
           const isSel = g.key === selectedKey
           const accent = transferLocationColor(g.from, data)
           const count = g.recurring.length + g.oneOffs.length
-          const bar = g.recurringByDestination.length > 0 ? g.recurringByDestination : g.oneOffByDestination
           return (
             <button
               key={g.key}
@@ -161,7 +161,7 @@ export function TransferFromTiles({ groups, data, renderRecurring, renderOneOff,
                   — <span className="font-body text-[10px] font-normal">{g.recurring.length > 0 ? 'none due this cycle' : 'one-off only'}</span>
                 </p>
               )}
-              <DestinationBar destinations={bar} faded={g.recurringByDestination.length === 0} colorOf={colorOf} />
+              <DestinationBar destinations={g.recurringByDestination} colorOf={colorOf} />
             </button>
           )
         })}
@@ -170,7 +170,8 @@ export function TransferFromTiles({ groups, data, renderRecurring, renderOneOff,
       {selected && (
         <div className="rounded-2xl p-2.5 flex flex-col gap-2" style={{ background: 'var(--color-bg-elevated)', border: `1.5px solid ${transferLocationColor(selected.from, data)}` }}>
           {legend.length > 0 && (
-            <div className="flex flex-wrap gap-x-3 gap-y-1 px-1 pt-0.5 text-[11px] text-[var(--color-ink-muted)]">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 pt-0.5 text-[11px] text-[var(--color-ink-muted)]">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-ink-faint)]">This cycle</span>
               {legend.map((d) => (
                 <span key={d.key} className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: colorOf(d) }} />
