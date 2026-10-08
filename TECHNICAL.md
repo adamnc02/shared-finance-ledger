@@ -1515,7 +1515,8 @@ comes from `lib/pickerFirst.ts`.
 
 ## 27. Module: Bills
 
-`src/pages/Bills.tsx`. One list of `RecurringTemplate`s with `kind !== 'transfer'`.
+`src/pages/Bills.tsx`. One list of `RecurringTemplate`s with `kind !== 'transfer'`. One bill is
+expanded at a time (see "One expanded row at a time" under Module: Transactions).
 
 `BillRow` → `BillEditPanel` (draft-then-Save, `draftFromTemplate`), with `FrequencyEditor`,
 `PaymentMethodEditor`, `LocationEditor`, `SplitEditor` for a joint bill, the
@@ -1572,11 +1573,15 @@ grepping across all three apps — this is unlikely to have been the only one.
 - **`EditEntryForm`** edits any ad-hoc row, including bonus and card-spend entries created
   elsewhere, since a correction should not require re-deriving where the entry came from. The
   round-up opt-out is a plain checkbox here — *editing just loads the form, no flow*.
-- **`MonthCollapsedTransactionList`** groups cleared entries by month.
+- **`MonthCollapsedTransactionList`** groups cleared entries by month. A cleared entry stays out
+  of the folders for three days so a payment that has only just cleared can still be corrected;
+  that rule is `isSettled` (`lib/transferGroups.ts`), shared with the Transfers tab's Cleared group
+  so the two cannot drift.
 - **`TransferForm`** / `TransferRowItem` / `TransferRecurringRow` — one-off and recurring
   transfers, with the shared `TransferSteps` From/To picker, a "Swap From and To" control, and the
   follows-payday / follows-cycle-start options (mutually exclusive; `schedule.ts` checks
   `followsPayday` first).
+- **`TransferFromTiles`** lays the Transfers tab out by where the money comes from; see below.
 - **`RecurringTransactionForm`** / `RecurringTransactionEditPanel` / `RecurringTransactionRow` —
   the same schedule engine as Bills, generating plain expense/income occurrences, personal only.
   They use the shared `PausedOccurrencesControl`; their old per-row form wrote the same `deleted`
@@ -1585,6 +1590,64 @@ grepping across all three apps — this is unlikely to have been the only one.
   recurring loan overpayments with the recast choice and "Manage paused overpayments".
 - **`SavingsRecurringDepositRow`** / `PotRecurringDepositRow` — a pot's standing deposit, edited
   here rather than on the Wallet.
+
+### Transfers, grouped by where the money comes from
+
+`lib/transferGroups.ts` decides the groups; `components/TransferFromTiles.tsx` draws them. One tile
+per From location in a single row that scrolls sideways, every tile closed to begin with; tapping one
+opens its transfers in a panel beneath — a key, **Recurring**, then **One-off**, where pending and
+recently cleared one-offs stay in view and older cleared ones fold into one **Cleared** group. Inside
+a group a row names only its destination, with a dot in the destination's colour; the From is the
+tile's.
+
+- **A group is keyed on `fromLocation` / `transferFrom`, never the derived `location`.** `location`
+  says which ledger a transfer is on (§"Transfers"), not where it starts: Savings → Christmas pot is
+  a `pot` transfer by location, and grouped that way it sits under the pot it is going *to*.
+- **It is a partition of what the page passes in.** The page has already applied household
+  visibility; the grouping filters nothing, and a transfer with no From gets an "Unknown" group of
+  its own rather than vanishing from the only page that edits it.
+- **The tile's figure is per pay cycle**: every occurrence of each recurring transfer in its
+  **owner's** cycle containing today — already cleared or still to come — via
+  `payCycleForTemplate`. Not a monthly equivalent (a figure no payment ever matches), and not the
+  viewer's cycle (a payday-following transfer lands on its owner's payday). A transfer whose first
+  payment is in a later cycle, or whose payments this cycle are all skipped, contributes nothing,
+  and a tile with nothing due reads "none due this cycle".
+- 🚨 **The key and the bar show only that per-cycle money — never one-offs as a fallback.** Filled
+  from one-offs when nothing recurring is due, the key prints an unexplained cleared one-off above
+  Recurring on a tile that says "none due this cycle". The key is labelled *This cycle*; with
+  nothing due there is no key and the bar is an empty track.
+- **Colours are the locations' own**: a pot's or savings pot's `color` (its Home card), coral for
+  the current account, the joint colour for the joint account.
+- **A chosen tile is scrolled so its centre meets the row's**, clamped to the row's scroll range,
+  which leaves the first tile flush left and the last flush right (`centredScrollLeft`). It is
+  measured with `getBoundingClientRect` against the row, never `offsetLeft`, which measures from
+  the nearest *positioned* ancestor — the same trap as the statement picker's lists (§"The cycle
+  statement", "What proves it").
+- A transfer just created opens its own group, so its row's confirmation flash is seen.
+
+`verify-transfer-groups.ts`: per-cycle figures with known answers and an owner's-cycle control, the
+partition and From-keying on three real backups, the derived-location control, the grace period, the
+snap arithmetic, and the nothing-due case with no key or bar.
+
+### One expanded row at a time
+
+On Transactions (all four tabs) and on Bills, opening a row closes the row that was open, in the same
+tap and across every list on the page. `components/OneOpenRow.tsx`: the page renders a
+`OneOpenRowProvider` (Transactions keys it on the tab, so changing tab starts with every row closed);
+each expandable row calls `useOneOpenRow(key)` in place of its own `useState` flag.
+
+- **Keys carry the row's kind** (`transaction:`, `recurring-transfer:`, `bill:`, …): a transaction and
+  a template can share an id.
+- **A close frees the slot only if that row holds it.** A row's Save handler closes it after the
+  write; without that rule a late close from a row that had already lost the slot would shut the row
+  that took it.
+- **Folders, the Cleared group and the From tiles are groups, not rows**, and open independently.
+- Closing a row discards an unsaved edit in it, as tapping its own chevron always has: the edit form
+  lives in the expanded part.
+- Outside a provider a row keeps its own flag, so a row component can be reused elsewhere unchanged.
+
+`OneOpenRow.test.tsx` — switching, the stale close, no-provider independence, and that every row on
+both pages uses the shared slot (a row added later with its own flag would stay open beside others).
 
 ---
 
@@ -2803,6 +2866,12 @@ own reconciliation balance, which can be months old and appears on no screen. Th
 asserted on every cash card, and deliberately **not** on loans or credit cards, where it is false by
 design (capital folding, and a card's own replay through `cardBalanceAsOf`).
 
+### The view it opens in
+
+The file opens in **Statement**, **Flat** (one list, no day groups), on **Full cycles**. Per day is
+one tap away under Group. `verify-statement-reset.ts` evaluates the `state` literal itself and
+asserts all three, with a control that a Per-day literal reads as `day`.
+
 ### Reset to default
 
 The View row's **Reset to default** puts every view setting back as the file opened — View, Group,
@@ -2822,7 +2891,15 @@ while nothing differs.
 ### Getting it out of the app
 
 One button at the bottom of Home — not per card, because one file covers the whole deck. It opens a
-range picker offering **Cancel · Preview · Save**.
+range picker offering **Cancel · Preview · Save**, with **Save as: Statement (HTML) | Spreadsheet
+(Excel)** above them. Preview is offered only for HTML — the workbook has nothing to show in the
+app — and opens *over* the picker, which stays mounted beneath it, so closing the preview returns to
+the same dates.
+
+🚨 **The Share Sheet is given the file and nothing else.** iOS shares a `title` (or `text`) passed to
+`navigator.share` as a second item, so Save to Files writes a `.txt` holding it beside the export —
+every backup and statement alike, since all of them go through `shareOrDownloadFile`. It cannot be
+seen without an iPhone, so `verify-statement-workbook.ts` asserts the call itself.
 
 🚨 **You cannot highlight dates in a native picker, and the app does not try.** `<input type="date">`
 renders its calendar in an OS-controlled shadow root; on iOS it is the system picker. So the window
@@ -2843,6 +2920,33 @@ Cycles that hold no data are **not offered**: a row of greyed "no data" entries 
 explanation. A cycle that straddles the reconciliation point is offered and tagged *partial*, because
 silently passing off a half-empty cycle as a whole one is the same class of problem as omitting one.
 
+### The Excel workbook
+
+`src/lib/statementWorkbook.ts`. One sheet per statement card, one row per transaction across the
+**whole cycles** in the payload, and 20 columns: Date (a real Excel date), Cycle, Description,
+Category, Type, Direction, Amount, the card's balance (headed with its own label — Balance, Pot
+balance, Owed, Card balance), Status, Payment method, Payee, Note, Owner, From, To, Linked to,
+Source, Capital, Interest, Rounded up from. No totals, no bands, no highlighting; a frozen header
+row and a filter on it.
+
+🚨 **A third destination for the same rows, not a third engine.** `buildStatementDetail` builds the
+payload and, beside every row, a `StatementRowDetail` in the same pass — `buildStatementPayload` is
+now a wrapper over it — so every figure in the workbook is the HTML file's figure by construction,
+and the Balance column is the row's own running balance, never a re-fold. The details are not in the
+HTML payload (the file shows none of them), which is byte-identical to before they existed.
+
+- **Dates are serial day numbers computed in UTC from the ISO digits.** A local-time `Date` lands a
+  BST row on the day before.
+- **Sheet names are made safe and unique**: `[]:*?/\` removed, at most 31 characters, and a second
+  card with the same label (ignoring case) gets " (2)". Excel refuses the whole file over one
+  duplicate.
+- **XML 1.0 cannot carry most control characters**, and one pasted into a note makes Excel refuse
+  the file; they are stripped.
+- **Written by hand**, as SpreadsheetML parts zipped with `fflate` (bundled — `personal-ledger` is
+  offline), because the app only ever writes one simple shape of sheet. Each autofilter carries its
+  `_xlnm._FilterDatabase` defined name, without which Excel "repairs" the file on opening. A fixed
+  zip timestamp makes the same data the same bytes.
+
 ### What proves it
 
 | Script | What it covers |
@@ -2850,6 +2954,8 @@ silently passing off a half-empty cycle as a whole one is the same class of prob
 | `verify-cycle-statement.ts` | 189 assertions against a statement **the app generated**, through the real template — sort order, the grand total across five pivot shapes, collapse arithmetic, the control audit, the window labels |
 | `verify-cycle-statement-matches-home.ts` | Every row and balance against what Home renders, with a control that moves one penny and proves the comparison can fail |
 | `verify-statement-picker.ts` | The offered cycles are real and round-trip through `resolveCycleBounds`; the default window equals `horizonCycles(…, 'three_cycles')`; a control that moves the reconciliation date and proves the list shortens |
+| `verify-statement-reset.ts` | The view the file opens in (Statement, Flat, Full cycles), and what Reset to default restores |
+| `verify-statement-workbook.ts` | Reads the `.xlsx` bytes back and compares every row of every sheet with the payload — date, amount, balance, description, split — on the fixture and three real backups; well-formed XML; sheet names; dates across BST; the share call; and controls that a one-penny change or a dropped row is caught |
 
 **The single most valuable assertion** is that the grand total is unchanged across five different
 pivot shapes. A pivot that silently changes a total while looking right is the failure the whole

@@ -36,6 +36,17 @@ const snapshotAt = script.indexOf('var DEFAULTS = JSON.stringify(state)')
 check('taken immediately after the state literal', snapshotAt > stateEnd && script.slice(stateEnd, snapshotAt).trim().startsWith('/*'), true)
 check('…before anything writes to state', /state\.\w+(\.\w+)?\s*=[^=]/.test(script.slice(0, snapshotAt)), false)
 
+console.log('\n── The view it opens in, which is what a reset returns to ──')
+// The literal itself, evaluated — not a regex over it, so a comment or a
+// reordering cannot fool the check.
+const literal = script.slice(script.indexOf('{'), stateEnd - 1)
+const openState = (src: string) => new Function('CARDS', `return ${src}`)([{ id: 'c' }]) as { mode: string; group: string; range: string }
+check('opens in Statement', openState(literal).mode, 'statement')
+check('opens Flat, not Per day', openState(literal).group, 'flat')
+check('opens on Full cycles', openState(literal).range, 'full')
+// Control: the same reader on a Per-day literal reports 'day', so the check above can fail.
+check('control: a Per-day literal reads as day', openState(literal.replace("group: 'flat'", "group: 'day'")).group, 'day')
+
 console.log('\n── What a reset covers ──')
 const handler = script.slice(script.indexOf("getElementById('resetView').addEventListener"), script.indexOf("var drawerBtn"))
 check('every key of the snapshot is restored', handler.includes('Object.keys(fresh).forEach(function (k) { state[k] = fresh[k]; })'), true)

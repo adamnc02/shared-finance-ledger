@@ -447,7 +447,8 @@
   var state = {
     card: CARDS[0].id,
     mode: 'statement',
-    group: 'day',
+    /* The statement opens as one flat list; Per day is a choice. */
+    group: 'flat',
     subtotals: 'top',
     split: false,
     range: 'full',

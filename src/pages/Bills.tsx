@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { OneOpenRowProvider, useOneOpenRow } from '../components/OneOpenRow'
 import { formatCurrency, formatFullDate } from '../lib/format'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Plus, ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -216,6 +217,8 @@ export function Bills() {
   const filterOptions: ('all' | BillLocation)[] = ['all', 'personal', ...(myBills.some((t) => t.location === 'joint') ? (['joint'] as const) : []), ...(myBills.some((t) => t.location === 'pot') ? (['pot'] as const) : [])]
 
   return (
+    /* One expanded bill at a time. */
+    <OneOpenRowProvider>
     <div className="max-w-md mx-auto px-4 pt-6">
       <header className="mb-6 flex items-center justify-between">
         <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Bills</h1>
@@ -335,6 +338,7 @@ export function Bills() {
         )}
       </div>
     </div>
+    </OneOpenRowProvider>
   )
 }
 
@@ -429,7 +433,7 @@ function BillRow({
   shouldFlashOnMount?: boolean
   onFlashedOnMount?: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useOneOpenRow(`bill:${template.id}`)
   const category = categories.find((c) => c.id === template.categoryId)
   // Batch 9 (2026-09-07, Bug 11) — this row is always an EXISTING bill
   // (a brand-new one flashes on mount instead, from BillsListSection's

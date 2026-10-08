@@ -12,6 +12,7 @@ import templateHtml from '../statement/statement-template.html?raw'
 import type { AppDataV2 } from '../types/ledger'
 import { buildStatementPayload, renderStatementHtml, statementFilename, type StatementOptions } from './statement'
 import { shareOrDownloadFile } from './ledgerStorage'
+import { buildStatementWorkbook, XLSX_MIME } from './statementWorkbook'
 
 /** The template as it ships in the repo. */
 export function statementTemplate(): string {
@@ -43,4 +44,14 @@ export async function shareCycleStatement(statement: { html: string; filename: s
 /** Build and share in one step, for anywhere that wants the file and not the viewer. */
 export async function downloadCycleStatement(data: AppDataV2, options: StatementOptions): Promise<void> {
   await shareCycleStatement(buildCycleStatement(data, options))
+}
+
+/**
+ * The same window as an Excel workbook, straight to the Share Sheet. Built
+ * from buildStatementDetail — the build the HTML file comes from — so the
+ * two cannot disagree about a figure.
+ */
+export async function shareCycleStatementWorkbook(data: AppDataV2, options: StatementOptions): Promise<void> {
+  const { bytes, filename } = buildStatementWorkbook(data, options)
+  await shareOrDownloadFile(new Uint8Array(bytes), filename, XLSX_MIME)
 }
