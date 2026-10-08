@@ -215,7 +215,8 @@ export function serialiseLedgerBackup(data: AppDataV2): string {
  * failure — and a second copy of it would be a second thing to get wrong
  * on a device that is awkward to debug.
  */
-export async function shareOrDownloadFile(contents: string, filename: string, mimeType: string): Promise<void> {
+export async function shareOrDownloadFile(contents: string | Uint8Array<ArrayBuffer>, filename: string, mimeType: string): Promise<void> {
+  // Text (a backup, the statement's HTML) or bytes (the statement's .xlsx).
   const blob = new Blob([contents], { type: mimeType })
   const file = new File([blob], filename, { type: mimeType })
 

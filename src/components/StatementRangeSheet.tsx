@@ -42,10 +42,17 @@ export interface StatementRangeSheetProps {
    * is a step that answers a question the person already knew the answer
    * to when they opened the sheet.
    */
-  onConfirm: (range: { selectedStart: string; selectedEnd: string }, destination: 'preview' | 'save') => void
+  onConfirm: (range: { selectedStart: string; selectedEnd: string }, destination: 'preview' | 'save', format: StatementFormat) => void
   /** Overridable for tests; the app always passes today. */
   asOfDate?: Date
 }
+
+/**
+ * What Save produces: the statement itself (`html`), or the same rows as a
+ * flat Excel ledger, one sheet per card (`xlsx`). Preview is always the
+ * statement — the workbook has nothing to show in the app.
+ */
+export type StatementFormat = 'html' | 'xlsx'
 
 /** How far either side of "now" the list of offerable cycles reaches. Twelve back is a year of history; twelve forward is further than any schedule is meaningful. */
 const CYCLES_BACK = 12
@@ -142,6 +149,7 @@ export function StatementRangeSheet({ data, onCancel, onConfirm, asOfDate }: Sta
   // already means, so the statement opens on something the person
   // recognises. Read from THREE_CYCLES_AHEAD; never hardcode 4 (the default window is the Home page's own horizon).
   const [mode, setMode] = useState<'cycles' | 'exact'>('cycles')
+  const [format, setFormat] = useState<StatementFormat>('html')
   const [fromIndex, setFromIndex] = useState(currentIndex)
   const [toIndex, setToIndex] = useState(Math.min(currentIndex + THREE_CYCLES_AHEAD, cycles.length - 1))
   const [exactStart, setExactStart] = useState(cycles[currentIndex]?.start ?? iso(asOf))
@@ -339,18 +347,35 @@ export function StatementRangeSheet({ data, onCancel, onConfirm, asOfDate }: Sta
           </p>
         </div>
 
-        <div className="flex gap-2 mt-4">
+        <div className="flex items-center gap-2 mt-4">
+          <span className="text-[11px] font-medium text-[var(--color-ink-muted)] shrink-0">Save as</span>
+          <div className="flex flex-1 gap-1 p-1 rounded-full" style={{ background: 'var(--color-bg-elevated)' }}>
+            {(['html', 'xlsx'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFormat(f)}
+                aria-pressed={format === f}
+                className="flex-1 py-1.5 rounded-full text-xs font-medium"
+                style={{ background: format === f ? 'var(--color-surface)' : 'transparent', color: format === f ? 'var(--color-ink)' : 'var(--color-ink-muted)' }}
+              >
+                {f === 'html' ? 'Statement (HTML)' : 'Spreadsheet (Excel)'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex gap-2 mt-3">
           <button onClick={onCancel} className="flex-1 py-2.5 rounded-full text-sm font-medium text-[var(--color-ink-muted)]" style={{ background: 'var(--color-bg-elevated)' }}>
             Cancel
           </button>
           <button
-            onClick={() => onConfirm(selected, 'preview')}
+            onClick={() => onConfirm(selected, 'preview', 'html')}
             className="flex-1 py-2.5 rounded-full text-sm font-semibold text-[var(--color-ink)]"
             style={{ background: 'var(--color-bg-elevated)', border: '1px solid var(--color-coral)' }}
           >
             Preview
           </button>
-          <button onClick={() => onConfirm(selected, 'save')} className="flex-1 py-2.5 rounded-full text-sm font-semibold text-white" style={{ background: 'var(--color-coral)' }}>
+          <button onClick={() => onConfirm(selected, 'save', format)} className="flex-1 py-2.5 rounded-full text-sm font-semibold text-white" style={{ background: 'var(--color-coral)' }}>
             Save
           </button>
         </div>
@@ -361,9 +386,18 @@ export function StatementRangeSheet({ data, onCancel, onConfirm, asOfDate }: Sta
             page with buttons and no table is indistinguishable from a
             broken statement (Adam, 2026-09-24 UAT). */}
         <p className="text-[10.5px] text-center mt-2.5 leading-relaxed text-[var(--color-ink-faint)]">
-          <strong className="text-[var(--color-ink-muted)]">Preview</strong> opens it here.{' '}
-          <strong className="text-[var(--color-ink-muted)]">Save</strong> gives you the file — iPhones can't open it, so email or AirDrop it to
-          your laptop.
+          <strong className="text-[var(--color-ink-muted)]">Preview</strong> opens the statement here.{' '}
+          {format === 'html' ? (
+            <>
+              <strong className="text-[var(--color-ink-muted)]">Save</strong> gives you the file — iPhones can't open it, so email or AirDrop it to
+              your laptop.
+            </>
+          ) : (
+            <>
+              <strong className="text-[var(--color-ink-muted)]">Save</strong> gives you a spreadsheet: one sheet per card, every transaction in
+              the whole cycles, no totals. It opens in Numbers or Excel, on the phone too.
+            </>
+          )}
         </p>
       </div>
     </div>,

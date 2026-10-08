@@ -45,7 +45,7 @@ import type { AppDataV2, CreditCard, Loan, Pot, SavingsPot, Transaction } from '
 import { buildDeck, deckEntryKey, heroLabel, type DeckEntry } from '../lib/deck'
 import { StatementRangeSheet } from '../components/StatementRangeSheet'
 import { StatementViewer } from '../components/StatementViewer'
-import { buildCycleStatement, shareCycleStatement } from '../lib/statementFile'
+import { buildCycleStatement, shareCycleStatement, shareCycleStatementWorkbook } from '../lib/statementFile'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -328,7 +328,7 @@ function StatementDownloadButton({ data }: { data: AppDataV2 }) {
         <StatementRangeSheet
           data={data}
           onCancel={() => setOpen(false)}
-          onConfirm={async (range, destination) => {
+          onConfirm={async (range, destination, format) => {
             setOpen(false)
             setBusy(true)
             try {
@@ -336,6 +336,10 @@ function StatementDownloadButton({ data }: { data: AppDataV2 }) {
               // the preview and the download would be two chances to
               // differ, on the one artefact whose entire value is that
               // its figures are right.
+              if (destination === 'save' && format === 'xlsx') {
+                await shareCycleStatementWorkbook(data, range)
+                return
+              }
               const built = buildCycleStatement(data, range)
               if (destination === 'preview') setStatement(built)
               else await shareCycleStatement(built)

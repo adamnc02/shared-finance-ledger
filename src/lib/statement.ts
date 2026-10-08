@@ -17,7 +17,7 @@
 // the view in the file does not change it.
 
 import { addDays } from 'date-fns'
-import type { AppDataV2, Transaction } from '../types/ledger'
+import type { AppDataV2, Transaction, TransactionType, PaymentMethod } from '../types/ledger'
 import { buildDeck, deckEntryKey, heroLabel, type DeckEntry } from './deck'
 import { computeProjectionToDate, cyclesInRange } from './projection'
 import { computeJointAccountProjectionToDate, jointAccountSignedAmount } from './jointAccountLedger'
@@ -29,6 +29,7 @@ import { isLedgerTransaction, signedAmount } from './runningBalance'
 import { compareByDateSalaryFirst } from './cycleSummary'
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
 import { formatCurrency } from './format'
+import { transferLocationLabel } from './transferLedger'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -98,6 +99,38 @@ export interface StatementMeta {
 export interface StatementPayload {
   meta: StatementMeta
   cards: StatementCard[]
+}
+
+/**
+ * Everything else known about one statement row, for the Excel export.
+ * Built beside the row, in the same pass, so a figure can never come from
+ * anywhere but the row itself. Not part of the HTML payload: the file
+ * shows none of it, and carrying it would only make the file larger.
+ * Empty string = not applicable to this row.
+ */
+export interface StatementRowDetail {
+  /** What the app calls this kind of movement — "Bill payment", "Transfer", "Monthly Repayment". */
+  type: string
+  paymentMethod: string
+  payee: string
+  note: string
+  /** Whose money it is, by name. */
+  owner: string
+  /** Transfers only. */
+  from: string
+  to: string
+  /** The bill, loan, card, pot or savings pot this row belongs to. */
+  linkedTo: string
+  /** Where the row came from: logged by hand, a recurring payment, a loan schedule… */
+  source: string
+  /** A rounded-up card expense's original price; the row's amount is the rounded figure. */
+  roundedFrom: number | null
+}
+
+/** The payload plus one detail per row, parallel to `payload.cards[i].rows`. */
+export interface StatementDetail {
+  payload: StatementPayload
+  details: StatementRowDetail[][]
 }
 
 /**
@@ -213,6 +246,15 @@ export interface StatementOptions {
  * here rather than a silent filter somewhere in the rendering.
  */
 export function buildStatementPayload(data: AppDataV2, options: StatementOptions): StatementPayload {
+  return buildStatementDetail(data, options).payload
+}
+
+/**
+ * The payload and, beside every row, its detail for the Excel export. One
+ * build serves both, so the workbook and the HTML file cannot disagree
+ * about a single figure.
+ */
+export function buildStatementDetail(data: AppDataV2, options: StatementOptions): StatementDetail {
   const asOfDate = options.asOfDate ?? new Date()
   const personId = data.primaryPersonId
   const payCycle = data.payCycles.find((pc) => pc.personId === personId)
@@ -254,13 +296,92 @@ export function buildStatementPayload(data: AppDataV2, options: StatementOptions
   const windowStartDate = parseLocalDate(fullRangeStart)
   const windowEndDate = parseLocalDate(fullRangeEnd)
 
-  const cards = buildDeck(data)
+  const built = buildDeck(data)
     // 🚨 The named exclusion (the one deliberate exclusion from "one section per deck card"). Not a silent filter.
     .filter((entry) => entry.kind !== 'household')
     .map((entry) => buildCard(entry, data, { fullRangeStart, fullRangeEnd, windowStartDate, windowEndDate, cycles, asOfDate }))
-    .filter((card): card is StatementCard => card !== null)
+    .filter((b): b is BuiltCard => b !== null)
 
-  return { meta, cards }
+  return { payload: { meta, cards: built.map((b) => b.card) }, details: built.map((b) => b.details) }
+}
+
+interface BuiltCard {
+  card: StatementCard
+  details: StatementRowDetail[]
+}
+
+const TYPE_LABELS: Record<TransactionType, string> = {
+  bill_payment: 'Bill payment',
+  loan_payment: 'Loan payment',
+  expense: 'Expense',
+  income: 'Income',
+  bonus: 'Bonus',
+  salary: 'Salary',
+  pension_income: 'Pension income',
+  credit_card_spend: 'Card spend',
+  credit_card_payment: 'Card payment',
+  savings_deposit: 'Savings deposit',
+  savings_withdrawal: 'Savings withdrawal',
+  savings_interest: 'Savings interest',
+  joint_deposit: 'Joint deposit',
+  joint_withdrawal: 'Joint withdrawal',
+  pot_deposit: 'Pot deposit',
+  pot_withdrawal: 'Pot withdrawal',
+  transfer: 'Transfer',
+}
+
+const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  cash: 'Cash',
+  card: 'Card',
+  bank_transfer: 'Bank transfer',
+  direct_debit: 'Direct debit',
+  standing_order: 'Standing order',
+}
+
+const SOURCE_LABELS: Record<NonNullable<Transaction['sourceType']>, string> = {
+  recurring_template: 'Recurring',
+  loan: 'Loan schedule',
+  loan_overpayment: 'Loan overpayment',
+  loan_recurring_overpayment: 'Recurring loan overpayment',
+  loan_settlement: 'Loan settlement',
+  credit_card_lump_payment: 'Card lump payment',
+  pension: 'Pension',
+  savings_pot: 'Savings schedule',
+  pot: 'Pot schedule',
+  salary_sort: 'Salary Sort',
+}
+
+const sourceLabel = (sourceType: string | undefined, fallback: string) =>
+  sourceType ? SOURCE_LABELS[sourceType as NonNullable<Transaction['sourceType']>] ?? sourceType : fallback
+
+const nameOf = (list: { id: string; name: string }[] | undefined, id: string | undefined) => (id ? (list ?? []).find((x) => x.id === id)?.name ?? '' : '')
+
+/** A transaction's detail — every field the app holds on it, in words. */
+function transactionDetail(t: Transaction, data: AppDataV2): StatementRowDetail {
+  const isTransfer = t.type === 'transfer'
+  const template = t.sourceType === 'recurring_template' ? data.recurringTemplates.find((r) => r.id === t.sourceId) : undefined
+  const linkedTo =
+    template?.name ||
+    (t.sourceType?.startsWith('loan') ? nameOf(data.loans, t.sourceId) : '') ||
+    nameOf(data.creditCards, t.creditCardId) ||
+    (isTransfer ? '' : nameOf(data.pots, t.potId) || nameOf(data.savingsPots, t.savingsPotId))
+  return {
+    type: TYPE_LABELS[t.type] ?? t.type,
+    paymentMethod: PAYMENT_METHOD_LABELS[t.paymentMethod] ?? t.paymentMethod ?? '',
+    payee: t.payee ?? '',
+    note: t.note ?? '',
+    owner: nameOf(data.people, t.ownerId),
+    from: isTransfer ? transferLocationLabel(t.fromLocation, data.savingsPots, data.pots ?? []) : '',
+    to: isTransfer ? transferLocationLabel(t.toLocation, data.savingsPots, data.pots ?? []) : '',
+    linkedTo,
+    source: sourceLabel(t.sourceType, t.id.startsWith('generated:') ? 'Scheduled' : 'Logged by hand'),
+    roundedFrom: t.roundedFrom ?? null,
+  }
+}
+
+/** A row that has no Transaction behind it — a loan schedule, savings or card row. */
+function plainDetail(type: string, linkedTo: string, source: string, note = ''): StatementRowDetail {
+  return { type, paymentMethod: '', payee: '', note, owner: '', from: '', to: '', linkedTo, source, roundedFrom: null }
 }
 
 interface CardContext {
@@ -303,7 +424,7 @@ function transactionRow(t: Transaction, index: number, balance: number, sign: (t
   }
 }
 
-function buildCard(entry: DeckEntry, data: AppDataV2, ctx: CardContext): StatementCard | null {
+function buildCard(entry: DeckEntry, data: AppDataV2, ctx: CardContext): BuiltCard | null {
   const id = deckEntryKey(entry)
   const label = heroLabel(entry, data)
   const personId = data.primaryPersonId
@@ -322,15 +443,18 @@ function buildCard(entry: DeckEntry, data: AppDataV2, ctx: CardContext): Stateme
         compareByDateSalaryFirst,
       )
       return {
-        id,
-        label,
-        kind: 'personal',
-        sub: 'Personal current account',
-        openingBalance: openingInWindow,
-        openingDate: ctx.fullRangeStart,
-        balanceLabel: 'Balance',
-        hasSplit: false,
-        rows: rows.map(({ row, balance }, i) => transactionRow(row, i, balance, signedAmount, data, ctx, id)),
+        card: {
+          id,
+          label,
+          kind: 'personal',
+          sub: 'Personal current account',
+          openingBalance: openingInWindow,
+          openingDate: ctx.fullRangeStart,
+          balanceLabel: 'Balance',
+          hasSplit: false,
+          rows: rows.map(({ row, balance }, i) => transactionRow(row, i, balance, signedAmount, data, ctx, id)),
+        },
+        details: rows.map(({ row }) => transactionDetail(row, data)),
       }
     }
 
@@ -346,15 +470,18 @@ function buildCard(entry: DeckEntry, data: AppDataV2, ctx: CardContext): Stateme
         compareByDateSalaryFirst,
       )
       return {
-        id,
-        label,
-        kind: 'joint',
-        sub: 'Joint account',
-        openingBalance: openingInWindow,
-        openingDate: ctx.fullRangeStart,
-        balanceLabel: 'Balance',
-        hasSplit: false,
-        rows: rows.map(({ row, balance }, i) => transactionRow(row, i, balance, jointAccountSignedAmount, data, ctx, id)),
+        card: {
+          id,
+          label,
+          kind: 'joint',
+          sub: 'Joint account',
+          openingBalance: openingInWindow,
+          openingDate: ctx.fullRangeStart,
+          balanceLabel: 'Balance',
+          hasSplit: false,
+          rows: rows.map(({ row, balance }, i) => transactionRow(row, i, balance, jointAccountSignedAmount, data, ctx, id)),
+        },
+        details: rows.map(({ row }) => transactionDetail(row, data)),
       }
     }
 
@@ -365,15 +492,18 @@ function buildCard(entry: DeckEntry, data: AppDataV2, ctx: CardContext): Stateme
       const sign = (t: Transaction) => potSignedAmount(t, pot.id)
       const { rows, openingInWindow } = foldAndTrim(projection.transactions, projection.openingBalance, sign, ctx.fullRangeStart, ctx.fullRangeEnd, compareByDateSalaryFirst)
       return {
-        id,
-        label,
-        kind: 'pot',
-        sub: `Bills pot · ${pot.name}`,
-        openingBalance: openingInWindow,
-        openingDate: ctx.fullRangeStart,
-        balanceLabel: 'Pot balance',
-        hasSplit: false,
-        rows: rows.map(({ row, balance }, i) => transactionRow(row, i, balance, sign, data, ctx, id)),
+        card: {
+          id,
+          label,
+          kind: 'pot',
+          sub: `Bills pot · ${pot.name}`,
+          openingBalance: openingInWindow,
+          openingDate: ctx.fullRangeStart,
+          balanceLabel: 'Pot balance',
+          hasSplit: false,
+          rows: rows.map(({ row, balance }, i) => transactionRow(row, i, balance, sign, data, ctx, id)),
+        },
+        details: rows.map(({ row }) => transactionDetail(row, data)),
       }
     }
 
@@ -417,7 +547,10 @@ function buildCard(entry: DeckEntry, data: AppDataV2, ctx: CardContext): Stateme
           balanceText: `£${formatCurrency(running)}`,
         }
       })
-      return { id, label, kind: 'savings_pot', sub: `Savings · ${pot.name}`, openingBalance: opening, openingDate: ctx.fullRangeStart, balanceLabel: 'Pot balance', hasSplit: false, rows }
+      return {
+        card: { id, label, kind: 'savings_pot', sub: `Savings · ${pot.name}`, openingBalance: opening, openingDate: ctx.fullRangeStart, balanceLabel: 'Pot balance', hasSplit: false, rows },
+        details: rows.map((r) => plainDetail(r.description, pot.name, 'Savings schedule')),
+      }
     }
 
     case 'loan': {
@@ -468,17 +601,20 @@ function buildCard(entry: DeckEntry, data: AppDataV2, ctx: CardContext): Stateme
           balanceText: `£${formatCurrency(r.balanceAfter)}`,
         }))
       return {
-        id,
-        label,
-        kind: 'loan',
-        sub: `Loan · ${loan.name}`,
-        // Owed the day before the window opens — the engine's own figure,
-        // so the opening tile and the first row's balance agree.
-        openingBalance: summarizeLoan(loan, addDays(ctx.windowStartDate, -1)).remainingBalance,
-        openingDate: ctx.fullRangeStart,
-        balanceLabel: 'Owed',
-        hasSplit: rows.some((r) => r.interest !== null && r.interest > 0),
-        rows,
+        card: {
+          id,
+          label,
+          kind: 'loan',
+          sub: `Loan · ${loan.name}`,
+          // Owed the day before the window opens — the engine's own figure,
+          // so the opening tile and the first row's balance agree.
+          openingBalance: summarizeLoan(loan, addDays(ctx.windowStartDate, -1)).remainingBalance,
+          openingDate: ctx.fullRangeStart,
+          balanceLabel: 'Owed',
+          hasSplit: rows.some((r) => r.interest !== null && r.interest > 0),
+          rows,
+        },
+        details: rows.map((r) => plainDetail(r.description, loan.name, 'Loan schedule')),
       }
     }
 
@@ -518,7 +654,10 @@ function buildCard(entry: DeckEntry, data: AppDataV2, ctx: CardContext): Stateme
           balanceText: `£${formatCurrency(balance)}`,
         }
       })
-      return { id, label, kind: 'credit_card', sub: `Credit card · ${card.name}`, openingBalance: opening, openingDate: ctx.fullRangeStart, balanceLabel: 'Card balance', hasSplit: false, rows }
+      return {
+        card: { id, label, kind: 'credit_card', sub: `Credit card · ${card.name}`, openingBalance: opening, openingDate: ctx.fullRangeStart, balanceLabel: 'Card balance', hasSplit: false, rows },
+        details: flat.map((r) => plainDetail(r.type === 'credit_card_payment' ? 'Card payment' : 'Card spend', card.name, sourceLabel(r.sourceType, 'Logged by hand'), r.note ?? '')),
+      }
     }
 
     // 🚨 Household is excluded before this switch is reached (the one deliberate exclusion from "one section per deck card"). It
