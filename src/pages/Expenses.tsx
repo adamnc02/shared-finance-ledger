@@ -35,12 +35,14 @@ import {
   payCycleForTemplate,
 } from '../lib/schedule'
 import { transferLocationLabel, buildTransferLocationOptions, transferLocationKey, locationsEqual, type TransferLocationOption } from '../lib/transferLedger'
+import { TransferFromTiles } from '../components/TransferFromTiles'
+import { groupTransfersByFrom, isSettled } from '../lib/transferGroups'
 import { LocationStep, FrequencyStep, DateStep, TransferFrequencySelect, TRANSFER_FREQUENCY_LABELS, type TransferFrequencyChoice, resolveTransferFrequencyChoice, transferFrequencyChoiceFor } from '../components/TransferSteps'
 import { findSalarySortConflicts } from '../lib/salarySortLedger'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { RecurringChangeConfirmModal } from '../components/RecurringChangeConfirmModal'
 import { EffectiveDatedChangeFlow, type RecurringChangeField, type ChangeScope } from '../components/EffectiveDatedChangeFlow'
-import { addYears, addDays } from 'date-fns'
+import { addYears } from 'date-fns'
 import { manageUpcomingRange, trimToManageUpcoming } from '../lib/occurrenceOverrides'
 import { CREDIT_CARD_CATEGORY_ID } from '../types/ledger'
 import type { PaymentMethod, RecurrenceFrequency, RecurringTemplate, SavingsPot, Pot, Transaction, TransferLocation, AppDataV2, Loan, CreditCard, LoanRecurringOverpayment, Category, PayCycleConfig } from '../types/ledger'
@@ -91,7 +93,7 @@ const RECURRING_FREQUENCY_LABELS: Record<'weekly' | 'every_n_weeks' | 'monthly' 
 }
 type RecurringFrequency = keyof typeof RECURRING_FREQUENCY_LABELS
 
-import { todayIso, toLocalIsoDate } from '../lib/date'
+import { todayIso } from '../lib/date'
 import { fundablePots, unroundedAmount, roundUpAvailable, roundUpTarget, roundUpUplift, coinJarForOwner } from '../lib/roundUp'
 import { visibleToMe, touchesJointAccount, isSomeoneElses } from '../lib/householdView'
 import { OwnerBadge } from '../components/OwnerBadge'
@@ -137,9 +139,8 @@ function MonthCollapsedTransactionList<T>({
   // more than 3 days old now groups; anything cleared today or within the
   // last 2 days stays in the flat, ungrouped list alongside pending items
   // ("for emergency editing," per Adam's own spec).
-  const recentCutoffIso = toLocalIsoDate(addDays(new Date(), -3))
-  const pending = items.filter((i) => !isCleared(i) || getDate(i) > recentCutoffIso)
-  const cleared = items.filter((i) => isCleared(i) && getDate(i) <= recentCutoffIso)
+  const pending = items.filter((i) => !isSettled(getDate(i), isCleared(i)))
+  const cleared = items.filter((i) => isSettled(getDate(i), isCleared(i)))
 
   // Grouped by calendar month (YYYY-MM) — items arrive already sorted by
   // the caller (each pill's own list is sorted before this component ever
@@ -617,11 +618,14 @@ export function Expenses() {
             />
           )}
 
-          <div className="flex flex-col gap-2">
-            {recurringTransfers.map((template) => (
+          <TransferFromTiles
+            groups={groupTransfersByFrom(recurringTransfers, transferTransactions, data)}
+            data={data}
+            revealId={justCreatedTransferId}
+            renderRecurring={(template, destinationColor) => (
               <TransferRecurringRow
-                key={template.id}
                 template={template}
+                destinationColor={destinationColor}
                 owner={ownerBadgeFor(template.ownerId)}
                 savingsPots={data.savingsPots}
                 pots={data.pots}
@@ -635,17 +639,11 @@ export function Expenses() {
                 shouldFlashOnMount={justCreatedTransferId === template.id}
                 onFlashedOnMount={() => setJustCreatedTransferId(null)}
               />
-            ))}
-
-            <MonthCollapsedTransactionList
-              items={transferTransactions}
-              getDate={(t) => t.date}
-              isCleared={(t) => t.status === 'cleared'}
-              keyOf={(t) => t.id}
-              emptyMessage={recurringTransfers.length === 0 ? 'No transfers logged yet.' : ''}
-              renderRow={(t) => (
+            )}
+            renderOneOff={(t, destinationColor) => (
                 <TransferRowItem
                   t={t}
+                  destinationColor={destinationColor}
                   owner={ownerBadgeFor(t.ownerId)}
                   savingsPots={data.savingsPots}
                   pots={data.pots}
@@ -655,9 +653,11 @@ export function Expenses() {
                   shouldFlashOnMount={justCreatedTransferId === t.id}
                   onFlashedOnMount={() => setJustCreatedTransferId(null)}
                 />
-              )}
-            />
-          </div>
+            )}
+          />
+          {recurringTransfers.length === 0 && transferTransactions.length === 0 && !adding && (
+            <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">No transfers logged yet.</p>
+          )}
         </>
       ) : (
         <>
@@ -718,8 +718,7 @@ export function Expenses() {
           )}
 
           {/* 2026-09-09 third followup (Adam-reported) — one flat list,
-              loans and cards mixed together sorted by date, same as the
-              Transfers pill's own single MonthCollapsedTransactionList —
+              loans and cards mixed together sorted by date —
               no per-loan/per-card section dividers. */}
           <div className="flex flex-col gap-2">
             {[
@@ -2182,6 +2181,7 @@ function OverpaymentCreateForm({
 /** Transfer row — swipe to delete, tap to expand/edit. Mirrors the old SavingsTransactionRowItem/JointTransactionRowItem/PotTransactionRowItem shape, generalised across all three "other side" kinds. */
 function TransferRowItem({
   t,
+  destinationColor,
   owner,
   savingsPots,
   pots,
@@ -2192,6 +2192,8 @@ function TransferRowItem({
   onFlashedOnMount,
 }: {
   t: Transaction
+  /** Set inside a From group: the colour of where the money goes (matching the tile's bar and key), and the row then names only the destination, since the From is the group's. */
+  destinationColor?: string
   /** Set only when this transfer belongs to someone else — see OwnerBadge. */
   owner?: { name: string }
   savingsPots: SavingsPot[]
@@ -2234,6 +2236,7 @@ function TransferRowItem({
         <button onClick={() => setIsEditing((e) => !e)} className="w-full flex items-start justify-between gap-2 text-left">
           <div className="min-w-0">
             <p className="font-body text-sm text-[var(--color-ink)] truncate flex items-center gap-1.5">
+              {destinationColor && <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: destinationColor }} aria-hidden="true" />}
               {isSalarySort ? (
                 <>
                   <ArrowRight size={13} className="text-[var(--color-coral)] shrink-0" />
@@ -2241,7 +2244,7 @@ function TransferRowItem({
                 </>
               ) : (
                 <>
-                  {fromLabel} → {toLabel}
+                  {destinationColor ? `→ ${toLabel}` : `${fromLabel} → ${toLabel}`}
                   {touchesPersonal && (
                     <span
                       className="px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0"
@@ -2823,6 +2826,7 @@ function LoanRecurringOverpaymentEditForm({
  */
 function TransferRecurringRow({
   template,
+  destinationColor,
   owner,
   savingsPots,
   pots,
@@ -2834,6 +2838,8 @@ function TransferRecurringRow({
   onFlashedOnMount,
 }: {
   template: RecurringTemplate
+  /** Set inside a From group: the colour of where the money goes (matching the tile's bar and key), and the row then names only the destination, since the From is the group's. */
+  destinationColor?: string
   /** Set only when this transfer belongs to someone else — see OwnerBadge. */
   owner?: { name: string }
   savingsPots: SavingsPot[]
@@ -3163,7 +3169,8 @@ function TransferRecurringRow({
         <button className="w-full flex items-start justify-between gap-2 text-left" onClick={() => setOpen(!open)}>
           <div className="min-w-0">
             <p className="font-body text-sm text-[var(--color-ink)] truncate flex items-center gap-1.5">
-              {fromLabel} → {toLabel}
+              {destinationColor && <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: destinationColor }} aria-hidden="true" />}
+              {destinationColor ? `→ ${toLabel}` : `${fromLabel} → ${toLabel}`}
               {touchesPersonal && (
                 <span
                   className="px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0"
