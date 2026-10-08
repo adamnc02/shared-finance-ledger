@@ -19,6 +19,7 @@
     "@powersync/web": "^2.3.1",
     "@supabase/supabase-js": "^2.116.0",
     "date-fns": "^4.4.0",
+    "fflate": "^0.8.3",
     "lucide-react": "^1.28.0",
     "nanoid": "^6.0.0",
     "react": "^19.2.8",
