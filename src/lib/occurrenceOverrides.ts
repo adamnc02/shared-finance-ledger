@@ -5,6 +5,7 @@
 
 import { addMonths, addYears, differenceInCalendarDays } from 'date-fns'
 import { parseLocalDate, toLocalIsoDate } from './date'
+import { isInEditWindow } from './editWindow'
 import type { RecurringOccurrenceOverride } from '../types/ledger'
 
 /**
@@ -53,13 +54,16 @@ export function isOccurrenceAdjusted(actual: { date: string; amount: number }, n
 }
 
 /**
- * 2026-09-19 (Adam-specified, after PROMPT-08c) — what every "Manage
- * upcoming payments" list shows: the last payment on or before today, then
- * the next 12 payments. One rule for all 7 call sites (bills, recurring
- * transactions, transfers, loan recurring overpayments, pots, savings pots,
- * pensions). Before this, every list showed 2 months back to 12 months
- * ahead, so a monthly item showed up to 3 already-cleared payments once
- * PROMPT-08c moved recurring transactions onto the shared control.
+ * What every "Manage upcoming payments" list shows: every payment inside the
+ * edit window (lib/editWindow.ts — the last 5 days, today included), or the
+ * last payment on or before today when none falls inside it; then the next
+ * 12 payments. One rule for all 7 call sites (bills, recurring transactions,
+ * transfers, loan recurring overpayments, pots, savings pots, pensions).
+ *
+ * Every payment in the window is listed, not just the latest, because each
+ * one can still be paused or corrected and that reaches the ledger: a weekly
+ * payment can have two inside 5 days, and listing only the newer leaves the
+ * older one cleared with no control for it.
  */
 export const MANAGE_UPCOMING_NEXT_COUNT = 12
 
@@ -73,11 +77,12 @@ export function manageUpcomingRange(asOfDate: Date): { start: Date; end: Date } 
   return { start: addMonths(asOfDate, -13), end: addYears(asOfDate, 13) }
 }
 
-/** Keeps the last row dated on or before `asOfDate` and the next 12 after it. Compares the DISPLAYED date (`dateOf`), so a payment moved earlier counts by its moved date. */
+/** Keeps every row dated inside the edit window up to `asOfDate` (or the last row on or before it, if none is), and the next 12 after it. Compares the DISPLAYED date (`dateOf`), so a payment moved earlier counts by its moved date. */
 export function trimToManageUpcoming<T>(rows: T[], dateOf: (row: T) => string, asOfDate: Date): T[] {
   const today = toLocalIsoDate(asOfDate)
   const sorted = [...rows].sort((a, b) => dateOf(a).localeCompare(dateOf(b)))
   const past = sorted.filter((r) => dateOf(r) <= today)
+  const recent = past.filter((r) => isInEditWindow(dateOf(r), asOfDate))
   const upcoming = sorted.filter((r) => dateOf(r) > today)
-  return [...past.slice(-1), ...upcoming.slice(0, MANAGE_UPCOMING_NEXT_COUNT)]
+  return [...(recent.length > 0 ? recent : past.slice(-1)), ...upcoming.slice(0, MANAGE_UPCOMING_NEXT_COUNT)]
 }

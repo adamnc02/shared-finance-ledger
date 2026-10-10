@@ -4,10 +4,18 @@
 // (LedgerContext.tsx) rather than through the full React context, since
 // they're pure functions over a transaction list.
 //
-// UAT Batch 4 (2026-09-04, Adam-specified): a cleared transaction dated
-// TODAY is now the one exception to "immutable" — also swept away. Every
-// sweep helper takes an explicit asOfIso now so this is testable without
-// depending on the real calendar date.
+// UAT Batch 4 (2026-09-04): a cleared transaction dated TODAY is the one
+// exception to "immutable" — also swept away. Every sweep helper takes an
+// explicit asOfIso so this is testable without depending on the real
+// calendar date.
+//
+// 2026-10-10: the exception is now the whole edit window (lib/editWindow.ts,
+// 5 days), not just today. A recurring payment deleted the day after it
+// cleared used to stay in the ledger, Coin Jar round-up and all, with its
+// generator gone and nothing left to reach it by. The fixtures' default
+// cleared date is therefore well outside the window (16 days back), so
+// "cleared survives" still tests history; the window's own boundary is
+// checked at the end.
 
 import { sweepPendingForLoan, sweepPendingForCreditCard, sweepPendingForSavingsPot, sweepPendingForSource } from '../src/context/LedgerContext'
 import type { Loan, Transaction } from '../src/types/ledger'
@@ -24,7 +32,7 @@ const ASOF = '2026-09-04'
 function txn(overrides: Partial<Transaction>): Transaction {
   return {
     id: overrides.id ?? 'txn',
-    date: '2026-09-01',
+    date: '2026-08-19',
     amount: 100,
     direction: 'out',
     categoryId: 'cat-1',
@@ -118,7 +126,7 @@ const afterTemplateSweep = sweepPendingForSource(templateTxns, 'recurring_templa
 check('Pending bill payment removed', afterTemplateSweep.some((t) => t.id === 'r1'), false)
 check('Cleared bill payment survives', afterTemplateSweep.some((t) => t.id === 'r2'), true)
 check('Another template\'s pending transaction untouched', afterTemplateSweep.some((t) => t.id === 'r3'), true)
-check('Cleared-but-dated-TODAY bill payment is removed too (Batch 4 exception)', afterTemplateSweep.some((t) => t.id === 'r4'), false)
+check('Cleared-but-dated-TODAY bill payment is removed too (inside the edit window)', afterTemplateSweep.some((t) => t.id === 'r4'), false)
 
 const pensionTxns: Transaction[] = [
   txn({ id: 'p1', status: 'pending', type: 'pension_income', sourceType: 'pension', sourceId: 'pension-1', direction: 'in' }),
@@ -127,6 +135,20 @@ const pensionTxns: Transaction[] = [
 const afterPensionSweep = sweepPendingForSource(pensionTxns, 'pension', 'pension-1', ASOF)
 check('Pending pension payment removed', afterPensionSweep.some((t) => t.id === 'p1'), false)
 check('Cleared pension payment survives', afterPensionSweep.some((t) => t.id === 'p2'), true)
+
+// ── The edit window's boundary (2026-10-10). ASOF 4 Sep: 31 Aug–4 Sep are
+// inside (5 days, today included), 30 Aug is the first day outside. The
+// Cigs shape: a recurring payment cleared YESTERDAY, its generator deleted
+// today. Control: the same row 5 days back is history and survives. ──
+const windowTxns: Transaction[] = [
+  txn({ id: 'w1', status: 'cleared', date: '2026-09-03', type: 'expense', sourceType: 'recurring_template', sourceId: 'template-1', amount: 75, roundedFrom: 74.85, roundingPotId: 'jar' }),
+  txn({ id: 'w2', status: 'cleared', date: '2026-08-31', type: 'expense', sourceType: 'recurring_template', sourceId: 'template-1' }),
+  txn({ id: 'w3', status: 'cleared', date: '2026-08-30', type: 'expense', sourceType: 'recurring_template', sourceId: 'template-1' }),
+]
+const afterWindowSweep = sweepPendingForSource(windowTxns, 'recurring_template', 'template-1', ASOF)
+check('Cleared YESTERDAY, generator deleted today: removed (the Cigs bug)', afterWindowSweep.some((t) => t.id === 'w1'), false)
+check('Cleared 4 days back (last day inside the window): removed', afterWindowSweep.some((t) => t.id === 'w2'), false)
+check('Cleared 5 days back (first day outside the window): survives as history', afterWindowSweep.some((t) => t.id === 'w3'), true)
 
 if (failures > 0) {
   console.log(`\n${failures} pending-transaction sweep check(s) failed.`)

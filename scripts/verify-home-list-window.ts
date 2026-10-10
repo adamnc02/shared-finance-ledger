@@ -110,11 +110,13 @@ console.log('\n3. Home.tsx: every list is bounded')
 
 console.log('\n4b. Home default view (2026-09-17)')
 {
+  // These are the defaults on a FRESH app load. Home keeps its view while the
+  // app is open (lib/appSessionState.ts), so the second argument is the default.
   const src = readFileSync(new URL('../src/pages/Home.tsx', import.meta.url), 'utf8')
-  check("Default horizon is This cycle", /useState<ProjectionHorizon>\('current_cycle'\)/.test(src))
-  check('Default grouping is list, order is date', /useState<Grouping>\('list'\)/.test(src) && /useState<Order>\('date'\)/.test(src))
-  check('Show cleared defaults off, cycle-end totals default on (so This cycle is one collapsed pill)', /const \[showCleared, setShowCleared\] = useState\(false\)/.test(src) && /const \[cycleTotals, setCycleTotals\] = useState\(true\)/.test(src))
-  check('Group by direction and the forecast default off', /const \[groupByDirection, setGroupByDirection\] = useState\(false\)/.test(src) && /const \[averageSpendForecast, setAverageSpendForecast\] = useState\(false\)/.test(src))
+  check("Default horizon is This cycle", /useAppSessionState<ProjectionHorizon>\('home:horizon', 'current_cycle'\)/.test(src))
+  check('Default grouping is list, order is date', /useAppSessionState<Grouping>\('home:grouping', 'list'\)/.test(src) && /useAppSessionState<Order>\('home:order', 'date'\)/.test(src))
+  check('Show cleared defaults off, cycle-end totals default on (so This cycle is one collapsed pill)', /const \[showCleared, setShowCleared\] = useAppSessionState\('home:showCleared', false\)/.test(src) && /const \[cycleTotals, setCycleTotals\] = useAppSessionState\('home:cycleTotals', true\)/.test(src))
+  check('Group by direction and the forecast default off', /const \[groupByDirection, setGroupByDirection\] = useAppSessionState\('home:groupByDirection', false\)/.test(src) && /const \[averageSpendForecast, setAverageSpendForecast\] = useAppSessionState\('home:averageSpendForecast', false\)/.test(src))
   const labels = src.slice(src.indexOf('function activeFilterLabels'), src.indexOf('function activeFilterLabels') + 1200)
   check('The non-default counter matches those defaults', /grouping !== 'list'/.test(labels) && /order !== 'date'/.test(labels) && /if \(showCleared\)/.test(labels) && /if \(!cycleTotals\)/.test(labels) && /if \(groupByDirection\)/.test(labels))
   check('...and ignores the horizon, which is its own pill', !/horizon/.test(labels))

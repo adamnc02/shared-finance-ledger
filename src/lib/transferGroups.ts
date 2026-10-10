@@ -21,12 +21,11 @@
 // and not the viewer's cycle — a payday-following transfer lands on its
 // owner's payday, whoever is looking (TECHNICAL.md §20).
 
-import { addDays } from 'date-fns'
 import type { AppDataV2, RecurringTemplate, Transaction, TransferLocation } from '../types/ledger'
 import { buildTransferLocationOptions, transferLocationKey, transferLocationLabel } from './transferLedger'
 import { generateTransactionsForTemplate, payCycleForTemplate } from './schedule'
 import { resolveCycleBounds } from './pensionLedger'
-import { toLocalIsoDate } from './date'
+import { isInEditWindow } from './editWindow'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -122,11 +121,11 @@ export function groupTransfersByFrom(recurring: RecurringTemplate[], oneOffs: Tr
 
 /**
  * Whether a cleared item has been cleared long enough to fold away. Anything
- * cleared within the last 3 days stays in view beside the pending items, so
- * a payment that has only just cleared can still be corrected without
- * opening anything. Shared by every list that folds cleared items, so the
- * grace period is one rule, not several.
+ * inside the edit window (lib/editWindow.ts, 5 days) stays in view beside the
+ * pending items, so a payment that has only just cleared can still be
+ * corrected without opening anything. Shared by every list that folds cleared
+ * items, so the grace period is one rule, not several.
  */
 export function isSettled(dateIso: string, cleared: boolean, asOf: Date = new Date()): boolean {
-  return cleared && dateIso <= toLocalIsoDate(addDays(asOf, -3))
+  return cleared && !isInEditWindow(dateIso, asOf)
 }

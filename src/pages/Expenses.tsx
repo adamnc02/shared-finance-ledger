@@ -2599,8 +2599,9 @@ function LoanRecurringOverpaymentEditForm({
   // the overpayment's own real dates while still comparing/writing
   // pausedDates using the period-date basis recurringOverpaymentForDate
   // actually checks against internally.
-  // The last payment on or before today and the next 12, same as every
-  // other "Manage upcoming payments" list (occurrenceOverrides.ts).
+  // Every payment in the 5-day edit window (or the last past one) and the
+  // next 12, same as every other "Manage upcoming payments" list
+  // (occurrenceOverrides.ts).
   const manageWindow = manageUpcomingRange(new Date())
   const windowEntries = trimToManageUpcoming(scheduledLoanRecurringOverpaymentRealDates(loan, manageWindow.start, manageWindow.end), (e) => e.date, new Date())
   const windowDates = windowEntries.map((e) => e.date)
@@ -3005,8 +3006,9 @@ function TransferRecurringRow({
   // pausing or single-occurrence-amount-editing the next occurrence via
   // "Manage upcoming payments" silently never matched a real occurrence,
   // so it appeared to save but had no effect on the real schedule.
-  // The last payment on or before today and the next 12, same as every
-  // other "Manage upcoming payments" list (occurrenceOverrides.ts).
+  // Every payment in the 5-day edit window (or the last past one) and the
+  // next 12, same as every other "Manage upcoming payments" list
+  // (occurrenceOverrides.ts).
   const manageWindow = manageUpcomingRange(new Date())
   const windowDates = trimToManageUpcoming(scheduledTemplateDates(template, manageWindow.start, manageWindow.end, payCycle), (d) => d.date, new Date())
   const windowOriginalDates = new Set(windowDates.map((w) => w.originalDate))
@@ -3889,7 +3891,7 @@ function RecurringTransactionRow({
 
   // 2026-09-19 (PROMPT-08c Part A, Adam-specified) — "Manage upcoming
   // payments" here is now the same shared PausedOccurrencesControl, with
-  // the same window (last payment on or before today + the next 12), as
+  // the same window (the 5-day edit window, then the next 12), as
   // recurring transfers. It used to be a
   // separate "Next 12 upcoming" list whose rows opened an Amount + Date
   // form and had a trash icon. The trash wrote the same `deleted` override
