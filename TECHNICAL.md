@@ -427,6 +427,15 @@ renders on top of it. Neither a z-index bump nor switching to `absolute` fixes i
 makes it worse. `FiltersSheet` is the reference implementation; `TrendsModal` copies its portal
 pattern verbatim for exactly this reason.
 
+**`RowSheet`** (`components/RowSheet.tsx`) is a card's edit surface as a bottom sheet, with a title
+and an X; `OpensSheetIcon` (a panel rising from the bottom, not a chevron) marks a card that opens
+one. A sheet opened from inside another sheet is portalled later, so it stacks on top.
+
+> 🚨 **`RowSheet` sits at `z-[450]`, BELOW the modal layer (`z-[500]` and up) and above the nav
+> (`z-[100]`).** The forms inside a sheet open their own modals — a deduction, "from which
+> payment?", the category picker — and a sheet at or above their level hides them behind itself.
+> `verify-salary-sheets.ts` pins the band.
+
 ---
 
 ## 9. The generator contract
@@ -481,6 +490,31 @@ transition, so rows already stranded by an earlier bug self-heal on load. Safe o
 `autoClearDuePayments` is the only thing in the app that clears anything, and clearing has no side
 effect of its own. **If a manual "mark as cleared" path is ever added, this needs revisiting.**
 
+**The edit window** (`lib/editWindow.ts`, `EDIT_WINDOW_DAYS = 5`). A payment dated in the last five
+days, today included, can still be corrected: a payment on 9 Oct is open 9–13 Oct and settles on
+14 Oct. One rule, read by every surface that decides it, so they cannot disagree:
+
+| Surface | Inside the window | Outside it |
+|---|---|---|
+| The fold (`isSettled`, §28) | stays beside the pending items | folds into its month / Cleared |
+| *Manage upcoming payments* (§11) | every payment is listed | only the last past payment, if none is inside |
+| Pausing a cleared payment | its row is **removed** (round-up included) | the row is kept; only the schedule changes |
+| Deleting the generator (§33) | its cleared rows are swept | its cleared rows are kept |
+
+Pausing is enforced by `dropPausedRowsInEditWindow`, the first reconciler `autoClearDuePayments`
+runs: any generated row inside the window whose slot is paused is dropped, written as **state**, so
+whichever device paused it, the generator (which skips paused slots) does not bring it back, and
+unpausing re-materialises it under the same deterministic id. It covers all five pause mechanisms —
+recurring templates, pensions, pot deposits, savings-pot deposits and loan recurring overpayments.
+🚨 **A loan's pauses are keyed on the LOAN PERIOD date, not the payment's real date**; the two
+differ whenever the overpayment's day of the month differs from the loan's, so the row's date is
+mapped back to its period (`scheduledLoanRecurringOverpaymentRealDates`) before the check.
+
+🚨 **Always ask `isInEditWindow`; never compare against "today" directly.** A pause or delete that
+removes a cleared row with no lower bound rewrites history: Coin Jar balances and loan progress
+move with no visible cause. `verify-edit-window.ts` exercises all five pause paths end to end
+against a 6-days-old control.
+
 **Deterministic ids.** Every materialised payment gets `id = 'auto:' + dedupeKey(...)`
 (`autoClearedTransactionId`). Offline, nothing changes but the id. It exists for the sync app,
 where two devices clearing the same payment before syncing used to create two rows and double the
@@ -497,9 +531,11 @@ range, and a payment moved to before a range's start belongs to the earlier rang
 
 **Pending sweep on delete** (`lib/pendingSweep.ts`): deleting a generator removes its **pending**
 rows. Cleared rows survive — deleting the generator does not un-happen the payment — with one
-exception, `isSweepableOnGeneratorDelete`: a cleared row dated **today** is swept too. Loans need
-their own matcher, because a one-off overpayment's `sourceId` is the *overpayment's* id, not the
-loan's (§17).
+exception, `isSweepableOnGeneratorDelete`: a cleared row inside the edit window (above) is swept
+too. Loans need their own matcher, because a one-off overpayment's `sourceId` is the
+*overpayment's* id, not the loan's (§17). Deleting only a loan's recurring overpayment
+(`removeLoanRecurringOverpaymentFromData`) uses the same exported predicate — never restate it
+inline, or the copy keeps an old rule when this one changes.
 
 ---
 
@@ -534,9 +570,11 @@ set back to the standing amount is not adjusted, and a paused occurrence shows "
 
 **"Manage upcoming payments" is one window for all seven lists**: `manageUpcomingRange(asOf)`
 (−13 months to +13 years, wide enough for an annual schedule) then
-`trimToManageUpcoming(rows, dateOf, asOf)` → the last payment on or before today plus the next
-twelve. Compared by the **displayed** date, so a payment moved earlier counts by its moved date, and
-a payment due today is the "last payment", not an upcoming one. The open card is `[data-no-swipe]`.
+`trimToManageUpcoming(rows, dateOf, asOf)` → every payment inside the edit window (§10) — or, when
+none is, the last payment on or before today — plus the next twelve. A weekly payment can have two
+inside the window, and both are listed because both can still be paused or corrected. Compared by
+the **displayed** date, so a payment moved earlier counts by its moved date, and a payment due today
+is a past payment, not an upcoming one. The open card is `[data-no-swipe]`.
 
 **Its trigger is ONE control, rendered unconditionally.** A full-width pill with a `1px solid
 var(--color-track)` border, white text, and `py-1.5 text-xs` — one step shorter than
@@ -1427,6 +1465,14 @@ toggle is even offered, so a value left switched on from an earlier card cannot 
 view whose control is hidden. A control that does not apply says why ("A loan only has repayments
 going one way", "No spend history yet to estimate from").
 
+**The view lasts until the app is reloaded.** Which card is in front, the horizon and every filter
+toggle live in `useAppSessionState` (`lib/appSessionState.ts`), not `useState`: module memory that
+survives the router unmounting Home on a tab change and resets on a fresh load, so the defaults
+above are what a newly opened app shows. 🚨 **Not `localStorage` or `sessionStorage`** — both
+outlive a reload (sessionStorage too, for an iOS Home Screen app restored from the background), so
+the default view would stop being the default. A toggle added later with plain `useState` would
+quietly reset on every visit again; `appSessionState.test.tsx` checks every one goes through it.
+
 ### The list renderers
 
 `CycleGroupedList`, `DateOrderedList`, `AmountOrderedList`, `CategoryGroupedList`,
@@ -1455,6 +1501,14 @@ Key internals:
   it — the same options the Transactions page's Transfer pill builds, shared so the two cannot
   drift.
 - **`SalarySetupForm`** is the one-time setup, replaced for good by `PayPeriodsSection` once saved.
+- **Cards open sheets (§8), with one exception.** A pay period, pension, savings pot, pot and the
+  joint account open a `RowSheet` (the joint account's is `JointAccountSetupModal`, same shape, with
+  an X on its closeable edit path only — first-time setup is not dismissable). Pots and savings pots
+  keep their deposit/transfer buttons on the card; only the edit form moves into the sheet.
+  🚨 **The salary card itself expands in place, open on the primary person on arrival and after an
+  import**, so the pay periods are in view the moment Wallet is opened; each pay period then opens
+  a sheet. As a sheet it would hide them behind a tap and, opening on arrival, cover the page.
+  `verify-salary-sheets.ts`.
 - **`PayPeriodsSection`** lists the next four periods plus a collapsed history, both tapping into
   the **same** `PeriodEditor` — identical for upcoming and closed periods, same breakdown, same
   fields, same "+ Add bonus", one Save, with the scope-confirm modal for upcoming periods only.
@@ -1574,7 +1628,8 @@ grepping across all three apps — this is unlikely to have been the only one.
   elsewhere, since a correction should not require re-deriving where the entry came from. The
   round-up opt-out is a plain checkbox here — *editing just loads the form, no flow*.
 - **`MonthCollapsedTransactionList`** groups cleared entries by month. A cleared entry stays out
-  of the folders for three days so a payment that has only just cleared can still be corrected;
+  of the folders for the edit window (§10, five days) so a payment that has only just cleared can
+  still be corrected;
   that rule is `isSettled` (`lib/transferGroups.ts`), shared with the Transfers tab's Cleared group
   so the two cannot drift.
 - **`TransferForm`** / `TransferRowItem` / `TransferRecurringRow` — one-off and recurring
@@ -1838,8 +1893,8 @@ blocked while anything still points at it.
 - **Cleared transactions** are historical fact. They keep their ids and references exactly as they
   are and never block anything.
 - **Pending rows generated by something** follow their generator: reassigning it rewrites them,
-  deleting it sweeps them (`pendingSweep.ts`). Only hand-logged pending rows are listed
-  individually.
+  deleting it sweeps them (`pendingSweep.ts`) — together with its cleared rows from the edit window
+  (§10). Only hand-logged pending rows are listed individually.
 - **`locationHistory` entries** are an audit trail, not live references.
 
 ---

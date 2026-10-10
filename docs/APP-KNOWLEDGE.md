@@ -22,8 +22,9 @@ This rule has resolved at least four separate bug reports as "not a bug, that's 
 - Duplicated transactions from the location-relocate bug (Batch 7) — the fix guards future
   materialisation, it does not clean up what already landed.
 
-**The one deliberate exception:** `isSweepableOnGeneratorDelete(t, asOfIso)` — a cleared row dated
-**today** IS swept when its generator is deleted. Everything older survives.
+**The one deliberate exception is the edit window (§1.37):** a cleared row dated in the last five
+days, today included, is still correctable — swept when its generator is deleted
+(`isSweepableOnGeneratorDelete`), removed when its payment is paused. Everything older survives.
 
 ### 1.2 Array order in effective-dated history is load-bearing
 Six resolvers break same-`effectiveFrom` ties by **array index** (recency of recording):
@@ -797,8 +798,10 @@ payday came from `PayCycleConfig.paydayDayOfMonth`, so a 4-weekly salary was pai
 One rule for all 7 lists (bills, recurring transactions, transfers, loan recurring overpayments, pots,
 savings pots, pensions), Adam-specified: `manageUpcomingRange(asOf)` (−13 months to +13 years, wide
 enough for an annual schedule) then `trimToManageUpcoming(rows, dateOf, asOf)` (`occurrenceOverrides.ts`).
+- **Widened 2026-10-10 (§1.37):** every payment inside the 5-day edit window is listed, or the last
+  past payment when none is. A weekly payment can have two inside it; both are still correctable.
 - Compared by the **displayed** date, so a payment moved earlier counts by its moved date. A payment due
-  **today** is the "last payment", not an upcoming one.
+  **today** is a past payment, not an upcoming one.
 - Before this every list showed −2/+12 **months**. 08c Part A moved recurring transactions onto that
   window, so they showed up to 3 cleared payments. `schedulePreviewWindow`/`schedulePotPreviewWindow`
   are no longer used by these lists (the pot ledger modals still use them). Pots never show a date before
@@ -1426,6 +1429,33 @@ page filter: an unowned pot gets no hero card but is listed on the pages. Harmle
 backup has an unowned pot, savings pot, card or loan. The Household and Joint cards aggregate
 everyone on purpose (§1.8a), which makes them the place a "filter reached the engine" regression
 would show first.
+
+### 1.37 The edit window: a cleared payment is correctable for five days (2026-10-10)
+
+`lib/editWindow.ts`, `EDIT_WINDOW_DAYS = 5`, today included — a payment on 9 Oct is open 9–13 Oct
+and settles on 14 Oct. The one refinement of §1.1, and **one rule for every surface that decides
+it**: the fold (`isSettled`), *Manage upcoming payments* (`trimToManageUpcoming`, §1.23), pausing
+(`dropPausedRowsInEditWindow`, the first pass of `autoClearDuePayments`) and generator deletes
+(`isSweepableOnGeneratorDelete`, shared by `removeLoanRecurringOverpaymentFromData`).
+
+- **The bug it closed:** a recurring card expense cleared on 9 Oct; on 10 Oct pausing that payment
+  left the cleared row (the reconciler skipped paused slots), and deleting the recurring transaction
+  left it too (the sweep took only rows dated today). The expense and its Coin Jar round-up stayed
+  with nothing in the app able to reach them.
+- **Pausing is written as STATE:** any generated row in the window whose slot is paused is dropped,
+  on every load, whichever device paused it. The generators skip paused slots, so nothing brings it
+  back; unpausing re-materialises it under the same `auto:` id (§1.25). The round-up goes with the
+  row because it IS the row (§1.19d).
+- 🚨 **Five pause mechanisms, five lookups**: template `occurrenceOverrides` by slot, pension
+  `occurrenceOverrides` and pot / savings-pot `recurringDepositOverrides` by date, and loan
+  `recurringOverpayment.pausedDates` by **loan period** — not the payment's real date; map it back
+  first.
+- 🚨 **Never compare a cleared row's date with "today" directly; ask `isInEditWindow`.** An inline
+  `t.date === asOfIso` in `deleteReassign.ts` kept the old rule after the window replaced it
+  everywhere else, and was found only by grepping for the pattern.
+- **Checks:** `verify-edit-window.ts` (all five pause paths through the whole autoClear pass, each
+  with a 6-days-old control and an unpause; the weekly list; the boundary; the overpayment delete),
+  `verify-pending-sweep-on-delete.ts`, `verify-transfer-groups.ts`.
 
 ## 2. The credit-card engine is the single most fragile area
 
