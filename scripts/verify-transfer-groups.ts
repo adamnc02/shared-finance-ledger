@@ -13,7 +13,7 @@
 // 3. A per-cycle figure on the viewer's cycle. A transfer follows its
 //    OWNER's payday (TECHNICAL.md §20); on the other person's cycle it
 //    counts payments in a window they never fall in.
-// 4. The 3-day grace period drifting between the two lists that fold
+// 4. The grace period (the 5-day edit window, lib/editWindow.ts) drifting between the two lists that fold
 //    cleared items (Transactions' months, Transfers' single Cleared group).
 //
 // Plus the arithmetic that snaps a chosen tile into view: centred, or flush
@@ -103,10 +103,10 @@ check('a one-off-only group has no split: the bar and key show only money due th
 check('labels', groups.map((g) => g.label), ['Current Account', 'Joint Account', 'Holiday', 'Bills', 'Unknown'])
 
 // ── 3. The grace period ───────────────────────────────────────────────
-console.log('\n3. GRACE PERIOD: cleared within 3 days stays out; older folds away')
+console.log('\n3. GRACE PERIOD: cleared within the 5-day edit window stays out; older folds away')
 check('cleared today: stays out', isSettled('2026-09-24', true, asOf), false)
-check('cleared 2 days ago: stays out', isSettled('2026-09-22', true, asOf), false)
-check('cleared 3 days ago: folds', isSettled('2026-09-21', true, asOf), true)
+check('cleared 4 days ago (last day inside the window): stays out', isSettled('2026-09-20', true, asOf), false)
+check('cleared 5 days ago: folds', isSettled('2026-09-19', true, asOf), true)
 check('pending, however old: stays out', isSettled('2026-01-01', false, asOf), false)
 const expenses = readFileSync(new URL('../src/pages/Expenses.tsx', import.meta.url), 'utf8')
 check('the Transactions month list uses the same rule, not its own copy', expenses.includes('isSettled(getDate(i), isCleared(i))') && !/addDays\(new Date\(\), -3\)/.test(expenses), true)

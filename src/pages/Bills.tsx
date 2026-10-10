@@ -591,8 +591,9 @@ function BillEditPanel({
   // does this apply from" flow, so the flow's buildChanges/onCommit know
   // what to diff/write without re-deriving it.
   const [changeKind, setChangeKind] = useState<'amount' | 'location' | 'date' | null>(null)
-  // The last payment on or before today and the next 12, same as every
-  // other "Manage upcoming payments" list (occurrenceOverrides.ts).
+  // Every payment in the 5-day edit window (or the last past one) and the
+  // next 12, same as every other "Manage upcoming payments" list
+  // (occurrenceOverrides.ts).
   const pauseWindow = manageUpcomingRange(new Date())
   const pauseWindowDates = trimToManageUpcoming(scheduledTemplateDates(template, pauseWindow.start, pauseWindow.end), (d) => d.date, new Date())
   // UAT 2026-09-11 (manage-upcoming-payments-override-key-bug) —

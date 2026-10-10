@@ -9,6 +9,12 @@
 // chose one rule for all 7 call sites: last payment on or before today +
 // the next 12 payments.
 //
+// Widened 2026-10-10: when more than one payment falls inside the 5-day edit
+// window (lib/editWindow.ts) — a weekly payment — every one of them is
+// listed, not just the latest; with none inside, it is still the last past
+// payment. The schedules here are monthly or longer, so this script's counts
+// are unchanged; verify-edit-window.ts checks the weekly case.
+//
 // WHAT FAILS AGAINST THE PRE-FIX CODE: the whole script, at import
 // (manageUpcomingRange/trimToManageUpcoming did not exist), and the source
 // checks at the bottom (every call site used addMonths(new Date(), -2) /

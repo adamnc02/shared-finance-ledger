@@ -27,7 +27,7 @@ import type { BillLocation } from '../types/models'
 import { reconcilePersonReferences } from './household'
 import { priorLocationEntry, reassignCreditCardPaymentsForLocationChange, reassignTransactionsForLocationChange } from './locationChange'
 import { reassignLoanRecurringOverpaymentTransactions } from './ledgerLoans'
-import { sweepPendingForCreditCard, sweepPendingForLoan, sweepPendingForPot, sweepPendingForSavingsPot, sweepPendingForSource } from './pendingSweep'
+import { isSweepableOnGeneratorDelete, sweepPendingForCreditCard, sweepPendingForLoan, sweepPendingForPot, sweepPendingForSavingsPot, sweepPendingForSource } from './pendingSweep'
 import { categoryForTransfer, locationTypeForTransfer, retargetTransferRow, transferLocationKey, transferLocationLabel, transferTouchesPot, transferTouchesSavingsPot } from './transferLedger'
 import { toLocalIsoDate as toIso } from './date'
 
@@ -103,12 +103,19 @@ export function removeTransactionFromData(prev: AppDataV2, id: string): AppDataV
   return { ...prev, transactions, salarySorts: dropSalarySortTarget(prev.salarySorts, existing.sourceId, id) }
 }
 
+/**
+ * Deletes a loan's recurring overpayment, sweeping its rows by the same rule
+ * as every generator delete (pendingSweep.ts): pending ones, and cleared ones
+ * inside the 5-day edit window. Shares the predicate rather than restating it:
+ * an inline copy here once kept the old "dated today" rule after the window
+ * replaced it everywhere else.
+ */
 export function removeLoanRecurringOverpaymentFromData(prev: AppDataV2, loanId: string, asOfIso: string = todayIso()): AppDataV2 {
   return {
     ...prev,
     loans: prev.loans.map((l) => (l.id === loanId ? { ...l, recurringOverpayment: undefined } : l)),
     transactions: prev.transactions.filter(
-      (t) => !((t.status === 'pending' || t.date === asOfIso) && t.sourceType === 'loan_recurring_overpayment' && t.sourceId === loanId),
+      (t) => !(isSweepableOnGeneratorDelete(t, asOfIso) && t.sourceType === 'loan_recurring_overpayment' && t.sourceId === loanId),
     ),
   }
 }

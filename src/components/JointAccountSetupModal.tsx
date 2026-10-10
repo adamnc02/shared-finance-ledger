@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
+import { X } from 'lucide-react'
 import { EditField } from './EditField'
 import { FormButtonRow, SaveButton } from './FormButtons'
 import { todayIso } from '../lib/date'
@@ -74,9 +75,18 @@ export function JointAccountSetupModal({
         style={{ background: 'var(--color-surface)', paddingBottom: 'calc(var(--nav-h) + var(--safe-bottom) + 20px)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="font-display text-lg font-semibold text-[var(--color-ink)] mb-1">
-          {initial ? 'Edit joint account balance' : 'Set up your joint account'}
-        </h2>
+        {/* The X matches every other Salary-page sheet (components/RowSheet.tsx).
+            Only on the closeable edit path: first-time setup stays non-dismissable. */}
+        <div className="flex items-center justify-between gap-3 mb-1">
+          <h2 className="font-display text-lg font-semibold text-[var(--color-ink)] min-w-0">
+            {initial ? 'Edit joint account balance' : 'Set up your joint account'}
+          </h2>
+          {dismissable && (
+            <button onClick={onCancel} className="shrink-0 text-[var(--color-ink-muted)]" aria-label="Close">
+              <X size={18} />
+            </button>
+          )}
+        </div>
         <p className="text-xs text-[var(--color-ink-muted)] mb-4">
           {initial
             ? 'Corrects the reconciled starting point everything else is calculated from.'

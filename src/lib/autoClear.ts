@@ -26,7 +26,7 @@
 
 import { nanoid } from 'nanoid'
 import { generateTransactionsForTemplate, payCycleForTemplate, resolveOccurrenceAmount, resolveOccurrenceRoundUpSkipped, resolveTemplateOccurrenceDate } from './schedule'
-import { generateLoanPaymentTransactions, resolveRecurringOverpaymentSource } from './ledgerLoans'
+import { generateLoanPaymentTransactions, resolveRecurringOverpaymentSource, scheduledLoanRecurringOverpaymentRealDates } from './ledgerLoans'
 import { generateMinimumPaymentTransactions } from './creditCards'
 import { computeNetPayForPeriod, generateSalaryTransactions } from './salaryLedger'
 import { resolvePensionOccurrenceAmount, generatePensionTransactions } from './pensionLedger'
@@ -35,6 +35,7 @@ import { generatePotDepositTransactions, generatePotOutgoingTransactions, resolv
 import { dedupeKey } from './projection'
 import { toLocalIsoDate, parseLocalDate } from './date'
 import { coinJarForOwner, roundRecurringOccurrences, roundUpFields, unroundedAmount } from './roundUp'
+import { isInEditWindow } from './editWindow'
 import type { AppDataV2, Transaction } from '../types/ledger'
 
 /**
@@ -198,17 +199,16 @@ function reconcileRecurringTemplateTransactions(data: AppDataV2, asOfIso: string
     // such a row can by definition only have been through the one-move
     // case the old code handled, so this reads it correctly — and that
     // row is then stamped below so it never needs deriving again.
-    const slot = t.occurrenceOriginalDate ?? template.occurrenceOverrides?.find((o) => o.originalDate === t.date || o.date === t.date)?.originalDate ?? t.date
+    const slot = templateSlotOf(t, template)
     // A slot before the anchor belongs to an earlier schedule: after a change
     // from a chosen payment (applyTemplateScheduleChange) the anchor IS that
     // payment. The current rules — a new day, frequency, or follows-payday
     // setting — must not re-date or re-price what was actually paid before it.
     if (slot < template.anchorDate) return stamp(t, slot)
     const override = template.occurrenceOverrides?.find((o) => o.originalDate === slot)
-    // A deleted occurrence has no live amount/date to reconcile against —
-    // that already-materialized row is a separate, pre-existing gap
-    // (deleting a future occurrence doesn't retroactively un-clear a past
-    // one), not this fix's concern.
+    // A deleted occurrence has no live amount/date to reconcile against.
+    // Inside the edit window its row is already gone (dropPausedRowsInEditWindow
+    // runs first); one reaching here is older, and stays as history.
     //
     // Still stamped on the way out when it's missing, so a paused
     // occurrence that is later unpaused is already slot-identified
@@ -274,6 +274,85 @@ function reconcileRecurringTemplateTransactions(data: AppDataV2, asOfIso: string
     changed = true
     return { ...t, occurrenceOriginalDate: slot }
   }
+}
+
+/**
+ * WHICH occurrence a recurring-template row is: its own stamp when it has
+ * one, otherwise derived from its date (see reconcileRecurringTemplateTransactions,
+ * which stamps it). Shared so the pause check and the reconciler can never
+ * disagree about a row's slot.
+ */
+function templateSlotOf(t: Transaction, template: AppDataV2['recurringTemplates'][number]): string {
+  return t.occurrenceOriginalDate ?? template.occurrenceOverrides?.find((o) => o.originalDate === t.date || o.date === t.date)?.originalDate ?? t.date
+}
+
+/**
+ * Pausing a payment that has already cleared removes it from the ledger,
+ * while it is inside the edit window (lib/editWindow.ts, 5 days).
+ *
+ * Every pause control lists the most recent payments (trimToManageUpcoming),
+ * and the generators already skip a paused slot — but a slot that had
+ * already materialised kept its stored, cleared row, so pausing yesterday's
+ * payment changed nothing in the ledger. That row also carries any Coin Jar
+ * round-up (derived from the row itself, APP-KNOWLEDGE §1.19d), so the
+ * credit stayed too.
+ *
+ * Written as STATE, not as a transition: any generated row inside the window
+ * whose slot is paused is dropped, whichever device paused it, and the
+ * generator does not bring it back because it skips paused slots. Unpausing
+ * inside the window lets the generator materialise it again under the same
+ * deterministic id (§1.25). Outside the window a paused slot's row is history
+ * and is kept (§1.1).
+ *
+ * Five pause mechanisms, one per generator that has a pause control:
+ * recurring templates (bills, recurring transactions, recurring transfers),
+ * pensions, pot deposits, savings-pot deposits, loan recurring overpayments.
+ * 🚨 Loan pauses are keyed on the LOAN PERIOD date, not the payment's real
+ * date — the two differ whenever the overpayment's own day of the month
+ * differs from the loan's — so the row's date is mapped back to its period
+ * before the check.
+ */
+function dropPausedRowsInEditWindow(data: AppDataV2, asOfIso: string): AppDataV2 {
+  const loanPeriodByRealDate = new Map<string, Map<string, string>>()
+  const periodOf = (loan: AppDataV2['loans'][number], realDate: string): string => {
+    let byReal = loanPeriodByRealDate.get(loan.id)
+    if (!byReal) {
+      byReal = new Map(scheduledLoanRecurringOverpaymentRealDates(loan, new Date(0), parseLocalDate('2200-01-01')).map((o) => [o.date, o.periodDate]))
+      loanPeriodByRealDate.set(loan.id, byReal)
+    }
+    return byReal.get(realDate) ?? realDate
+  }
+
+  const isPaused = (t: Transaction): boolean => {
+    if (!t.sourceId) return false
+    if (t.sourceType === 'recurring_template') {
+      const template = data.recurringTemplates.find((tpl) => tpl.id === t.sourceId)
+      if (!template) return false
+      const slot = templateSlotOf(t, template)
+      return !!template.occurrenceOverrides?.find((o) => o.originalDate === slot)?.deleted
+    }
+    if (t.type === 'pension_income') {
+      const pension = data.pensions.find((p) => p.id === t.sourceId)
+      return !!pension?.occurrenceOverrides?.find((o) => o.originalDate === t.date)?.deleted
+    }
+    if (t.type === 'pot_deposit' && t.sourceType === 'pot') {
+      const pot = (data.pots ?? []).find((p) => p.id === t.sourceId)
+      return !!pot?.recurringDepositOverrides?.find((o) => o.originalDate === t.date)?.deleted
+    }
+    if (t.type === 'savings_deposit' && t.sourceType === 'savings_pot') {
+      const pot = data.savingsPots.find((p) => p.id === t.sourceId)
+      return !!pot?.recurringDepositOverrides?.find((o) => o.originalDate === t.date)?.deleted
+    }
+    if (t.sourceType === 'loan_recurring_overpayment') {
+      const loan = data.loans.find((l) => l.id === t.sourceId)
+      const paused = loan?.recurringOverpayment?.pausedDates
+      return !!loan && !!paused?.length && paused.includes(periodOf(loan, t.date))
+    }
+    return false
+  }
+
+  const kept = data.transactions.filter((t) => !(isInEditWindow(t.date, asOfIso) && isPaused(t)))
+  return kept.length === data.transactions.length ? data : { ...data, transactions: kept }
 }
 
 /**
@@ -390,7 +469,7 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
   // that's drifted from its computed value should be corrected whether
   // or not there's also something new coming due this pass.
   const reconciled = reconcilePotTransactions(
-    reconcileSavingsPotTransactions(reconcileLoanTransactions(reconcileRecurringTemplateTransactions(reconcilePensionTransactions(reconcileSalaryTransactions(data)), asOfIso))),
+    reconcileSavingsPotTransactions(reconcileLoanTransactions(reconcileRecurringTemplateTransactions(reconcilePensionTransactions(reconcileSalaryTransactions(dropPausedRowsInEditWindow(data, asOfIso))), asOfIso))),
   )
   if (reconciled !== data) {
     result = reconciled

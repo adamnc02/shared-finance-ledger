@@ -1,18 +1,20 @@
 import type { Loan, Transaction } from '../types/ledger'
 import { toLocalIsoDate as toIso } from './date'
+import { isInEditWindow } from './editWindow'
 const todayIso = () => toIso(new Date())
 
 // ── Pending-transaction sweep on delete (UI consistency review §3/§10
 // Phase 1, confirmed 2026-09 session: "all pending transactions are
 // deleted, with only cleared items retained as historic fact, and
 // immutable" — refined by UAT Batch 4, see isSweepableOnGeneratorDelete
-// below: a cleared item dated TODAY is the one exception) ─────────────
+// below: a cleared item inside the edit window is the one exception) ──
 // Deleting a Loan/CreditCard/RecurringTemplate/Pension/SavingsPot never
 // touched `transactions` at all before this — a CLEARED row correctly
 // stayed untouched (it already happened, deleting its generator doesn't
 // un-happen it), but a PENDING one silently stuck around too: still
 // shown as due, permanently orphaned from a generator that no longer
-// exists. This removes the pending ones, plus any cleared-today ones.
+// exists. This removes the pending ones, plus any cleared inside the edit
+// window.
 //
 // Loans need their own matcher rather than reusing the generic one below
 // — a loan's overpayments carry sourceId: <overpayment's own id>, not the
@@ -30,8 +32,15 @@ const todayIso = () => toIso(new Date())
 // TODAY occurrence surviving deletion of its generator). There's no
 // creation-timestamp field anywhere on Transaction, so the transaction's
 // own `date` is the only "today" signal available.
-function isSweepableOnGeneratorDelete(t: Transaction, asOfIso: string): boolean {
-  return t.status === 'pending' || t.date === asOfIso
+//
+// Widened from "dated today" to the edit window (lib/editWindow.ts, 5 days):
+// a payment that cleared yesterday is just as correctable as one that
+// cleared this morning. A recurring payment deleted the day after it
+// cleared used to leave its row (and its Coin Jar round-up) in the ledger
+// for good, with no way left to reach it — its generator was gone.
+// Older than the window, a cleared row is still never swept.
+export function isSweepableOnGeneratorDelete(t: Transaction, asOfIso: string): boolean {
+  return t.status === 'pending' || isInEditWindow(t.date, asOfIso)
 }
 
 export function sweepPendingForLoan(transactions: Transaction[], loan: Loan, asOfIso: string = todayIso()): Transaction[] {

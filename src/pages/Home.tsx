@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { formatCurrency } from '../lib/format'
 import { toLocalIsoDate, todayIso, parseLocalDate } from '../lib/date'
 import { ArrowDown, FileText, ArrowUp, ChevronDown, ChevronUp, CreditCard as CreditCardIcon, Layers, PieChart, PiggyBank, Wallet, SlidersHorizontal, X, TrendingUp, RotateCcw } from 'lucide-react'
+import { useAppSessionState } from '../lib/appSessionState'
 import { useLedgerData } from '../context/LedgerContext'
 import { computeProjection, horizonCycles, inCycleWindow, horizonRangeEnd, THREE_CYCLES_AHEAD, buildPersonalTrendSeries, type ProjectionHorizon } from '../lib/projection'
 import { buildCycleForecastChain } from '../lib/cycleForecastChain'
@@ -164,10 +165,14 @@ function pendingNetTotal(transactions: Transaction[], amountSign: (t: Transactio
 
 export function Home() {
   const { data } = useLedgerData()
+  // The view below — which card is in front, the horizon and every filter
+  // toggle — is kept for as long as the app is open (lib/appSessionState.ts):
+  // visiting another tab and coming back keeps it; a fresh app load starts
+  // from the defaults.
   // Keys the user has explicitly tapped-to-select, oldest first, most
   // recent (= frontmost) last. Starts empty — nobody's tapped anything
   // yet, so Personal stays front, matching the old activeIndex default.
-  const [mruSelections, setMruSelections] = useState<string[]>([])
+  const [mruSelections, setMruSelections] = useAppSessionState<string[]>('home:mruSelections', [])
   // Defaults to "Next 3 cycles" with cycle-end (month-end) totals on —
   // canShowCycleTotals also requires grouping 'list' + order 'date',
   // which are themselves already the defaults below, so this combination
@@ -178,30 +183,30 @@ export function Home() {
   // cycles view shows for the current cycle — one pill instead of three.
   // The horizon is a pill of its own, not a filter, so it is deliberately
   // absent from activeFilterLabels and from resetToDefault.
-  const [horizon, setHorizon] = useState<ProjectionHorizon>('current_cycle')
-  const [grouping, setGrouping] = useState<Grouping>('list')
-  const [order, setOrder] = useState<Order>('date')
-  const [cycleTotals, setCycleTotals] = useState(true)
+  const [horizon, setHorizon] = useAppSessionState<ProjectionHorizon>('home:horizon', 'current_cycle')
+  const [grouping, setGrouping] = useAppSessionState<Grouping>('home:grouping', 'list')
+  const [order, setOrder] = useAppSessionState<Order>('home:order', 'date')
+  const [cycleTotals, setCycleTotals] = useAppSessionState('home:cycleTotals', true)
   // Off by default — cleared payments start hidden everywhere on this
   // page (rows AND, in the category view, the per-category total), the
   // same as before this toggle existed; switching it on reveals them
   // again in both places at once, since a category total that includes
   // rows the person can't see was the whole problem this toggle exists
   // to fix.
-  const [showCleared, setShowCleared] = useState(false)
+  const [showCleared, setShowCleared] = useAppSessionState('home:showCleared', false)
   // 2026-09-13 (dev.md item 2, Adam-specified) — "Group by direction", an
   // independent toggle available on every deck card, off by default
   // (unlike cycleTotals). Independent of Cycle-end totals: with totals
   // off, it splits the whole flat window into Incoming/Outgoing pills;
   // with totals on, those same two pills nest inside each cycle section
   // instead, alongside the existing per-cycle closing balance.
-  const [groupByDirection, setGroupByDirection] = useState(false)
+  const [groupByDirection, setGroupByDirection] = useAppSessionState('home:groupByDirection', false)
   // 2026-09-13 (average spend forecast, Adam-specified) — Personal and
   // Joint cards only, off by default. Threaded exactly like
   // groupByDirection; the per-card gating (which entry.kind actually
   // offers it, and only once Cycle-end totals is on) lives in
   // activeFilterLabels/FiltersSheet, not here.
-  const [averageSpendForecast, setAverageSpendForecast] = useState(false)
+  const [averageSpendForecast, setAverageSpendForecast] = useAppSessionState('home:averageSpendForecast', false)
 
   const deck = useMemo(() => buildDeck(data), [data])
 

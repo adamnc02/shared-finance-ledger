@@ -12,6 +12,7 @@ import type { AppDataV2, Category, Loan, PayCycleConfig, PaySchedule, Pension, P
 import { nanoid } from 'nanoid'
 import { DeductionModal } from '../components/DeductionModal'
 import { SwipeToDelete } from '../components/SwipeToDelete'
+import { OpensSheetIcon, RowSheet } from '../components/RowSheet'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { DeleteGuardModal } from '../components/DeleteGuardModal'
@@ -395,8 +396,9 @@ function PensionRow({
   }, [])
   const previews = pensionOccurrencePreviews(pension, new Date(), 1)
   const next = previews[0]
-  // The last payment on or before today and the next 12, same as every
-  // other "Manage upcoming payments" list (occurrenceOverrides.ts).
+  // Every payment in the 5-day edit window (or the last past one) and the
+  // next 12, same as every other "Manage upcoming payments" list
+  // (occurrenceOverrides.ts).
   const pauseWindow = manageUpcomingRange(new Date())
   const pauseWindowDates = trimToManageUpcoming(scheduledPensionDates(pension, pauseWindow.start, pauseWindow.end), (d) => d, new Date())
   const currentlyPausedPensionDates = new Set((pension.occurrenceOverrides ?? []).filter((o) => o.deleted && pauseWindowDates.includes(o.originalDate)).map((o) => o.originalDate))
@@ -416,11 +418,11 @@ function PensionRow({
           <span className="text-sm text-[var(--color-ink-muted)]">
             {pension.active ? (next ? <>Next payment {next.date} · £{formatCurrency(next.amount)}</> : 'No upcoming payment') : 'Paused'}
           </span>
-          <span className="text-[var(--color-ink-muted)] shrink-0 pl-2">{isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span>
+          <span className="shrink-0 pl-2"><OpensSheetIcon /></span>
         </button>
 
         {isOpen && (
-          <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
+          <RowSheet title={pension.name} onClose={onToggle}>
             <PensionForm
               people={people}
               defaultPersonId={pension.personId}
@@ -498,7 +500,7 @@ function PensionRow({
               onSaveAmount={(originalDate, newAmount) => onSave(applyPensionSingleOccurrenceAmountChange(pension, newAmount, originalDate))}
               isAdjusted={(originalDate) => pensionOccurrenceAdjusted(pension, originalDate)}
             />
-          </div>
+          </RowSheet>
         )}
         <SavedFlashOverlay active={flashActive} />
       </div>
@@ -1322,7 +1324,7 @@ function SavingsPotRow({
                 £{formatCurrency(balance)} · {nextDeposit ? `next deposit ${nextDeposit.date}` : 'no recurring deposit'}
               </p>
             </div>
-            <span className="text-[var(--color-ink-muted)] shrink-0 pl-2">{isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span>
+            <span className="shrink-0 pl-2"><OpensSheetIcon /></span>
           </button>
           <button onClick={() => setPickingIcon(true)} className="shrink-0" aria-label={`Choose ${pot.name}'s category icon`}>
             <CategoryIcon category={{ icon: pot.categoryIcon ?? DEFAULT_POT_CATEGORY_ICON, iconColor: pot.categoryIconColor ?? DEFAULT_POT_CATEGORY_ICON_COLOR }} size={14} />
@@ -1382,45 +1384,47 @@ function SavingsPotRow({
           />
 
           {isOpen && (
-            <SavingsPotForm
-              people={people}
-              defaultPersonId={pot.personId}
-              initial={{
-                name: pot.name,
-                openingBalance: pot.openingBalance,
-                openingDate: pot.openingDate,
-                interestMethod: pot.interestMethod,
-                targetAmount: pot.targetAmount,
-                targetDate: pot.targetDate,
-                recurringDepositAmount: pot.recurringDepositAmount,
-                recurringDepositDayOfMonth: pot.recurringDepositDayOfMonth,
-                interestDestination: pot.interestDestination,
-              }}
-              locationOptions={locationOptions}
-              onCancel={onToggle}
-              onSave={(personId, fields) => {
-                // A rate CHANGE goes through applyInterestMethodChange
-                // (historized, same as Pension's amount changes/a bill's
-                // amount change) — but only when the method actually
-                // changed, same "don't fabricate a change record for
-                // nothing that moved" guard PensionRow already applies.
-                const methodChanged = JSON.stringify(fields.interestMethod) !== JSON.stringify(pot.interestMethod)
-                const methodPatch = methodChanged ? applyInterestMethodChange(pot, fields.interestMethod, todayIso()) : { interestMethod: fields.interestMethod }
-                onSave({
-                  personId,
-                  name: fields.name,
-                  targetAmount: fields.targetAmount,
-                  targetDate: fields.targetDate,
-                  recurringDepositAmount: fields.recurringDepositAmount,
-                  recurringDepositDayOfMonth: fields.recurringDepositDayOfMonth,
-                  recurringDepositStartDate: fields.recurringDepositAmount ? (pot.recurringDepositStartDate ?? todayIso()) : undefined,
-                  interestDestination: fields.interestDestination,
-                  ...methodPatch,
-                })
-                onToggle()
-                triggerFlash()
-              }}
-            />
+            <RowSheet title={pot.name} onClose={onToggle}>
+              <SavingsPotForm
+                people={people}
+                defaultPersonId={pot.personId}
+                initial={{
+                  name: pot.name,
+                  openingBalance: pot.openingBalance,
+                  openingDate: pot.openingDate,
+                  interestMethod: pot.interestMethod,
+                  targetAmount: pot.targetAmount,
+                  targetDate: pot.targetDate,
+                  recurringDepositAmount: pot.recurringDepositAmount,
+                  recurringDepositDayOfMonth: pot.recurringDepositDayOfMonth,
+                  interestDestination: pot.interestDestination,
+                }}
+                locationOptions={locationOptions}
+                onCancel={onToggle}
+                onSave={(personId, fields) => {
+                  // A rate CHANGE goes through applyInterestMethodChange
+                  // (historized, same as Pension's amount changes/a bill's
+                  // amount change) — but only when the method actually
+                  // changed, same "don't fabricate a change record for
+                  // nothing that moved" guard PensionRow already applies.
+                  const methodChanged = JSON.stringify(fields.interestMethod) !== JSON.stringify(pot.interestMethod)
+                  const methodPatch = methodChanged ? applyInterestMethodChange(pot, fields.interestMethod, todayIso()) : { interestMethod: fields.interestMethod }
+                  onSave({
+                    personId,
+                    name: fields.name,
+                    targetAmount: fields.targetAmount,
+                    targetDate: fields.targetDate,
+                    recurringDepositAmount: fields.recurringDepositAmount,
+                    recurringDepositDayOfMonth: fields.recurringDepositDayOfMonth,
+                    recurringDepositStartDate: fields.recurringDepositAmount ? (pot.recurringDepositStartDate ?? todayIso()) : undefined,
+                    interestDestination: fields.interestDestination,
+                    ...methodPatch,
+                  })
+                  onToggle()
+                  triggerFlash()
+                }}
+              />
+            </RowSheet>
           )}
         </div>
         <SavedFlashOverlay active={flashActive} />
@@ -2329,7 +2333,7 @@ function PotRow({
                 {nextDeposit ? ` · next deposit ${nextDeposit.date}` : ''}
               </p>
             </div>
-            <span className="text-[var(--color-ink-muted)] shrink-0 pl-2">{isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span>
+            <span className="shrink-0 pl-2"><OpensSheetIcon /></span>
           </button>
           <button onClick={() => setPickingIcon(true)} className="shrink-0" aria-label={`Choose ${pot.name}'s category icon`}>
             <CategoryIcon category={{ icon: pot.categoryIcon ?? DEFAULT_POT_CATEGORY_ICON, iconColor: pot.categoryIconColor ?? DEFAULT_POT_CATEGORY_ICON_COLOR }} size={14} />
@@ -2384,16 +2388,18 @@ function PotRow({
           />
 
           {isOpen && (
-            <PotEditForm
-              pot={pot}
-              templates={templates}
-              loans={loans}
-              onCancel={onToggle}
-              onSave={(updates) => { onSave(updates); onToggle(); triggerFlash() }}
-              onAssignTemplateLocation={onAssignTemplateLocation}
-              onAssignLoanLocation={onAssignLoanLocation}
-              roundUp={roundUp}
-            />
+            <RowSheet title={pot.name} onClose={onToggle}>
+              <PotEditForm
+                pot={pot}
+                templates={templates}
+                loans={loans}
+                onCancel={onToggle}
+                onSave={(updates) => { onSave(updates); onToggle(); triggerFlash() }}
+                onAssignTemplateLocation={onAssignTemplateLocation}
+                onAssignLoanLocation={onAssignLoanLocation}
+                roundUp={roundUp}
+              />
+            </RowSheet>
           )}
         </div>
         <SavedFlashOverlay active={flashActive} />
@@ -2730,10 +2736,12 @@ export function Salary() {
   }, [data.jointAccount, triggerJointFlash])
   const [editingDeduction, setEditingDeduction] = useState<{ personId: string; deductionId: string } | null>(null)
   const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null)
-  // Which person's Salary row / which Pension's row is expanded — one at
-  // a time per section, same pattern as Borrowing's expandedLoan/
-  // expandedCard. Starts on the primary person (rather than fully
-  // collapsed) since salary is the main reason most visits happen.
+  // Which person's Salary row is expanded / which Pension's sheet is open —
+  // one at a time per section, same pattern as Borrowing's expandedLoan/
+  // expandedCard. The salary row starts EXPANDED on the primary person, so
+  // their pay periods are in view on arrival: salary is the main reason most
+  // visits happen. It is the one Salary-page card that expands in place
+  // rather than opening a sheet; its pay periods open sheets.
   const [expandedPersonId, setExpandedPersonId] = useState<string | null>(data.primaryPersonId ?? null)
   const [expandedPensionId, setExpandedPensionId] = useState<string | null>(null)
   // Batch 9 (2026-09-07, Bug 11) — see PensionRow's own comment on why a
@@ -3418,7 +3426,7 @@ export function Salary() {
                 <p className="text-sm font-medium text-[var(--color-ink)]">£{formatCurrency(data.jointAccount.openingBalance)} opening balance</p>
                 <p className="text-xs text-[var(--color-ink-muted)]">as of {formatFullDate(data.jointAccount.openingBalanceDate)}</p>
               </div>
-              <ChevronDown size={16} className="text-[var(--color-ink-muted)] shrink-0" />
+              <OpensSheetIcon />
             </button>
 
             {/* Transfer pill (2026-09-04 session, "joint account should be
@@ -4666,29 +4674,34 @@ function PayPeriodRow({
             {existingOverride && !existingOverride.bonusGrossAmount && <span className="text-xs text-[var(--color-coral)]"> · Adjusted</span>}
             {isFiveWeekPeriod && <span className="text-xs text-[var(--color-ink-muted)]"> · 5-week period</span>}
           </span>
-          <span className="font-mono text-sm text-[var(--color-ink)]">£{formatCurrency(netPay ?? 0)}</span>
+          <span className="flex items-center gap-2 shrink-0">
+            <span className="font-mono text-sm text-[var(--color-ink)]">£{formatCurrency(netPay ?? 0)}</span>
+            <OpensSheetIcon />
+          </span>
         </button>
       </div>
       {isOpen && (
-        <PeriodEditor
-          person={person}
-          dateIso={dateIso}
-          isClosed={isClosed}
-          existingOverride={existingOverride}
-          onSaveJustThis={onSaveJustThis}
-          onSaveAllFuture={onSaveAllFuture}
-          editingDeduction={editingDeduction}
-          setEditingDeduction={setEditingDeduction}
-          onFlash={(message) => {
-            // UAT 2026-09-08 (9-wallet-bonus/9-wallet-netpay): these two
-            // inline actions used to flash but leave the row expanded,
-            // unlike every other save action on this page (Salary Sort's
-            // own modal closing counts as its own "collapse"). Collapse
-            // the row here too, matching that pattern.
-            triggerOwnFlash(message)
-            onToggle()
-          }}
-        />
+        <RowSheet title={`${person.name} · ${dateIso}`} onClose={onToggle}>
+          <PeriodEditor
+            person={person}
+            dateIso={dateIso}
+            isClosed={isClosed}
+            existingOverride={existingOverride}
+            onSaveJustThis={onSaveJustThis}
+            onSaveAllFuture={onSaveAllFuture}
+            editingDeduction={editingDeduction}
+            setEditingDeduction={setEditingDeduction}
+            onFlash={(message) => {
+              // UAT 2026-09-08 (9-wallet-bonus/9-wallet-netpay): these two
+              // inline actions used to flash but leave the row expanded,
+              // unlike every other save action on this page (Salary Sort's
+              // own modal closing counts as its own "collapse"). Collapse
+              // the row here too, matching that pattern.
+              triggerOwnFlash(message)
+              onToggle()
+            }}
+          />
+        </RowSheet>
       )}
       {sortOpen && (
         <SalarySortModal
