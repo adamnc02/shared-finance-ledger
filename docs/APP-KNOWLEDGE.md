@@ -499,6 +499,15 @@ effective-dated like its amount, and a single payment's override, which beats it
 choice changed — otherwise it rewrites every rounded row on every load, or rounds history that
 cleared before the rule existed. 🚨 **Every function that rebuilds occurrence overrides field by
 field must carry `roundUpSkipped`.** `verify-round-up-recurring.ts`.
+🚨 **The one exception to "re-round only when the price or the choice changed" is a row whose
+rounding contradicts itself** (`roundUpBroken`: `roundedFrom` set, `amount` not what it rounds to).
+A pre-2026-10-05 build reconciled by assigning the price to `amount`, so a synced £7.00 row became
+£6.99 "rounded from £6.99" with nothing in the jar — and under the rule above it stayed that way on
+every load, fixed only by toggling the payment's round-up off and on. It is recomputed now. **A row
+an old build stored with no rounding at all is NOT repaired**: it cannot be told from history that
+cleared before the rule existed. A stale device in a synced household writes by its own build's
+rules and leaves no trace (an UPDATE keeps the row's `user_id`); the Wallet page's build stamp is how
+to find it. `verify-round-up-repair.ts`.
 
 ### 1.19d-3 The Coin Jar is now fed by TWO apps, and only one of them rounds (2026-09-21, Listly PROMPT-05)
 

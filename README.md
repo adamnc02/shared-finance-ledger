@@ -341,6 +341,11 @@ Preview, which shows the same statement inside the app.
   the restore had deleted, or double up the ones the file was about to deliver.
 - **The 8pm alert runs the app's own projection engine**, server-side, rather than a second copy of
   it written in SQL. The alert and the figure on your phone are the same code.
+- **Every device should be on the same build.** A phone that is never fully closed keeps running the
+  version it last loaded, and it keeps writing to the household by that version's rules. The foot of
+  the Wallet page shows each device's **Build**; if two phones disagree, swipe the older one fully
+  closed and reopen it. The current build repairs a recurring payment an older one left with broken
+  rounding, the next time it loads.
 
 ---
 

@@ -1237,6 +1237,18 @@ is called in the three places a recurring occurrence becomes a figure: the perso
 > and recomputes rounding **only when the price or that payment's choice changed**, which is also
 > what keeps a payment that cleared before recurring rounding existed exactly as it cleared.
 
+> 🚨 **…except a row whose rounding contradicts itself, which is recomputed.** A build from before
+> recurring rounding existed reconciled by assigning the price to `amount` and left `roundedFrom`
+> behind, so a synced £7.00 row became **£6.99 "rounded from £6.99"**, crediting the jar nothing.
+> Its price still matches the template and its choice has not changed, so the rule above would leave
+> it broken on every load forever; only toggling that payment's round-up off and on (two choice
+> changes) forced a recompute. `roundUpBroken(t)` — `roundedFrom` is set and `amount` is not what it
+> rounds to — counts as a change, and the row is repaired on the next load of any current build.
+> **It cannot repair a row an old build stored with no rounding at all**: that is indistinguishable
+> from a payment that cleared before recurring rounding existed, which must stay as it cleared. Every
+> device on the current build (the Wallet page's build stamp, §25) is what prevents that case.
+> `verify-round-up-repair.ts` fails on the previous comparison.
+
 > 🚨 **Three functions rebuild occurrence overrides field by field** — `setPausedTemplateOccurrences`,
 > `applyTemplateAmountChange` and `applyTemplateScheduleChange`. Each must carry `roundUpSkipped`, or
 > pausing a different payment silently drops a payment's round-up choice. A schedule change also
@@ -1245,6 +1257,7 @@ is called in the three places a recurring occurrence becomes a figure: the perso
 `verify-round-up-recurring.ts` (on the real PROD file's Coin Jar): rounding ahead of time, single and
 from-then-on opt-outs, a stored payment left untouched on a second load (the control that restores
 the old comparison fails it), no retroactive rounding, and the overrides surviving each rewrite.
+`verify-round-up-repair.ts`: a row left broken by an old build is repaired, and one stored unrounded is not.
 
 ---
 
@@ -1537,6 +1550,12 @@ Key internals:
   than at save time, and the Joint Account card watches for the account appearing, because its
   first creation goes through `AppGuards`' modal and there is no click handler on this page to
   hang a flash off.
+- **`BuildStamp`** (`src/components/BuildStamp.tsx`) — the foot of the page reads `Build <commit> ·
+  <UK build time>`, from a `__BUILD_ID__` that `vite.config.ts` writes in with `define` at build time
+  (`+` after the commit marks a build made with uncommitted changes). A home-screen app that is never
+  fully closed keeps running the build it last loaded, and a device's writes carry no trace of their
+  build — in the sync app an UPDATE keeps the row's original `user_id` — so looking at each device's
+  stamp is the only way to tell which build each one is running.
 
 ---
 
