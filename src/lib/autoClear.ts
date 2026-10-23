@@ -34,7 +34,7 @@ import { generateSavingsDepositTransactions, generateSavingsInterestTransactions
 import { generatePotDepositTransactions, generatePotOutgoingTransactions, resolvePotDepositOccurrenceAmount } from './potLedger'
 import { dedupeKey } from './projection'
 import { toLocalIsoDate, parseLocalDate } from './date'
-import { coinJarForOwner, roundRecurringOccurrences, roundUpFields, unroundedAmount } from './roundUp'
+import { coinJarForOwner, roundRecurringOccurrences, roundUpBroken, roundUpFields, unroundedAmount } from './roundUp'
 import { isInEditWindow } from './editWindow'
 import type { AppDataV2, Transaction } from '../types/ledger'
 
@@ -250,8 +250,10 @@ function reconcileRecurringTemplateTransactions(data: AppDataV2, asOfIso: string
     // Rounding is recomputed only when the price or this payment's round-up
     // choice changed: a row materialised before recurring rounding existed, or
     // before the switch was turned on, is never rounded after the fact.
+    // A row whose own rounding contradicts itself (roundUpBroken — written by a
+    // pre-2026-10-05 build and synced here) is recomputed too, or nothing ever would.
     const roundUpSkipped = template.kind === 'transaction' && template.recurringTransactionType !== 'income' && resolveOccurrenceRoundUpSkipped(template, slot) ? true : undefined
-    const repriced = price !== unroundedAmount(t) || !!roundUpSkipped !== !!t.roundUpSkipped
+    const repriced = price !== unroundedAmount(t) || !!roundUpSkipped !== !!t.roundUpSkipped || roundUpBroken(t)
     if (!repriced && date === t.date && status === t.status) return stamp(t, slot)
     changed = true
     const money = repriced ? { ...roundUpFields({ ...t, date, amount: price, roundUpSkipped }, payCycle, coinJarForOwner(data.pots ?? [], t.ownerId)?.id), roundUpSkipped } : {}

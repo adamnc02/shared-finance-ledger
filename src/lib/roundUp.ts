@@ -215,6 +215,24 @@ export function unroundedAmount(t: Pick<Transaction, 'amount' | 'roundedFrom'>):
   return t.roundedFrom ?? t.amount
 }
 
+/**
+ * Whether a stored row's rounding contradicts itself: it says it was rounded
+ * from a price, but its `amount` is not what that price rounds to.
+ *
+ * Nothing in the current code writes such a row. A build from before recurring
+ * round-ups (2026-10-05) does: its reconciler repainted a recurring row's
+ * `amount` from the template's price and left `roundedFrom` behind, so £7.00
+ * from £6.99 became £6.99 from £6.99, crediting the jar nothing — and it syncs.
+ * The reconciler treats a broken row as changed, so it is recomputed on the
+ * next load (`verify-round-up-repair.ts`).
+ *
+ * A row with no `roundedFrom` is never broken: "never rounded" cannot be told
+ * apart from "cleared before the rule existed", and that must stay as it cleared.
+ */
+export function roundUpBroken(t: Pick<Transaction, 'amount' | 'roundedFrom'>): boolean {
+  return t.roundedFrom !== undefined && round2(t.amount) !== roundUpTarget(t.roundedFrom)
+}
+
 /** The uplift a stored row contributes to its Coin Jar. Zero for everything that was not rounded. */
 export function storedUplift(t: Pick<Transaction, 'amount' | 'roundedFrom' | 'roundingPotId'>): number {
   if (t.roundedFrom === undefined || !t.roundingPotId) return 0
