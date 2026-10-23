@@ -97,6 +97,7 @@ import { manageUpcomingRange, trimToManageUpcoming } from '../lib/occurrenceOver
 import { todayIso, toLocalIsoDate, parseLocalDate } from '../lib/date'
 import { payPeriodWeeks } from '../lib/payCycle'
 import { visibleToMe } from '../lib/householdView'
+import { BuildStamp } from '../components/BuildStamp'
 
 function emptySalaryFields() {
   return {
@@ -3585,6 +3586,7 @@ export function Salary() {
         exact match. Doesn't account for multiple jobs, benefits in kind, or higher/additional-rate pension relief
         reclaimed via Self Assessment.
       </p>
+      <BuildStamp />
     </div>
   )
 }
