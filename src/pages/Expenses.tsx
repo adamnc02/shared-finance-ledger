@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { recurringCycleSummary } from '../lib/recurringSummary'
+import { horizonCycles } from '../lib/projection'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { formatCurrency, formatFullDate, formatMonthYear } from '../lib/format'
 import { Plus, X, ChevronDown, ChevronUp, ArrowRight, ArrowLeftRight } from 'lucide-react'
@@ -6,7 +8,7 @@ import { useLedgerData } from '../context/LedgerContext'
 import { EditField } from '../components/EditField'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { CategoryPicker } from '../components/CategoryPicker'
-import { SheetOnLaptop, LaptopPanelLayout } from '../components/RowSheet'
+import { SheetOnLaptop, LaptopPanelLayout, RowSheet } from '../components/RowSheet'
 import { useWide } from '../lib/useWide'
 import { SwipeToDelete } from '../components/SwipeToDelete'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
@@ -96,7 +98,7 @@ const RECURRING_FREQUENCY_LABELS: Record<'weekly' | 'every_n_weeks' | 'monthly' 
 }
 type RecurringFrequency = keyof typeof RECURRING_FREQUENCY_LABELS
 
-import { todayIso } from '../lib/date'
+import { todayIso, parseLocalDate } from '../lib/date'
 import { fundablePots, unroundedAmount, roundUpAvailable, roundUpTarget, roundUpUplift, coinJarForOwner } from '../lib/roundUp'
 import { visibleToMe, touchesJointAccount, isSomeoneElses } from '../lib/householdView'
 import { OwnerBadge } from '../components/OwnerBadge'
@@ -500,6 +502,16 @@ export function Expenses() {
   // savings pot, the joint account, or a pot; the Overpayments pill
   // appears once there's a loan or credit card to log one against — same
   // "invisible until it would do something" rule the old Savings/Joint/
+  // Laptop Recurring tab: this cycle's totals and each item's next date (lib/recurringSummary.ts).
+  const depositingSavingsPots = mySavingsPots.filter((p) => p.recurringDepositAmount)
+  const depositingPots = myPots.filter((p) => p.recurringDepositAmount)
+  const recurringSummary = useMemo(() => {
+    const today = new Date()
+    return recurringCycleSummary(data, recurringTransactions, depositingSavingsPots, depositingPots, horizonCycles(data, data.primaryPersonId, 'current_cycle', today)[0], today)
+  }, [data, recurringTransactions, depositingSavingsPots, depositingPots])
+  const recurringOut = recurringTransactions.filter((t) => t.recurringTransactionType !== 'income')
+  const recurringIn = recurringTransactions.filter((t) => t.recurringTransactionType === 'income')
+
   // Pots pills used individually.
   const pageModes: PageMode[] = [
     'transactions',
@@ -651,6 +663,80 @@ export function Expenses() {
             </SheetOnLaptop>
           )}
 
+          {wide && (
+            <div className="grid grid-cols-3 gap-4 mb-5">
+              <div className="rounded-2xl p-4 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+                <span className="text-xs text-[var(--color-ink-muted)]">Going out this cycle</span>
+                <span className="font-mono text-xl font-semibold text-[var(--color-ink)]">£{formatCurrency(recurringSummary.goingOut)}</span>
+                {recurringSummary.intoSavingsAndPots > 0 && <span className="text-xs text-[var(--color-ink-muted)]">Including £{formatCurrency(recurringSummary.intoSavingsAndPots)} into savings and pots</span>}
+              </div>
+              <div className="rounded-2xl p-4 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+                <span className="text-xs text-[var(--color-ink-muted)]">Coming in this cycle</span>
+                <span className="font-mono text-xl font-semibold" style={{ color: 'var(--color-positive)' }}>+£{formatCurrency(recurringSummary.comingIn)}</span>
+              </div>
+              <div className="rounded-2xl p-4 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+                <span className="text-xs text-[var(--color-ink-muted)]">Next payment</span>
+                <span className="font-mono text-xl font-semibold text-[var(--color-ink)]">{recurringSummary.next ? formatDayMonthShort(recurringSummary.next.date) : '—'}</span>
+                {recurringSummary.next && <span className="text-xs text-[var(--color-ink-muted)]">{recurringSummary.next.name} · £{formatCurrency(recurringSummary.next.amount)}</span>}
+              </div>
+            </div>
+          )}
+
+          {wide ? (
+            <div className="rounded-[20px] px-2 pt-3 pb-2 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+              <div className={`${REC_COLUMNS} px-3.5 py-2 text-xs font-semibold tracking-[0.06em] whitespace-nowrap text-[var(--color-ink-muted)]`}>
+                <span>NAME</span>
+                <span>CATEGORY</span>
+                <span>HOW OFTEN</span>
+                <span>PAID FROM</span>
+                <span>NEXT</span>
+                <span className="text-right">AMOUNT</span>
+              </div>
+              {[
+                { label: 'GOING OUT', items: recurringOut },
+                { label: 'COMING IN', items: recurringIn },
+              ].map((g) =>
+                g.items.length === 0 ? null : (
+                  <div key={g.label} className="flex flex-col gap-1">
+                    <div className="px-3.5 pt-3.5 pb-1.5 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">
+                      {g.label} · {g.items.length}
+                    </div>
+                    {g.items.map((template) => (
+                      <RecurringTransactionRow
+                        key={template.id}
+                        template={template}
+                        categories={visibleCategoriesFor(data, template.categoryId)}
+                        onAddCategory={addCategory}
+                        onUpdate={(u) => updateRecurringTemplate(template.id, u)}
+                        onRemove={() => removeRecurringTemplate(template.id)}
+                        shouldFlashOnMount={justCreatedRecurringId === template.id}
+                        onFlashedOnMount={() => setJustCreatedRecurringId(null)}
+                        next={recurringSummary.nextById.get(template.id)}
+                      />
+                    ))}
+                  </div>
+                ),
+              )}
+              {(depositingSavingsPots.length > 0 || depositingPots.length > 0) && (
+                <div className="flex flex-col gap-1">
+                  <div className="px-3.5 pt-3.5 pb-1.5 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">
+                    INTO SAVINGS AND POTS · {depositingSavingsPots.length + depositingPots.length}
+                  </div>
+                  {depositingSavingsPots.map((pot) => (
+                    <SavingsRecurringDepositRow key={pot.id} pot={pot} onSave={(updates) => updateSavingsPot(pot.id, updates)} />
+                  ))}
+                  {depositingPots.map((pot) => (
+                    <PotRecurringDepositRow key={pot.id} pot={pot} onSave={(updates) => updatePot(pot.id, updates)} />
+                  ))}
+                </div>
+              )}
+              {recurringTransactions.length === 0 && depositingSavingsPots.length === 0 && depositingPots.length === 0 && !adding && (
+                <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">
+                  No recurring transactions yet. Add a recurring income or expense to have it show up automatically in the Summary ledger.
+                </p>
+              )}
+            </div>
+          ) : (
           <div className="flex flex-col gap-2">
             {recurringTransactions.map((template) => (
               <RecurringTransactionRow
@@ -695,6 +781,7 @@ export function Expenses() {
               </p>
             )}
           </div>
+          )}
         </>
       ) : mode === 'transfer' ? (
         <>
@@ -858,6 +945,50 @@ export function Expenses() {
 // ── Ad-hoc transaction row — swipe to delete, tap to expand/edit (same
 // interaction pattern RecurringTransactionRow already uses below, and now
 // Savings/Joint too — see SavingsTransactionRowItem/JointTransactionRowItem). ──
+/** The laptop Recurring table's columns, shared by its header and every row. */
+const REC_COLUMNS = 'grid grid-cols-[minmax(150px,1.6fr)_minmax(70px,1fr)_minmax(80px,1.1fr)_minmax(90px,1.1fr)_64px_96px] items-center gap-3'
+
+/** "28 Oct" — a laptop table's date column. */
+function shortDayMonth(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
+
+/** One laptop Recurring row: the same columns for a recurring transaction and a savings-pot or pot deposit. */
+function RecurringLaptopRow({ open, onClick, icon, name, tag, category, howOften, from, next, amount, income, paused }: {
+  open: boolean
+  onClick: () => void
+  icon?: React.ReactNode
+  name: string
+  tag?: string
+  category: string
+  howOften: string
+  from: string
+  next?: string
+  amount: number
+  income?: boolean
+  paused?: boolean
+}) {
+  const muted = { color: paused ? 'var(--color-ink-faint)' : 'var(--color-ink-muted)' }
+  return (
+    <button onClick={onClick} aria-expanded={open} className={`${REC_COLUMNS} w-full min-h-[52px] px-3.5 py-1.5 rounded-2xl border text-left text-sm`} style={{ background: open ? 'var(--color-surface-raised)' : 'var(--color-surface)', borderColor: open ? 'var(--color-coral)' : 'transparent' }}>
+      <span className="flex items-center gap-2.5 min-w-0">
+        {icon}
+        <span className="font-medium break-words min-w-0" style={{ color: paused ? 'var(--color-ink-muted)' : 'var(--color-ink)', textDecoration: paused ? 'line-through' : 'none' }}>{name}</span>
+        {paused && <span className="text-[11px] shrink-0" style={muted}>Paused</span>}
+        {tag && <span className="text-[11px] whitespace-nowrap text-[var(--color-ink-muted)]">{tag}</span>}
+      </span>
+      <span className="break-words min-w-0" style={muted}>{category}</span>
+      <span className="break-words min-w-0" style={muted}>{howOften}</span>
+      <span className="break-words min-w-0" style={muted}>{from}</span>
+      <span className="break-words min-w-0" style={muted}>{next ? shortDayMonth(next) : '—'}</span>
+      <span className="font-mono text-right whitespace-nowrap" style={{ color: paused ? 'var(--color-ink-muted)' : income ? 'var(--color-positive)' : 'var(--color-ink)', textDecoration: paused ? 'line-through' : 'none' }}>
+        {income ? '+' : '-'}£{formatCurrency(amount)}
+      </span>
+    </button>
+  )
+}
+
 /** The laptop Transactions table's columns, shared by its header and every row. */
 const TX_COLUMNS = 'grid grid-cols-[64px_minmax(150px,1fr)_minmax(90px,140px)_minmax(100px,160px)_96px] items-center gap-3'
 
@@ -913,12 +1044,12 @@ function AdHocTransactionRow({
             <span className="flex items-center gap-2.5 min-w-0">
               <CategoryIcon category={category} />
               <span className="min-w-0">
-                <span className="block font-medium text-[var(--color-ink)] truncate">{title}</span>
+                <span className="block font-medium text-[var(--color-ink)] break-words">{title}</span>
                 {t.status === 'pending' && <span className="block text-[11px] text-[var(--color-ink-muted)]">Pending</span>}
               </span>
             </span>
-            <span className="text-[13px] text-[var(--color-ink-muted)] truncate">{category?.name ?? ''}</span>
-            <span className="text-[13px] text-[var(--color-ink-muted)] truncate">
+            <span className="text-[13px] text-[var(--color-ink-muted)] break-words min-w-0">{category?.name ?? ''}</span>
+            <span className="text-[13px] text-[var(--color-ink-muted)] break-words min-w-0">
               {PAYMENT_METHOD_LABELS[t.paymentMethod]}
               {card ? ` · ${card.name}` : ''}
             </span>
@@ -3900,6 +4031,8 @@ function RecurringTransactionEditPanel({
   onAddCategory,
   onSave,
   onCancel,
+  upcoming,
+  onDelete,
 }: {
   template: RecurringTemplate
   categories: { id: string; name: string; icon: string; iconColor: string }[]
@@ -3909,12 +4042,19 @@ function RecurringTransactionEditPanel({
    * form had a Save button but no way to back out; collapses the row
    * without saving, matching every other edit form in the app. */
   onCancel: () => void
+  /** Laptop panel: its upcoming payments, shown between the details and Save. */
+  upcoming?: React.ReactNode
+  /** Laptop panel: a Delete button beside Save. */
+  onDelete?: () => void
 }) {
   const [draft, setDraft] = useState<RecurringTxDraft>(() => draftFromRecurringTemplate(template))
   // UAT follow-up (2026-09-08), generalised 2026-09-09 into
   // EffectiveDatedChangeFlow — true while a genuine STANDING amount
   // change is being routed through "which payment does this apply from."
   const [changingAmount, setChangingAmount] = useState(false)
+  // Laptop: the panel reads amount → facts → round-up → its upcoming payments → Save, with the rest behind "Edit details".
+  const wide = useWide()
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const { changeRecurringTemplateSchedule, data } = useLedgerData()
   // 2026-09-16 (Adam-reported) — a date or frequency change now goes through
   // the same "from which payment" flow as Bills. It used to save straight
@@ -4041,8 +4181,18 @@ function RecurringTransactionEditPanel({
     )
   }
 
+  const showDetails = !wide || detailsOpen
+  const fact = (label: string, value: string) => (
+    <div className="flex flex-col gap-1 text-[13px]">
+      <span className="text-[var(--color-ink-muted)]">{label}</span>
+      <span className="text-[var(--color-ink)]">{value}</span>
+    </div>
+  )
+
   return (
-    <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
+    <div className={wide ? 'flex flex-col gap-3.5' : 'grid grid-cols-2 gap-3 mt-3 pt-3 border-t'} style={{ borderColor: 'var(--color-track)' }}>
+      {showDetails && (
+      <div className={wide ? 'order-3 flex flex-col gap-3.5' : 'contents'}>
       <div className="col-span-2 flex gap-2">
         {(['expense', 'income'] as const).map((rt) => (
           <button
@@ -4060,15 +4210,34 @@ function RecurringTransactionEditPanel({
       </div>
 
       <EditField label="Name" type="text" value={draft.name} onChange={(v) => update({ name: v })} />
-      <EditField label="Amount (£)" type="number" value={draft.amount} onChange={(v) => update({ amount: Number(v) })} />
+      {!wide && <EditField label="Amount (£)" type="number" value={draft.amount} onChange={(v) => update({ amount: Number(v) })} />}
       <RecurringFrequencyEditor frequency={draft.frequency as RecurringFrequency} intervalWeeks={draft.intervalWeeks} anchorDate={draft.anchorDate} onChange={update} />
       <div className="col-span-2">
         <CategoryPicker categories={categories} value={draft.categoryId} onChange={(categoryId) => update({ categoryId })} onAddCategory={onAddCategory} />
       </div>
       <RecurringPaymentMethodEditor value={draft.paymentMethod} onChange={(paymentMethod) => update({ paymentMethod })} />
+      </div>
+      )}
+
+      {wide && (
+        <>
+          <div className="order-1"><EditField label="Amount (£)" type="number" value={draft.amount} onChange={(v) => update({ amount: Number(v) })} /></div>
+          <div className="order-1 grid grid-cols-2 gap-3">
+            {fact('How often', RECURRING_FREQUENCY_LABELS[(draft.frequency as RecurringFrequency) ?? 'monthly'])}
+            {fact('Paid with', PAYMENT_METHOD_LABELS[draft.paymentMethod])}
+            {fact('Category', categories.find((c) => c.id === draft.categoryId)?.name ?? '')}
+            {fact('First payment', formatFullDate(draft.anchorDate))}
+          </div>
+          <button onClick={() => setDetailsOpen(!detailsOpen)} aria-expanded={detailsOpen} className="order-2 w-full flex items-center justify-between py-2 border-t text-sm font-semibold text-[var(--color-ink)]" style={{ borderColor: 'var(--color-track)' }}>
+            Edit details
+            {detailsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+          {upcoming && <div className="order-4">{upcoming}</div>}
+        </>
+      )}
 
       {roundUpOffered && (
-        <label className="flex items-start gap-2 col-span-2">
+        <label className={`flex items-start gap-2 col-span-2 ${wide ? 'order-1 px-3.5 py-3 rounded-2xl' : ''}`} style={wide ? { background: 'var(--color-surface)' } : undefined}>
           <input type="checkbox" className="mt-0.5" checked={!draft.roundUpSkipped} onChange={(e) => update({ roundUpSkipped: e.target.checked ? undefined : true })} />
           <span className="text-xs text-[var(--color-ink-muted)]">
             Round up to the next pound, into {ownerCoinJar?.name ?? 'the Coin Jar'}
@@ -4083,13 +4252,18 @@ function RecurringTransactionEditPanel({
 
       {/* Picker-First Flows (2026-09 session) — "Whose income" removed entirely; personId/ownerId stay whatever draftFromRecurringTemplate already carried (always your primary person, set once at creation and never re-chosen here). */}
 
-      <label className="flex items-center gap-2 col-span-2 mt-1">
+      <label className={`flex items-center gap-2 col-span-2 mt-1 ${wide ? 'order-3' : ''}`} style={wide && !detailsOpen ? { display: 'none' } : undefined}>
         <input type="checkbox" checked={draft.active} onChange={(e) => update({ active: e.target.checked })} />
         <span className="text-xs text-[var(--color-ink-muted)]">Active (paused recurring transactions stop generating new entries)</span>
       </label>
 
-      <div className="col-span-2 mt-1">
+      <div className={wide ? 'order-5 flex flex-col gap-3' : 'col-span-2 mt-1'}>
         <FormButtonRow onCancel={onCancel} onSave={handleSaveClick} saveDisabled={!dirty} />
+        {wide && onDelete && (
+          <button onClick={onDelete} className="w-full h-11 rounded-full border text-[13px] font-semibold" style={{ borderColor: 'var(--color-track)', color: 'var(--color-negative)' }}>
+            Delete
+          </button>
+        )}
       </div>
     </div>
   )
@@ -4103,6 +4277,7 @@ function RecurringTransactionRow({
   onRemove,
   shouldFlashOnMount,
   onFlashedOnMount,
+  next,
 }: {
   template: RecurringTemplate
   categories: { id: string; name: string; icon: string; iconColor: string }[]
@@ -4111,8 +4286,12 @@ function RecurringTransactionRow({
   onRemove: () => void
   shouldFlashOnMount?: boolean
   onFlashedOnMount?: () => void
+  /** Laptop table: the next payment date (lib/recurringSummary.ts). */
+  next?: string
 }) {
   const [open, setOpen] = useOneOpenRow(`recurring:${template.id}`)
+  const wide = useWide()
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const category = categories.find((c) => c.id === template.categoryId)
   // Batch 9 (2026-09-07, Bug 11) — this row is always an EXISTING
   // recurring transaction (a brand-new one flashes "Transaction saved."
@@ -4143,6 +4322,93 @@ function RecurringTransactionRow({
   const windowDates = open ? trimToManageUpcoming(scheduledTemplateDates(template, manageWindow.start, manageWindow.end), (d) => d.date, new Date()) : []
   const windowOriginalDates = new Set(windowDates.map((w) => w.originalDate))
   const currentlyPaused = new Set((template.occurrenceOverrides ?? []).filter((o) => o.deleted && windowOriginalDates.has(o.originalDate)).map((o) => o.originalDate))
+
+  const upcomingControl = (
+    <PausedOccurrencesControl
+      defaultExpanded={wide}
+      windowDates={windowDates}
+      currentlyPaused={currentlyPaused}
+      amountForDate={(date) => resolveOccurrenceAmount(template, date)}
+      itemLabel="payments"
+      nextPaymentPreview={(tentative) => {
+        const previewTemplate: RecurringTemplate = { ...template, ...setPausedTemplateOccurrences(template, [...windowOriginalDates], tentative) }
+        return templateOccurrencePreviews(previewTemplate, new Date(), 1)[0]?.date ?? null
+      }}
+      onSave={(pausedDates) => onUpdate(setPausedTemplateOccurrences(template, [...windowOriginalDates], pausedDates))}
+      onSaveAmount={(originalDate, newAmount) => onUpdate(applyTemplateSingleOccurrenceAmountChange(template, newAmount, originalDate))}
+      onSaveDate={(originalDate, newDate) => onUpdate(applyTemplateSingleOccurrenceDateChange(template, newDate, originalDate))}
+      isAdjusted={(originalDate) => templateOccurrenceAdjusted(template, originalDate)}
+      roundUp={{
+        forDate: (originalDate, displayDate) => {
+          const price = resolveOccurrenceAmount(template, originalDate)
+          if (!roundUpAvailable({ type: isIncome ? 'income' : 'expense', paymentMethod: template.paymentMethod, location: template.location, date: displayDate }, ownerPayCycle, ownerCoinJar?.id)) return null
+          if (roundUpUplift(price) <= 0) return null
+          return { rounded: !resolveOccurrenceRoundUpSkipped(template, originalDate), target: roundUpTarget(price), uplift: roundUpUplift(price), jarName: ownerCoinJar?.name ?? 'the Coin Jar' }
+        },
+        onToggle: (originalDate, skipped) => onUpdate(applyTemplateSingleOccurrenceRoundUpChange(template, skipped, originalDate)),
+      }}
+    />
+  )
+
+  // Laptop (lib/laptop.ts): a row of the Recurring table, and the
+  // recurring transaction in the docked panel — its edit form in the
+  // laptop order with its upcoming payments inside it, then Delete.
+  if (wide) {
+    const from = template.location === 'pot' ? (data.pots.find((p) => p.id === template.potId)?.name ?? 'Pot') : template.location === 'joint' ? 'Joint account' : 'Current account'
+    const dayOf = parseLocalDate(template.anchorDate).getDate()
+    const rounds = !isIncome && !template.roundUpSkipped && roundUpAvailable({ type: 'expense', paymentMethod: template.paymentMethod, location: template.location, date: todayIso() }, ownerPayCycle, ownerCoinJar?.id)
+    return (
+      <SwipeToDelete onDelete={onRemove} confirmLabel={template.name}>
+        <div className="relative">
+          <RecurringLaptopRow
+            open={open}
+            onClick={() => setOpen(!open)}
+            icon={<CategoryIcon category={category} />}
+            name={template.name}
+            tag={rounds ? 'Rounds up' : undefined}
+            category={category?.name ?? ''}
+            howOften={template.frequency === 'every_n_weeks' ? `Every ${template.intervalWeeks ?? 2} weeks` : `${RECURRING_FREQUENCY_LABELS[(template.frequency as RecurringFrequency) ?? 'monthly']}${template.frequency === 'monthly' ? ` · ${dayOf}${ordinalSuffixLocal(dayOf)}` : ''}`}
+            from={from}
+            next={next}
+            amount={template.amount}
+            income={isIncome}
+            paused={!template.active}
+          />
+          {open && (
+            <RowSheet title={template.name} subtitle={`Recurring · ${category?.name ?? (isIncome ? 'Income' : 'Expense')}`} onClose={() => setOpen(false)}>
+              <RecurringTransactionEditPanel
+                template={template}
+                categories={categories}
+                onAddCategory={onAddCategory}
+                onSave={(patch) => {
+                  onUpdate(patch)
+                  triggerFlash()
+                  setOpen(false)
+                }}
+                onCancel={() => setOpen(false)}
+                upcoming={upcomingControl}
+                onDelete={() => setConfirmingDelete(true)}
+              />
+            </RowSheet>
+          )}
+          {confirmingDelete && (
+            <ConfirmModal
+              title={`Delete ${template.name}?`}
+              description="Already-cleared payments stay in the ledger as historic fact — only future, not-yet-happened ones are removed."
+              tone="danger"
+              onConfirm={() => {
+                setConfirmingDelete(false)
+                setOpen(false)
+                onRemove()
+              }}
+              onCancel={() => setConfirmingDelete(false)}
+            />
+          )}
+          <SavedFlashOverlay active={flashActive} message={flashMessage} />
+        </div>
+      </SwipeToDelete>
+    )
+  }
 
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={template.name}>
@@ -4185,29 +4451,7 @@ function RecurringTransactionRow({
               onCancel={() => setOpen(false)}
             />
 
-            <PausedOccurrencesControl
-              windowDates={windowDates}
-              currentlyPaused={currentlyPaused}
-              amountForDate={(date) => resolveOccurrenceAmount(template, date)}
-              itemLabel="payments"
-              nextPaymentPreview={(tentative) => {
-                const previewTemplate: RecurringTemplate = { ...template, ...setPausedTemplateOccurrences(template, [...windowOriginalDates], tentative) }
-                return templateOccurrencePreviews(previewTemplate, new Date(), 1)[0]?.date ?? null
-              }}
-              onSave={(pausedDates) => onUpdate(setPausedTemplateOccurrences(template, [...windowOriginalDates], pausedDates))}
-              onSaveAmount={(originalDate, newAmount) => onUpdate(applyTemplateSingleOccurrenceAmountChange(template, newAmount, originalDate))}
-              onSaveDate={(originalDate, newDate) => onUpdate(applyTemplateSingleOccurrenceDateChange(template, newDate, originalDate))}
-              isAdjusted={(originalDate) => templateOccurrenceAdjusted(template, originalDate)}
-              roundUp={{
-                forDate: (originalDate, displayDate) => {
-                  const price = resolveOccurrenceAmount(template, originalDate)
-                  if (!roundUpAvailable({ type: isIncome ? 'income' : 'expense', paymentMethod: template.paymentMethod, location: template.location, date: displayDate }, ownerPayCycle, ownerCoinJar?.id)) return null
-                  if (roundUpUplift(price) <= 0) return null
-                  return { rounded: !resolveOccurrenceRoundUpSkipped(template, originalDate), target: roundUpTarget(price), uplift: roundUpUplift(price), jarName: ownerCoinJar?.name ?? 'the Coin Jar' }
-                },
-                onToggle: (originalDate, skipped) => onUpdate(applyTemplateSingleOccurrenceRoundUpChange(template, skipped, originalDate)),
-              }}
-            />
+            {upcomingControl}
           </>
         )}
 
@@ -4238,8 +4482,24 @@ function SavingsRecurringDepositRow({ pot, onSave }: { pot: SavingsPot; onSave: 
   const currentlyPaused = new Set((pot.recurringDepositOverrides ?? []).filter((o) => o.deleted && windowDates.includes(o.originalDate)).map((o) => o.originalDate))
   const nextDeposit = depositOccurrencePreviews(pot, new Date(), 1)[0]
 
+  const wide = useWide()
+
   return (
-    <div className="relative rounded-xl px-4 py-3" style={{ background: 'var(--color-surface)' }}>
+    <div className={wide ? 'relative' : 'relative rounded-xl px-4 py-3'} style={wide ? undefined : { background: 'var(--color-surface)' }}>
+      {wide ? (
+        // Laptop: a row of the Recurring table; its editor opens in the panel.
+        <RecurringLaptopRow
+          open={open}
+          onClick={() => setOpen(!open)}
+          name={pot.name}
+          tag="Savings"
+          category="Savings deposit"
+          howOften={`Monthly · ${pot.recurringDepositDayOfMonth}${ordinalSuffixLocal(pot.recurringDepositDayOfMonth ?? 1)}`}
+          from="Current account"
+          next={nextDeposit?.date}
+          amount={pot.recurringDepositAmount ?? 0}
+        />
+      ) : (
       <button className="w-full flex items-start justify-between gap-2 text-left" onClick={() => setOpen(!open)}>
         <div className="min-w-0">
           <p className="font-body text-sm text-[var(--color-ink)]">{pot.name}</p>
@@ -4250,8 +4510,10 @@ function SavingsRecurringDepositRow({ pot, onSave }: { pot: SavingsPot; onSave: 
           {open ? <ChevronUp size={14} className="text-[var(--color-ink-faint)]" /> : <ChevronDown size={14} className="text-[var(--color-ink-faint)]" />}
         </div>
       </button>
+      )}
       {open && (
-        <div className="mt-3 pt-3 border-t flex flex-col gap-2" style={{ borderColor: 'var(--color-track)' }}>
+        <SheetOnLaptop title={pot.name} subtitle="Savings deposit" onClose={() => setOpen(false)}>
+        <div className={wide ? 'flex flex-col gap-3' : 'mt-3 pt-3 border-t flex flex-col gap-2'} style={{ borderColor: 'var(--color-track)' }}>
           <p className="text-xs text-[var(--color-ink-muted)]">{nextDeposit ? `Next deposit ${nextDeposit.date}` : 'No upcoming deposit'}</p>
           <div className="grid grid-cols-2 gap-2">
             <EditField label="Amount (£)" type="number" value={pot.recurringDepositAmount ?? 0} onChange={(v) => onSave({ recurringDepositAmount: Number(v) || 0 })} />
@@ -4270,6 +4532,7 @@ function SavingsRecurringDepositRow({ pot, onSave }: { pot: SavingsPot; onSave: 
             Remove recurring deposit
           </button>
           <PausedOccurrencesControl
+            defaultExpanded={wide}
             // scheduledDepositDates has no payday/cycle-start resolution
             // concept — trivial pairs (UAT 2026-09-11, manage-upcoming-
             // payments-override-key-bug — matches PausedOccurrencesControl's
@@ -4287,6 +4550,7 @@ function SavingsRecurringDepositRow({ pot, onSave }: { pot: SavingsPot; onSave: 
             isAdjusted={(originalDate) => savingsPotDepositOccurrenceAdjusted(pot, originalDate)}
           />
         </div>
+        </SheetOnLaptop>
       )}
     </div>
   )
@@ -4308,8 +4572,24 @@ function PotRecurringDepositRow({ pot, onSave }: { pot: Pot; onSave: (updates: P
   const currentlyPaused = new Set((pot.recurringDepositOverrides ?? []).filter((o) => o.deleted && windowDates.includes(o.originalDate)).map((o) => o.originalDate))
   const nextDeposit = potDepositOccurrencePreviews(pot, new Date(), 1)[0]
 
+  const wide = useWide()
+
   return (
-    <div className="relative rounded-xl px-4 py-3" style={{ background: 'var(--color-surface)' }}>
+    <div className={wide ? 'relative' : 'relative rounded-xl px-4 py-3'} style={wide ? undefined : { background: 'var(--color-surface)' }}>
+      {wide ? (
+        // Laptop: a row of the Recurring table; its editor opens in the panel.
+        <RecurringLaptopRow
+          open={open}
+          onClick={() => setOpen(!open)}
+          name={pot.name}
+          tag="Pot"
+          category="Pot deposit"
+          howOften={`Monthly · ${pot.recurringDepositDayOfMonth}${ordinalSuffixLocal(pot.recurringDepositDayOfMonth ?? 1)}`}
+          from="Current account"
+          next={nextDeposit?.date}
+          amount={pot.recurringDepositAmount ?? 0}
+        />
+      ) : (
       <button className="w-full flex items-start justify-between gap-2 text-left" onClick={() => setOpen(!open)}>
         <div className="min-w-0">
           <p className="font-body text-sm text-[var(--color-ink)]">{pot.name}</p>
@@ -4320,8 +4600,10 @@ function PotRecurringDepositRow({ pot, onSave }: { pot: Pot; onSave: (updates: P
           {open ? <ChevronUp size={14} className="text-[var(--color-ink-faint)]" /> : <ChevronDown size={14} className="text-[var(--color-ink-faint)]" />}
         </div>
       </button>
+      )}
       {open && (
-        <div className="mt-3 pt-3 border-t flex flex-col gap-2" style={{ borderColor: 'var(--color-track)' }}>
+        <SheetOnLaptop title={pot.name} subtitle="Pot deposit" onClose={() => setOpen(false)}>
+        <div className={wide ? 'flex flex-col gap-3' : 'mt-3 pt-3 border-t flex flex-col gap-2'} style={{ borderColor: 'var(--color-track)' }}>
           <p className="text-xs text-[var(--color-ink-muted)]">{nextDeposit ? `Next deposit ${nextDeposit.date}` : 'No upcoming deposit'}</p>
           <div className="grid grid-cols-2 gap-2">
             <EditField label="Amount (£)" type="number" value={pot.recurringDepositAmount ?? 0} onChange={(v) => onSave({ recurringDepositAmount: Number(v) || 0 })} />
@@ -4340,6 +4622,7 @@ function PotRecurringDepositRow({ pot, onSave }: { pot: Pot; onSave: (updates: P
             Remove recurring deposit
           </button>
           <PausedOccurrencesControl
+            defaultExpanded={wide}
             // scheduledPotDepositDates has no payday/cycle-start resolution
             // concept — trivial pairs (UAT 2026-09-11, manage-upcoming-
             // payments-override-key-bug — matches PausedOccurrencesControl's
@@ -4357,6 +4640,7 @@ function PotRecurringDepositRow({ pot, onSave }: { pot: Pot; onSave: (updates: P
             isAdjusted={(originalDate) => potDepositOccurrenceAdjusted(pot, originalDate)}
           />
         </div>
+        </SheetOnLaptop>
       )}
     </div>
   )

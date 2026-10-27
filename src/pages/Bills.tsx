@@ -594,10 +594,10 @@ function BillRow({
               {!template.active && <span className="text-[11px] shrink-0" style={muted}>Paused</span>}
               {template.location === 'joint' && <span className="text-[11px] whitespace-nowrap text-[var(--color-ink-muted)]">Joint · {myShare}%</span>}
             </span>
-            <span className="truncate" style={muted}>{category?.name ?? ''}</span>
-            <span className="truncate" style={muted}>{FREQUENCY_LABELS[template.frequency]}</span>
-            <span className="truncate" style={muted}>{billLocationLabel(template.location, template.potId, pots)}</span>
-            <span className="truncate" style={muted}>{next ? formatNextDate(next) : '—'}</span>
+            <span className="break-words min-w-0" style={muted}>{category?.name ?? ''}</span>
+            <span className="break-words min-w-0" style={muted}>{FREQUENCY_LABELS[template.frequency]}</span>
+            <span className="break-words min-w-0" style={muted}>{billLocationLabel(template.location, template.potId, pots)}</span>
+            <span className="break-words min-w-0" style={muted}>{next ? formatNextDate(next) : '—'}</span>
             <span className="font-mono text-right whitespace-nowrap" style={{ color: template.active ? 'var(--color-ink)' : 'var(--color-ink-muted)', textDecoration: template.active ? 'none' : 'line-through' }}>
               £{formatCurrency(template.amount)}
             </span>

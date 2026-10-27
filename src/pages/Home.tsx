@@ -2373,11 +2373,11 @@ function TransactionRow({
         <span className="text-[13px] text-[var(--color-ink-muted)] tabular-nums">{formatCycleDate(t.date)}</span>
         <span className="flex items-center gap-2.5 min-w-0">
           <CategoryIcon category={potIconCategory ?? category} size={14} />
-          <span className="text-sm font-medium truncate" title={t.note || category?.name || t.type}>{t.note || category?.name || t.type}</span>
+          <span className="text-sm font-medium break-words min-w-0">{t.note || category?.name || t.type}</span>
           {cleared && <span className="text-[11px] text-[var(--color-ink-muted)] shrink-0">Cleared</span>}
         </span>
-        <span className="text-[13px] text-[var(--color-ink-muted)] truncate">{category?.name ?? ''}</span>
-        <span className="text-[13px] text-[var(--color-ink-muted)] truncate">{paidFromLabel(t, data)}</span>
+        <span className="text-[13px] text-[var(--color-ink-muted)] break-words min-w-0">{category?.name ?? ''}</span>
+        <span className="text-[13px] text-[var(--color-ink-muted)] break-words min-w-0">{paidFromLabel(t, data)}</span>
         <span className="text-sm font-mono text-right" style={{ color: isPositive ? 'var(--color-positive)' : cleared ? 'var(--color-ink-muted)' : 'var(--color-ink)' }}>
           {isPositive ? '+' : '-'}£{formatCurrency(Math.abs(signed))}
         </span>
