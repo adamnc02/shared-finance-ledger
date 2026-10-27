@@ -1,4 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react'
+import { useWide } from '../lib/useWide'
 import { Trash2 } from 'lucide-react'
 import { ConfirmModal } from './ConfirmModal'
 import { DeleteGuardModal } from './DeleteGuardModal'
@@ -65,6 +66,7 @@ export function SwipeToDelete({ children, onDelete, confirmLabel, confirmDescrip
   const [offset, setOffset] = useState(0)
   const [dragging, setDragging] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const wide = useWide()
 
   function handlePointerDown(e: React.PointerEvent) {
     if (isNativeControlTarget(e.target)) return
@@ -149,7 +151,9 @@ export function SwipeToDelete({ children, onDelete, confirmLabel, confirmDescrip
       <button
         onClick={handleDeleteTap}
         className="absolute top-0 right-0 h-full flex items-center justify-center rounded-2xl"
-        style={{ width: REVEAL_WIDTH, background: 'var(--color-negative)' }}
+        // Laptop: hidden until a drag starts, so its red edge never shows at
+        // the corners of a closed row sitting on a same-coloured table card.
+        style={{ width: REVEAL_WIDTH, background: 'var(--color-negative)', visibility: wide && offset === 0 && !dragging ? 'hidden' : undefined }}
       >
         <Trash2 size={18} color="#fff" />
       </button>

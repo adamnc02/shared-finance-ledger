@@ -6,7 +6,7 @@ import { useLedgerData } from '../context/LedgerContext'
 import { EditField } from '../components/EditField'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { CategoryPicker } from '../components/CategoryPicker'
-import { SheetOnLaptop } from '../components/RowSheet'
+import { SheetOnLaptop, LaptopPanelLayout } from '../components/RowSheet'
 import { useWide } from '../lib/useWide'
 import { SwipeToDelete } from '../components/SwipeToDelete'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
@@ -119,6 +119,8 @@ function MonthCollapsedTransactionList<T>({
   renderRow,
   keyOf,
   emptyMessage,
+  laptopColumns,
+  amountOf,
 }: {
   items: T[]
   getDate: (item: T) => string
@@ -126,7 +128,13 @@ function MonthCollapsedTransactionList<T>({
   renderRow: (item: T) => React.ReactNode
   keyOf: (item: T) => string
   emptyMessage: string
+  /** Laptop: the table's column headings; given, the list renders as one table card. */
+  laptopColumns?: React.ReactNode
+  /** Laptop: an item's signed amount (in positive), for each month heading's net. */
+  amountOf?: (item: T) => number
 }) {
+  const wide = useWide()
+  // On a laptop the newest month starts open; a click flips it like any other.
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(() => new Set())
   const toggleMonth = (key: string) =>
     setExpandedMonths((prev) => {
@@ -158,6 +166,43 @@ function MonthCollapsedTransactionList<T>({
   // Most recent month first — matches every pill's own existing
   // most-recent-first sort.
   const monthKeys = Array.from(monthGroups.keys()).sort((a, b) => b.localeCompare(a))
+
+  // Laptop (lib/laptop.ts): one table card — the column headings, the
+  // rows still inside their edit window under their own heading, then a
+  // heading per month with its count and net, the newest month open.
+  if (wide && laptopColumns) {
+    const net = (list: T[]) => Math.round(list.reduce((sum, i) => sum + (amountOf?.(i) ?? 0), 0) * 100) / 100
+    const money = (n: number) => `${n < 0 ? '-' : '+'}£${formatCurrency(Math.abs(n))}`
+    return (
+      <div className="rounded-[20px] px-2 pt-3 pb-2 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+        {laptopColumns}
+        {pending.length > 0 && <div className="px-3.5 pt-3 pb-1 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">STILL CORRECTABLE · LAST 5 DAYS</div>}
+        {pending.map((item) => (
+          <div key={keyOf(item)}>{renderRow(item)}</div>
+        ))}
+        {monthKeys.map((monthKey, i) => {
+          const monthItems = monthGroups.get(monthKey)!
+          const expanded = expandedMonths.has(monthKey) !== (i === 0)
+          return (
+            <div key={monthKey}>
+              <button onClick={() => toggleMonth(monthKey)} aria-expanded={expanded} className="w-full flex items-center justify-between px-3.5 pt-3.5 pb-1.5 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">
+                <span className="flex items-center gap-1.5">
+                  {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                  {formatMonthYear(`${monthKey}-01`).toUpperCase()}
+                </span>
+                <span className="tracking-normal">
+                  {monthItems.length} {monthItems.length === 1 ? 'entry' : 'entries'}
+                  {amountOf ? ` · ${money(net(monthItems))}` : ''}
+                </span>
+              </button>
+              {expanded && monthItems.map((item) => <div key={keyOf(item)}>{renderRow(item)}</div>)}
+            </div>
+          )
+        })}
+        {pending.length === 0 && cleared.length === 0 && <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">{emptyMessage}</p>}
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -468,9 +513,38 @@ export function Expenses() {
     /* One expanded row at a time; changing pill starts with every row closed. */
     <OneOpenRowProvider key={mode}>
     {/* Laptop (lib/laptop.ts): one wider column; add and edit forms open in the right-hand panel (SheetOnLaptop). */}
-    <div className={wide ? 'max-w-[1040px] mx-auto px-10 pt-8' : 'max-w-md mx-auto px-4 pt-6'}>
+    <div className={wide ? 'px-10 pt-8 pb-4' : 'max-w-md mx-auto px-4 pt-6'}>
+      <LaptopPanelLayout>
+      {wide ? (
+        <>
+          <header className="mb-5 flex items-center gap-3">
+            <h1 className="font-display text-3xl font-semibold text-[var(--color-ink)] flex-1">Transactions</h1>
+            <button onClick={() => setAdding(true)} className="h-11 px-[18px] rounded-full text-[13px] font-semibold text-white" style={{ background: 'var(--color-coral)' }}>
+              + Add {mode === 'transactions' ? 'transaction' : mode === 'recurring' ? 'recurring' : mode === 'transfer' ? 'transfer' : 'overpayment'}
+            </button>
+          </header>
+          <div role="tablist" aria-label="Transaction types" className="inline-flex flex-wrap gap-1.5 p-1 rounded-full mb-5" style={{ background: 'var(--color-bg-elevated)' }}>
+            {pageModes.map((m) => (
+              <button
+                key={m}
+                role="tab"
+                aria-selected={mode === m}
+                onClick={() => {
+                  setMode(m)
+                  setAdding(false)
+                }}
+                className="h-10 px-[18px] rounded-full text-[13px] font-semibold transition-colors"
+                style={{ background: mode === m ? 'var(--color-coral)' : 'transparent', color: mode === m ? '#fff' : 'var(--color-ink-muted)' }}
+              >
+                {modeLabel[m]}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
       <header className="mb-6 flex items-center justify-between">
-        <h1 className={`font-display font-semibold text-[var(--color-ink)] ${wide ? 'text-3xl' : 'text-2xl'}`}>Transactions</h1>
+        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Transactions</h1>
         <button
           onClick={() => setAdding(true)}
           className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -495,6 +569,8 @@ export function Expenses() {
           </button>
         ))}
       </div>
+        </>
+      )}
 
       {mode === 'transactions' ? (
         <>
@@ -533,6 +609,16 @@ export function Expenses() {
             isCleared={(t) => t.status === 'cleared'}
             keyOf={(t) => t.id}
             emptyMessage="No ad-hoc entries yet. Log an expense or some income to get started."
+            amountOf={(t) => (t.direction === 'in' ? t.amount : -t.amount)}
+            laptopColumns={
+              <div className={`${TX_COLUMNS} px-3.5 py-2 text-xs font-semibold tracking-[0.06em] whitespace-nowrap text-[var(--color-ink-muted)]`}>
+                <span>DATE</span>
+                <span>NAME</span>
+                <span>CATEGORY</span>
+                <span>PAID WITH</span>
+                <span className="text-right">AMOUNT</span>
+              </div>
+            }
             renderRow={(t) => (
               <AdHocTransactionRow
                 t={t}
@@ -763,6 +849,7 @@ export function Expenses() {
           </div>
         </>
       )}
+      </LaptopPanelLayout>
     </div>
     </OneOpenRowProvider>
   )
@@ -771,6 +858,9 @@ export function Expenses() {
 // ── Ad-hoc transaction row — swipe to delete, tap to expand/edit (same
 // interaction pattern RecurringTransactionRow already uses below, and now
 // Savings/Joint too — see SavingsTransactionRowItem/JointTransactionRowItem). ──
+/** The laptop Transactions table's columns, shared by its header and every row. */
+const TX_COLUMNS = 'grid grid-cols-[64px_minmax(150px,1fr)_minmax(90px,140px)_minmax(100px,160px)_96px] items-center gap-3'
+
 /** "9 Oct" — the laptop row's date column. */
 function formatDayMonthShort(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number)
@@ -815,10 +905,10 @@ function AdHocTransactionRow({
 
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={t.note || category?.name || 'this entry'}>
-      <div className="relative rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', outline: wide && isEditing ? '1px solid var(--color-coral)' : 'none' }}>
+      <div className="relative rounded-2xl overflow-hidden" style={{ background: wide ? (isEditing ? 'var(--color-surface-raised)' : 'var(--color-surface)') : 'var(--color-surface)', outline: wide && isEditing ? '1px solid var(--color-coral)' : 'none', outlineOffset: -1 }}>
         {wide ? (
-          // Laptop: the same row as columns — date, name and status, category, paid with, amount.
-          <button onClick={() => setIsEditing((e) => !e)} aria-expanded={isEditing} className="w-full grid grid-cols-[72px_minmax(0,1fr)_140px_170px_110px] items-center gap-4 min-h-[52px] px-4 py-2 text-left text-sm">
+          // Laptop: the same row as the table's columns (TX_COLUMNS).
+          <button onClick={() => setIsEditing((e) => !e)} aria-expanded={isEditing} className={`${TX_COLUMNS} w-full min-h-[52px] px-3.5 py-1.5 text-left text-sm`}>
             <span className="text-[13px] text-[var(--color-ink-muted)] tabular-nums">{formatDayMonthShort(t.date)}</span>
             <span className="flex items-center gap-2.5 min-w-0">
               <CategoryIcon category={category} />
@@ -832,7 +922,7 @@ function AdHocTransactionRow({
               {PAYMENT_METHOD_LABELS[t.paymentMethod]}
               {card ? ` · ${card.name}` : ''}
             </span>
-            <span className="font-mono font-semibold text-right" style={{ color: isPositive ? 'var(--color-positive)' : 'var(--color-negative)' }}>
+            <span className="font-mono text-right" style={{ color: isPositive ? 'var(--color-positive)' : 'var(--color-ink)' }}>
               {isPositive ? '+' : '-'}£{formatCurrency(t.amount)}
             </span>
           </button>
@@ -1226,6 +1316,19 @@ function ExpenseForm({
   // reason commitSave takes them as arguments rather than reading state:
   // they are set in the same click that navigates here.
   const [pendingCommit, setPendingCommit] = useState<{ type: EntryType; paymentMethod: PaymentMethod; creditCardId?: string } | null>(null)
+  // Laptop one-page form only: what it is paid with, and the round-up switch (on, as the wizard's first choice is).
+  const wide = useWide()
+  const [paidWith, setPaidWith] = useState<{ pm: PaymentMethod; cardId?: string }>({ pm: 'card' })
+  const [roundUpOn, setRoundUpOn] = useState(true)
+  // Escape closes the one-page form, wherever focus is — unless a dialog it opened (a new category) is on top.
+  useEffect(() => {
+    if (!wide) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !document.querySelector('.fixed.inset-0')) onCancel()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [wide, onCancel])
   // The logging person's own jar and cycle — this wizard always logs for
   // the primary person (`personId: data.primaryPersonId` below).
   const primaryPayCycle = data.payCycles.find((c) => c.personId === data.primaryPersonId)
@@ -1281,6 +1384,110 @@ function ExpenseForm({
   // and Amount now share ONE first screen, same shape as TransferForm's
   // own first step (mode toggle + amount together, one Continue). Every
   // step after this one is unchanged.
+  if (wide) {
+    // Laptop (lib/laptop.ts): every step of the wizard on one page, in the
+    // docked panel. Same state, same commitSave, so a round-up, a card
+    // spend and a pot/joint location save exactly as the wizard saves them.
+    const card = paidWith.cardId ? data.creditCards.find((c) => c.id === paidWith.cardId) : undefined
+    const formLocation = locationOption.location.type === 'joint' || locationOption.location.type === 'pot' ? locationOption.location.type : 'personal'
+    const canRoundUp =
+      roundUpAvailable({ type, paymentMethod: paidWith.pm, location: formLocation, date, creditCardId: paidWith.cardId }, primaryPayCycle, coinJar?.id) && roundUpUplift(amountNumber) > 0
+    const ready = amountNumber > 0 && !!name.trim() && !!categoryId
+    const chip = (on: boolean) => ({ background: on ? 'var(--color-coral)' : 'var(--color-surface-raised)', color: on ? '#fff' : 'var(--color-ink)' })
+    return (
+      <div className="flex flex-col gap-3.5">
+        <div role="group" aria-label="Type" className="flex gap-1.5 p-1 rounded-full" style={{ background: 'var(--color-bg)' }}>
+          {ENTRY_TYPES.map((et) => (
+            <button
+              key={et.value}
+              onClick={() => {
+                setType(et.value)
+                // A credit card is only offered for an expense.
+                if (et.value === 'income') setPaidWith((p) => (p.cardId ? { pm: 'card' } : p))
+              }}
+              aria-pressed={type === et.value} className="flex-1 h-9 rounded-full text-[13px] font-semibold" style={type === et.value ? chip(true) : { color: 'var(--color-ink-muted)' }}>
+              {et.label}
+            </button>
+          ))}
+        </div>
+        <div onBlur={applyCategorySuggestion}>
+          <EditField label="Name" type="text" value={name} onChange={setName} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <EditField label="Amount (£)" type="number" value={amount} onChange={setAmount} />
+          <EditField label="Date" type="date" value={date} onChange={setDate} />
+        </div>
+        <div>
+          <CategoryPicker
+            label={suggestion && !categoryPickedByHand && categoryId === suggestion.categoryId ? 'Category · from your last similar entry' : 'Category'}
+            categories={visibleCategoriesFor(data).filter((c) => !!paidWith.cardId || c.id !== CREDIT_CARD_CATEGORY_ID)}
+            value={categoryId}
+            onChange={(id) => {
+              setCategoryPickedByHand(true)
+              setCategoryId(id)
+            }}
+            onAddCategory={onAddCategory}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs text-[var(--color-ink-muted)]">Paid with</span>
+          <div className="flex flex-wrap gap-2">
+            {EXPENSE_PAYMENT_METHODS.map((pm) => (
+              <button key={pm} onClick={() => setPaidWith({ pm })} aria-pressed={paidWith.pm === pm && !paidWith.cardId} className="h-9 px-3.5 rounded-full text-[13px] font-semibold" style={chip(paidWith.pm === pm && !paidWith.cardId)}>
+                {PAYMENT_METHOD_LABELS[pm]}
+              </button>
+            ))}
+            {creditCardLocationOffered &&
+              data.creditCards.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => {
+                    // Card spend is never from a pot or the joint account, as in the wizard's card step.
+                    setPaidWith({ pm: 'card', cardId: c.id })
+                    setLocationOption(PERSONAL_LOCATION_OPTION)
+                  }} aria-pressed={paidWith.cardId === c.id} className="h-9 px-3.5 rounded-full text-[13px] font-semibold" style={chip(paidWith.cardId === c.id)}>
+                  {c.name}
+                </button>
+              ))}
+          </div>
+          {card && <span className="text-[11px] text-[var(--color-ink-muted)]">This adds to the card's balance — it won't reduce your cash balance until you pay the card down.</span>}
+        </div>
+        {!card && nonPersonalLocationOptions.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs text-[var(--color-ink-muted)]">From</span>
+            <div className="flex flex-wrap gap-2">
+              {[PERSONAL_LOCATION_OPTION, ...nonPersonalLocationOptions].map((o) => (
+                <button key={o.key} onClick={() => setLocationOption(o)} aria-pressed={locationOption.key === o.key} className="h-9 px-3.5 rounded-full text-[13px] font-semibold" style={chip(locationOption.key === o.key)}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {canRoundUp && (
+          <label className="flex items-center gap-3 px-3.5 py-3 rounded-2xl text-[13px] cursor-pointer" style={{ background: 'var(--color-surface)' }}>
+            <span className="flex-1 text-[var(--color-ink)]">
+              Round up to £{formatCurrency(roundUpTarget(amountNumber))}
+              <span className="block text-[var(--color-ink-muted)]">
+                £{formatCurrency(roundUpUplift(amountNumber))} into {coinJar?.name ?? 'the Coin Jar'}
+              </span>
+            </span>
+            <input type="checkbox" checked={roundUpOn} onChange={(e) => setRoundUpOn(e.target.checked)} className="w-5 h-5 accent-[var(--color-coral)]" />
+          </label>
+        )}
+        <button
+          disabled={!ready}
+          onClick={() => commitSave(type, paidWith.pm, paidWith.cardId, canRoundUp ? !roundUpOn : undefined)}
+          className="h-12 rounded-full text-sm font-semibold text-white"
+          style={{ background: 'var(--color-coral)', opacity: ready ? 1 : 0.5 }}
+        >
+          Add transaction
+        </button>
+        <span className="text-xs text-center text-[var(--color-ink-muted)]">Esc closes</span>
+      </div>
+    )
+  }
+
   if (step === 'direction' || step === 'amount') {
     return (
       <div className="mb-6 p-4 rounded-2xl flex flex-col gap-3" style={{ background: 'var(--color-surface)' }}>
