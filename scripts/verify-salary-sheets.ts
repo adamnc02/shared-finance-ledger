@@ -9,7 +9,7 @@
 // salary card a sheet hides the pay periods behind a tap, and (opening on
 // arrival) covers the page.
 //
-//  1. every OTHER `{isOpen && (` on the page opens a RowSheet;
+//  1. every OTHER `isOpen && (` on the page opens a RowSheet;
 //  2. the opens-a-sheet mark is OpensSheetIcon, on the five kinds of card
 //     that open one; the salary card is the only chevron toggle;
 //  3. the salary card starts expanded on the primary person, on arrival and
@@ -38,7 +38,8 @@ function check(label: string, ok: boolean, detail?: unknown) {
 const page = readFileSync(new URL('../src/pages/Salary.tsx', import.meta.url), 'utf8')
 const sheet = readFileSync(new URL('../src/components/RowSheet.tsx', import.meta.url), 'utf8')
 
-const opens = [...page.matchAll(/\{isOpen && \(\s*\n\s*<(\w+)/g)].map((m) => m[1])
+// Either form: `{isOpen && (` in the markup, or `const x = isOpen && (` when one sheet is shared by two layouts (the pay period's, by its phone row and laptop tile).
+const opens = [...page.matchAll(/(?:\{|= )isOpen && \(\s*\n\s*<(\w+)/g)].map((m) => m[1])
 check(`the four other expandable cards open a RowSheet; the salary card renders inline (${JSON.stringify(opens)})`, JSON.stringify([...opens].sort()) === JSON.stringify(['RowSheet', 'RowSheet', 'RowSheet', 'RowSheet', 'div'].sort()), opens)
 
 const chevronToggles = page.match(/isOpen \? <ChevronUp/g) ?? []

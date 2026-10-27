@@ -14,7 +14,9 @@
 // 4. The breakpoint: a sideways phone stays on the phone layout.
 // 5. Source checks: only Rail's toggle writes; App hides the pill when wide;
 //    SwipeToDelete never captures the pointer before a drag (a mouse click
-//    on a row would otherwise land on the swipe wrapper, not the row).
+//    on a row would otherwise land on the swipe wrapper, not the row);
+//    the laptop panel docks into the page; the laptop Home ledger never
+//    collapses.
 
 import { readFileSync } from 'node:fs'
 import { LAPTOP_STATE_KEY, WIDE_QUERY, readRailExpanded, writeRailExpanded } from '../src/lib/laptop'
@@ -93,7 +95,14 @@ console.log('\n── 5. Source checks ──')
   const down = swipe.slice(swipe.indexOf('function handlePointerDown'), swipe.indexOf('function handlePointerMove'))
   check('SwipeToDelete takes no pointer capture on pointerdown (a mouse click would never reach the row)', down.includes('setPointerCapture'), false)
   check('…and takes it once the drag passes the threshold', /Math\.abs\(delta\) > DRAG_THRESHOLD[\s\S]{0,900}setPointerCapture/.test(swipe), true)
-  check('RowSheet keeps one portal per layout, both to document.body', (sheet.match(/document\.body,/g) ?? []).length, 2)
+  check('RowSheet docks into the page panel on a laptop (no backdrop over the page)', /if \(dock\) return createPortal\(panel, dock\)/.test(sheet), true)
+  const home = readFileSync(new URL('../src/pages/Home.tsx', import.meta.url), 'utf8')
+  const marker = '// Laptop (lib/laptop.ts): one flat table, never collapsible.'
+  // The laptop branch runs from the marker to the phone's own `return (` at function level (two-space indent).
+  const laptopLedger = home.slice(home.indexOf(marker), home.indexOf('\n  return (\n', home.indexOf(marker)))
+  check('the slice is the whole laptop branch, not a stub (a check that reads nothing passes vacuously)', laptopLedger.split('\n').length > 25, true)
+  check('the laptop ledger exists and is one flat table', home.includes(marker) && laptopLedger.includes('<LedgerHeader />'), true)
+  check('…with nothing in it that collapses (no toggle, no chevron)', /toggle\(|Chevron/.test(laptopLedger), false)
 }
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n✗ ${failures} CHECK(S) FAILED`)
