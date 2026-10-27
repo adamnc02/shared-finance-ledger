@@ -74,7 +74,9 @@ check('the page computes an owner only for someone else\'s row', /isSomeoneElses
 check('a one-off transfer row is given it', /<TransferRowItem[\s\S]{0,120}owner=\{ownerBadgeFor\(t\.ownerId\)\}/.test(expenses), true)
 check('a recurring transfer row is given it too', /<TransferRecurringRow[\s\S]{0,160}owner=\{ownerBadgeFor\(template\.ownerId\)\}/.test(expenses), true)
 check('both rows render the badge', (expenses.match(/<OwnerBadge name=\{owner\.name\} \/>/g) ?? []).length, 2)
-check('…and only when there is an owner to show', (expenses.match(/\{owner && <OwnerBadge/g) ?? []).length, 2)
+// The laptop transfer row (TransferLaptopRow) renders the same badge from a plain name; the rule is that EVERY badge on the page is guarded by an owner, however many rows draw one.
+check('…and every badge on the page only when there is an owner to show', (expenses.match(/<OwnerBadge /g) ?? []).length, (expenses.match(/\{owner && <OwnerBadge /g) ?? []).length)
+check('…of which the laptop row is one', /\{owner && <OwnerBadge name=\{owner\} \/>\}/.test(expenses), true)
 
 const badge = read('components/OwnerBadge.tsx')
 check('the badge is the same neutral outlined pill the bill badges use', /background: 'var\(--color-surface-raised\)', border: '1px solid var\(--color-track\)', color: 'var\(--color-ink-muted\)'/.test(badge), true)
