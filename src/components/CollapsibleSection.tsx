@@ -15,13 +15,27 @@ interface CollapsibleSectionProps {
    * fully self-managed, as every other caller does. */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /** The laptop Wallet's form (lib/laptop.ts): one card, its title and headerExtra inside it, always open — no chevron. */
+  card?: boolean
 }
 
-export function CollapsibleSection({ title, defaultOpen = true, children, className = '', headerExtra, open: openProp, onOpenChange }: CollapsibleSectionProps) {
+export function CollapsibleSection({ title, defaultOpen = true, children, className = '', headerExtra, open: openProp, onOpenChange, card = false }: CollapsibleSectionProps) {
   const [openState, setOpenState] = useState(defaultOpen)
   const isControlled = openProp !== undefined && !!onOpenChange
   const open = isControlled ? openProp : openState
   const setOpen = isControlled ? onOpenChange : setOpenState
+
+  if (card) {
+    return (
+      <section className={`rounded-[20px] p-5 flex flex-col gap-3.5 ${className}`} style={{ background: 'var(--color-surface)' }}>
+        <div className="flex items-center gap-3">
+          <h2 className="flex-1 text-[13px] font-semibold uppercase tracking-[0.08em] text-[var(--color-ink-muted)]">{title}</h2>
+          {headerExtra}
+        </div>
+        {children}
+      </section>
+    )
+  }
 
   return (
     <section className={className}>

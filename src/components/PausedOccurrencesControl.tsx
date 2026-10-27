@@ -95,6 +95,7 @@ export function PausedOccurrencesControl({
   onSaveDate,
   isAdjusted,
   roundUp,
+  defaultExpanded = false,
 }: {
   /**
    * UAT 2026-09-11 (manage-upcoming-payments-override-key-bug) —
@@ -157,8 +158,10 @@ export function PausedOccurrencesControl({
     forDate: (originalDate: string, displayDate: string) => { rounded: boolean; target: number; uplift: number; jarName: string } | null
     onToggle: (originalDate: string, skipped: boolean) => void
   }
+  /** Start with the list open — the laptop bill panel, where it is the panel's main content. */
+  defaultExpanded?: boolean
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(defaultExpanded)
   const [editingDate, setEditingDate] = useState<string | null>(null)
   const [editingKind, setEditingKind] = useState<'amount' | 'date' | null>(null)
   const [editValue, setEditValue] = useState('')

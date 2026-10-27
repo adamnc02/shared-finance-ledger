@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { OneOpenRowProvider, useOneOpenRow } from '../components/OneOpenRow'
-import { RowSheet, LaptopPanelLayout, SheetOnLaptop } from '../components/RowSheet'
+import { RowSheet, SheetOnLaptop } from '../components/RowSheet'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { billsCycleSummary } from '../lib/billSummary'
 import { horizonCycles } from '../lib/projection'
@@ -249,7 +249,6 @@ export function Bills() {
     <OneOpenRowProvider>
     {/* Laptop (lib/laptop.ts): a searchable table with this cycle's totals above it, and the open bill in the docked panel on the right. */}
     <div className={wide ? 'px-10 pt-8 pb-4' : 'max-w-md mx-auto px-4 pt-6'}>
-      <LaptopPanelLayout>
       {wide ? (
         <header className="mb-6 flex flex-wrap items-center gap-3">
           <h1 className="font-display text-3xl font-semibold text-[var(--color-ink)] flex-1">Bills</h1>
@@ -414,7 +413,6 @@ export function Bills() {
         )}
         {visibleBills.length > 0 && listedBills.length === 0 && <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">No bills match “{search}”.</p>}
       </div>
-      </LaptopPanelLayout>
     </div>
     </OneOpenRowProvider>
   )
@@ -752,6 +750,9 @@ function BillEditPanel({
   // does this apply from" flow, so the flow's buildChanges/onCommit know
   // what to diff/write without re-deriving it.
   const [changeKind, setChangeKind] = useState<'amount' | 'location' | 'date' | null>(null)
+  // Laptop: the bill's other fields sit behind "Edit details" (see the render below).
+  const wide = useWide()
+  const [detailsOpen, setDetailsOpen] = useState(false)
   // Every payment in the 5-day edit window (or the last past one) and the
   // next 12, same as every other "Manage upcoming payments" list
   // (occurrenceOverrides.ts).
@@ -965,10 +966,38 @@ function BillEditPanel({
     )
   }
 
+  // Laptop (lib/laptop.ts): the panel reads as the artboard — the amount,
+  // the bill's facts at a glance, its upcoming payments, Save — with every
+  // other field behind "Edit details". CSS order only: the phone keeps this
+  // markup's order, and every field and save path is the same.
+  const showDetails = !wide || detailsOpen
+  const fact = (label: string, value: string) => (
+    <div className="flex flex-col gap-1 text-[13px]">
+      <span className="text-[var(--color-ink-muted)]">{label}</span>
+      <span className="text-[var(--color-ink)]">{value}</span>
+    </div>
+  )
+
   return (
-    <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
-      <EditField label="Name" type="text" value={draft.name} onChange={(v) => update({ name: v })} />
-      <EditField label="Amount (£)" type="number" value={draft.amount} onChange={(v) => update({ amount: Number(v) })} />
+    <div className={wide ? 'flex flex-col gap-3.5' : 'grid grid-cols-2 gap-3 mt-3 pt-3 border-t'} style={{ borderColor: 'var(--color-track)' }}>
+      {showDetails && <div className={wide ? 'order-3' : 'contents'}><EditField label="Name" type="text" value={draft.name} onChange={(v) => update({ name: v })} /></div>}
+      <div className={wide ? 'order-1' : 'contents'}><EditField label="Amount (£)" type="number" value={draft.amount} onChange={(v) => update({ amount: Number(v) })} /></div>
+      {wide && (
+        <div className="order-1 grid grid-cols-2 gap-3">
+          {fact('How often', FREQUENCY_LABELS[draft.frequency])}
+          {fact('Paid from', billLocationLabel(draft.location, draft.potId, pots))}
+          {fact('Method', PAYMENT_METHOD_LABELS[draft.paymentMethod])}
+          {fact('First due', formatFullDate(draft.anchorDate))}
+        </div>
+      )}
+      {wide && (
+        <button onClick={() => setDetailsOpen(!detailsOpen)} aria-expanded={detailsOpen} className="order-2 w-full flex items-center justify-between py-2 border-t text-sm font-semibold text-[var(--color-ink)]" style={{ borderColor: 'var(--color-track)' }}>
+          Edit details
+          {detailsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+      )}
+      {showDetails && (
+      <div className={wide ? 'order-3 flex flex-col gap-3.5' : 'contents'}>
       <FrequencyEditor frequency={draft.frequency} intervalWeeks={draft.intervalWeeks} anchorDate={draft.anchorDate} onChange={update} />
       <div className="col-span-2">
         <CategoryPicker categories={categories} value={draft.categoryId} onChange={(categoryId) => update({ categoryId })} onAddCategory={onAddCategory} />
@@ -989,9 +1018,12 @@ function BillEditPanel({
         <input type="checkbox" checked={draft.active} onChange={(e) => update({ active: e.target.checked })} />
         <span className="text-xs text-[var(--color-ink-muted)]">Active (paused bills stop generating new payments)</span>
       </label>
+      </div>
+      )}
 
-      <div className="col-span-2">
+      <div className={wide ? 'order-4' : 'col-span-2'}>
         <PausedOccurrencesControl
+          defaultExpanded={wide}
           windowDates={pauseWindowDates}
           currentlyPaused={currentlyPausedDates}
           amountForDate={(date) => resolveOccurrenceAmount(template, date)}
@@ -1015,7 +1047,7 @@ function BillEditPanel({
         />
       </div>
 
-      <div className="col-span-2 mt-1">
+      <div className={wide ? 'order-5' : 'col-span-2 mt-1'}>
         <FormButtonRow onCancel={onCancel} onSave={handleSaveClick} saveDisabled={!dirty} />
       </div>
     </div>

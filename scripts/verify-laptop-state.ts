@@ -15,8 +15,8 @@
 // 5. Source checks: only Rail's toggle writes; App hides the pill when wide;
 //    SwipeToDelete never captures the pointer before a drag (a mouse click
 //    on a row would otherwise land on the swipe wrapper, not the row);
-//    the laptop panel docks into the page; the laptop Home ledger never
-//    collapses.
+//    the laptop panel floats over the page without resizing it; the laptop
+//    Home ledger never collapses.
 
 import { readFileSync } from 'node:fs'
 import { LAPTOP_STATE_KEY, WIDE_QUERY, readRailExpanded, writeRailExpanded } from '../src/lib/laptop'
@@ -95,7 +95,11 @@ console.log('\n── 5. Source checks ──')
   const down = swipe.slice(swipe.indexOf('function handlePointerDown'), swipe.indexOf('function handlePointerMove'))
   check('SwipeToDelete takes no pointer capture on pointerdown (a mouse click would never reach the row)', down.includes('setPointerCapture'), false)
   check('…and takes it once the drag passes the threshold', /Math\.abs\(delta\) > DRAG_THRESHOLD[\s\S]{0,900}setPointerCapture/.test(swipe), true)
-  check('RowSheet docks into the page panel on a laptop (no backdrop over the page)', /if \(dock\) return createPortal\(panel, dock\)/.test(sheet), true)
+  // The laptop panel floats over the page: fixed, portalled to body — never a column of the page's own layout, which narrows and reflows the page the moment a row opens.
+  const laptopSheet = sheet.slice(sheet.indexOf('  if (wide) {'), sheet.indexOf('  return createPortal(', sheet.indexOf('  if (wide) {') + 20))
+  check('the laptop panel is a fixed element portalled to document.body', /className="fixed z-\[450\]/.test(laptopSheet) && laptopSheet.includes('document.body'), true)
+  check('…with no backdrop over the page (another row stays clickable)', /inset-0/.test(laptopSheet), false)
+  check('no page lays the panel out as a column of its own (LaptopPanelLayout is gone)', ['Home', 'Salary', 'Loans', 'Bills', 'Expenses'].some((pg) => readFileSync(new URL(`../src/pages/${pg}.tsx`, import.meta.url), 'utf8').includes('LaptopPanelLayout')), false)
   const home = readFileSync(new URL('../src/pages/Home.tsx', import.meta.url), 'utf8')
   const marker = '// Laptop (lib/laptop.ts): one flat table, never collapsible.'
   // The laptop branch runs from the marker to the phone's own `return (` at function level (two-space indent).

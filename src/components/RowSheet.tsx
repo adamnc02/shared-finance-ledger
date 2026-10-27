@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { PanelBottomOpen, PanelRightOpen, X } from 'lucide-react'
 import { useWide } from '../lib/useWide'
@@ -21,22 +21,43 @@ import { useWide } from '../lib/useWide'
 // The backdrop and the X both close it, discarding an unsaved edit, as
 // collapsing the card always did.
 //
-// On a laptop (lib/laptop.ts) it is a panel DOCKED in the page's right-hand
-// column (LaptopPanelLayout), with the page still usable beside it: no
-// backdrop, so another row can be opened straight away and replaces it
-// (useOneOpenRow), and the X closes it. Outside a LaptopPanelLayout it falls
-// back to sliding in over the page from the right.
+// On a laptop (lib/laptop.ts) it is a panel floating ON TOP of the page at
+// the right — the page keeps its own size and layout underneath, and stays
+// usable: there is no backdrop, so opening another row replaces the panel
+// (useOneOpenRow), and the X or Escape closes it.
+//
+// 🚨 Never a column of the page's own layout. A docked column narrows the
+// page the moment a row is opened, and the whole page reflows.
 export function RowSheet({ title, subtitle, onClose, children }: { title: ReactNode; subtitle?: ReactNode; onClose: () => void; children: ReactNode }) {
   const wide = useWide()
-  const dock = useContext(LaptopPanelContext)
+  // Escape closes the topmost panel only, and never while a dialog the panel opened is on top of it.
+  const [el, setEl] = useState<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!wide || !el) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const panels = document.querySelectorAll('[data-row-sheet]')
+      if (panels[panels.length - 1] !== el || document.querySelector('.fixed.inset-0')) return
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [wide, el, onClose])
   if (wide) {
-    const panel = (
+    return createPortal(
       <div
+        ref={setEl}
+        data-row-sheet
         role="dialog"
         aria-label={typeof title === 'string' ? title : undefined}
-        className="rounded-[20px] p-[22px] border"
-        style={{ background: 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}
-        onClick={(e) => e.stopPropagation()}
+        className="fixed z-[450] right-6 w-[420px] max-w-[calc(100vw-48px)] overflow-y-auto rounded-[20px] p-[22px] border"
+        style={{
+          top: 'calc(var(--safe-top) + 24px)',
+          maxHeight: 'calc(var(--app-height, 100dvh) - var(--safe-top) - 48px)',
+          background: 'var(--color-bg-elevated)',
+          borderColor: 'var(--color-track)',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.55), 0 4px 16px rgba(0,0,0,0.3)',
+        }}
       >
         <div className="flex items-start gap-3 mb-4">
           <div className="flex-1 min-w-0">
@@ -48,14 +69,6 @@ export function RowSheet({ title, subtitle, onClose, children }: { title: ReactN
           </button>
         </div>
         {children}
-      </div>
-    )
-    if (dock) return createPortal(panel, dock)
-    return createPortal(
-      <div className="fixed inset-0 z-[450] flex justify-end" style={{ background: 'rgba(0,0,0,0.35)' }} onClick={onClose}>
-        <div className="h-full w-[420px] max-w-full overflow-y-auto p-4" style={{ paddingTop: 'calc(var(--safe-top) + 16px)' }}>
-          {panel}
-        </div>
       </div>,
       document.body,
     )
@@ -102,35 +115,3 @@ export function SheetOnLaptop({ title, subtitle, onClose, children }: { title: R
   )
 }
 
-/** The element a page's laptop panel column renders into; null outside a LaptopPanelLayout. */
-const LaptopPanelContext = createContext<HTMLElement | null>(null)
-
-/**
- * A laptop page with a docked right-hand panel column (lib/laptop.ts): the
- * page on the left, and on the right whatever RowSheet is open inside it.
- * The column takes no room while nothing is open (`empty:hidden`), so the
- * page uses the full width until a row is opened. On a phone it renders its
- * children and nothing else.
- *
- * The column is sticky inside #app-content (the app's only scroll
- * container), so a long page scrolls under an open panel and the panel stays
- * in view; it scrolls on its own when it is taller than the window.
- */
-export function LaptopPanelLayout({ children }: { children: ReactNode }) {
-  const wide = useWide()
-  const [dock, setDock] = useState<HTMLElement | null>(null)
-  if (!wide) return <>{children}</>
-  return (
-    <div className="flex gap-6 items-start">
-      <div className="flex-1 min-w-0">
-        <LaptopPanelContext.Provider value={dock}>{children}</LaptopPanelContext.Provider>
-      </div>
-      <aside
-        ref={setDock}
-        aria-label="Details"
-        className="w-[400px] shrink-0 sticky top-8 flex flex-col gap-4 overflow-y-auto empty:hidden"
-        style={{ maxHeight: 'calc(var(--app-height, 100dvh) - 64px)' }}
-      />
-    </div>
-  )
-}
