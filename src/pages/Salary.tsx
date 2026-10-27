@@ -3111,13 +3111,13 @@ export function Salary() {
           the Joint Account, Pensions and Backup as a grid of cards, in that
           order (CSS order; the markup keeps the phone's order). On the phone every wrapper is
           display: contents, so the page keeps its order and layout. */}
-      <div className={wide ? 'grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-x-6 items-start' : 'contents'}>
+      <div className={wide ? 'grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-x-6 gap-y-8 items-stretch' : 'contents'}>
       {/* Renders here unless an app claims Backup & Restore for somewhere else (BackupSection.tsx). */}
-        <div className={wide ? 'order-last' : 'contents'}>
+        <div className={wide ? 'order-last flex flex-col' : 'contents'}>
         <WalletBackupSlot data={data} onRestore={setData} />
         </div>
 
-      <div className={wide ? 'order-first col-span-full' : 'contents'}>
+      <div className={wide ? 'order-first col-span-full [&>section]:mb-0' : 'contents'}>
       <CollapsibleSection
         title="Salary"
         className="mb-8"
@@ -3180,7 +3180,10 @@ export function Salary() {
           {[...data.people].filter((p) => !wide || p.id === data.primaryPersonId).sort((a, b) => (a.id === data.primaryPersonId ? -1 : b.id === data.primaryPersonId ? 1 : 0)).map((person) => {
             const payCycle = data.payCycles.find((pc) => pc.personId === person.id)
             const hasSalary = hasSalaryConfigured(person)
-            const isOpen = expandedPersonId === person.id
+            // Laptop (lib/laptop.ts): a set-up salary card is always open — no
+            // next-payday summary row, no chevron, no divider; just its tiles.
+            const alwaysOpen = wide && hasSalary
+            const isOpen = expandedPersonId === person.id || alwaysOpen
             const isFollowed = payCycle?.followsIncomeSource === undefined || payCycle.followsIncomeSource.type === 'salary'
             const showFollowingTag = hasSalary && isFollowed && activeIncomeSourceCount(person, data.pensions) >= 2
 
@@ -3212,6 +3215,7 @@ export function Salary() {
                   </div>
                 </div>
 
+                {!alwaysOpen && (
                 <button
                   onClick={() => {
                     setExpandedPersonId(isOpen ? null : person.id)
@@ -3227,9 +3231,10 @@ export function Salary() {
                   <SalaryRowSummary person={person} payCycle={payCycle} hasSalary={hasSalary} />
                   <span className="text-[var(--color-ink-muted)] shrink-0 pl-2">{isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span>
                 </button>
+                )}
 
                 {isOpen && (
-                  <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
+                  <div className={alwaysOpen ? 'mt-3' : 'mt-3 pt-3 border-t'} style={{ borderColor: 'var(--color-track)' }}>
                     {!hasSalary ? (
                       <SalarySetupForm
                         payCycle={payCycle}
@@ -3352,7 +3357,7 @@ export function Salary() {
       <div className="contents">
       <CollapsibleSection
         title="Pensions"
-        className={wide ? 'mb-8 order-4' : 'mb-8'}
+        className={wide ? 'order-4' : 'mb-8'}
         card={wide}
         defaultOpen={myPensions.length > 0}
         open={pensionsSectionOpen}
@@ -3438,7 +3443,7 @@ export function Salary() {
 
       <CollapsibleSection
         title="Savings"
-        className={wide ? 'mb-8 order-1' : 'mb-8'}
+        className={wide ? 'order-1' : 'mb-8'}
         card={wide}
         defaultOpen={mySavingsPots.length > 0}
         open={savingsSectionOpen}
@@ -3566,7 +3571,7 @@ export function Salary() {
           to block on. */}
       <CollapsibleSection
         title="Pots"
-        className={wide ? 'mb-8 order-2' : 'mb-8'}
+        className={wide ? 'order-2' : 'mb-8'}
         card={wide}
         defaultOpen={myPots.length > 0}
         open={potsSectionOpen}
@@ -3663,11 +3668,11 @@ export function Salary() {
           // today's balance (the joint ledger's cleared balance, as Home
           // shows it), who shares it, and when it opened. Logging, the
           // recurring transfer and the opening balance are in its panel.
-          <div className="mb-8 order-3">
+          <div className="order-3 flex flex-col">
             <button
               onClick={() => setJointPanelOpen(true)}
               aria-expanded={jointPanelOpen}
-              className="w-full rounded-[20px] p-5 flex flex-col gap-2 text-left border-2"
+              className="flex-1 w-full rounded-[20px] p-5 flex flex-col gap-2 text-left border-2"
               style={{ background: 'var(--color-joint)', color: '#1a1a1a', borderColor: jointPanelOpen ? 'var(--color-coral)' : 'transparent' }}
             >
               <span className="text-[13px] font-semibold uppercase tracking-[0.08em]" style={{ color: '#4a5068' }}>Joint Account</span>

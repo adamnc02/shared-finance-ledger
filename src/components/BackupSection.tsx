@@ -82,7 +82,7 @@ export function BackupSection({ data, onRestore }: { data: AppDataV2; onRestore:
   const wide = useWide()
 
   return (
-    <div className={wide ? 'rounded-[20px] p-5 mb-8 flex flex-col gap-3' : 'rounded-2xl p-4 mb-6 flex items-center justify-between'} style={{ background: 'var(--color-surface)' }}>
+    <div className={wide ? 'flex-1 rounded-[20px] p-5 flex flex-col gap-3' : 'rounded-2xl p-4 mb-6 flex items-center justify-between'} style={{ background: 'var(--color-surface)' }}>
       <div>
         <h2 className={wide ? 'text-[13px] font-semibold uppercase tracking-[0.08em] text-[var(--color-ink-muted)]' : 'font-body text-sm font-semibold text-[var(--color-ink)]'}>Backup</h2>
         <p className={wide ? 'text-[13px] text-[var(--color-ink-muted)] mt-2' : 'text-xs text-[var(--color-ink-faint)] mt-0.5 max-w-[220px]'}>

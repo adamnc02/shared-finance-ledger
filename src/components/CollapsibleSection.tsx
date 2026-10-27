@@ -27,7 +27,7 @@ export function CollapsibleSection({ title, defaultOpen = true, children, classN
 
   if (card) {
     return (
-      <section className={`rounded-[20px] p-5 flex flex-col gap-3.5 ${className}`} style={{ background: 'var(--color-surface)' }}>
+      <section className={`h-full rounded-[20px] p-5 flex flex-col gap-3.5 ${className}`} style={{ background: 'var(--color-surface)' }}>
         <div className="flex items-center gap-3">
           <h2 className="flex-1 text-[13px] font-semibold uppercase tracking-[0.08em] text-[var(--color-ink-muted)]">{title}</h2>
           {headerExtra}
