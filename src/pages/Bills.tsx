@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { OneOpenRowProvider, useOneOpenRow } from '../components/OneOpenRow'
-import { RowSheet } from '../components/RowSheet'
+import { RowSheet, LaptopPanelLayout, SheetOnLaptop } from '../components/RowSheet'
+import { ConfirmModal } from '../components/ConfirmModal'
+import { billsCycleSummary } from '../lib/billSummary'
+import { horizonCycles } from '../lib/projection'
 import { useWide } from '../lib/useWide'
 import { formatCurrency, formatFullDate } from '../lib/format'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -167,6 +170,7 @@ export function Bills() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importGeneration])
   const [locationFilter, setLocationFilter] = useState<'all' | BillLocation>('all')
+  const [search, setSearch] = useState('')
   // Batch 9 (2026-09-07, Bug 11) — see BillRow's own comment on why a
   // brand-new bill flashes on MOUNT rather than at save time.
   const [justCreatedId, setJustCreatedId] = useState<string | null>(null)
@@ -217,24 +221,60 @@ export function Bills() {
   // would do something" instinct as the whole row's own visibility guard
   // below (which now also fires once a bill is pot-located, not just
   // joint).
+  // Laptop only: the header's search narrows the table by name or category.
+  const listedBills = wide && search.trim()
+    ? visibleBills.filter((t) => {
+        const q = search.trim().toLowerCase()
+        return t.name.toLowerCase().includes(q) || (data.categories.find((c) => c.id === t.categoryId)?.name ?? '').toLowerCase().includes(q)
+      })
+    : visibleBills
+  // The laptop tiles and Next column: this pay cycle, from the schedule engine's own occurrences (lib/billSummary.ts).
+  const summary = useMemo(() => {
+    const today = new Date()
+    return billsCycleSummary(data, myBills, data.primaryPersonId, horizonCycles(data, data.primaryPersonId, 'current_cycle', today)[0], today)
+  }, [data, myBills])
+
+  function startAddingBill() {
+    if (data.people.length === 1) {
+      proceedPastOwner(data.people[0].id)
+    } else {
+      setPickingBillOwner(true)
+    }
+  }
+
   const filterOptions: ('all' | BillLocation)[] = ['all', 'personal', ...(myBills.some((t) => t.location === 'joint') ? (['joint'] as const) : []), ...(myBills.some((t) => t.location === 'pot') ? (['pot'] as const) : [])]
 
   return (
     /* One expanded bill at a time. */
     <OneOpenRowProvider>
-    <div className={wide ? 'max-w-[1240px] mx-auto px-10 pt-8' : 'max-w-md mx-auto px-4 pt-6'}>
+    {/* Laptop (lib/laptop.ts): a searchable table with this cycle's totals above it, and the open bill in the docked panel on the right. */}
+    <div className={wide ? 'px-10 pt-8 pb-4' : 'max-w-md mx-auto px-4 pt-6'}>
+      <LaptopPanelLayout>
+      {wide ? (
+        <header className="mb-6 flex flex-wrap items-center gap-3">
+          <h1 className="font-display text-3xl font-semibold text-[var(--color-ink)] flex-1">Bills</h1>
+          <label className="h-11 px-3.5 rounded-full border flex items-center gap-2 text-[13px] text-[var(--color-ink-muted)]" style={{ background: 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}>
+            Search
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Name or category"
+              className="w-40 bg-transparent border-0 outline-none text-[var(--color-ink)]"
+            />
+          </label>
+          <CategoryManagerButton labelled />
+          <button onClick={startAddingBill} className="h-11 px-[18px] rounded-full text-[13px] font-semibold text-white" style={{ background: 'var(--color-coral)' }}>
+            + Add bill
+          </button>
+        </header>
+      ) : (
       <header className="mb-6 flex items-center justify-between">
-        <h1 className={`font-display font-semibold text-[var(--color-ink)] ${wide ? 'text-3xl' : 'text-2xl'}`}>Bills</h1>
+        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Bills</h1>
         <div className="flex items-center gap-2">
           <CategoryManagerButton />
           <button
-            onClick={() => {
-              if (data.people.length === 1) {
-                proceedPastOwner(data.people[0].id)
-              } else {
-                setPickingBillOwner(true)
-              }
-            }}
+            onClick={startAddingBill}
             className="w-9 h-9 rounded-full flex items-center justify-center"
             style={{ background: 'var(--color-coral)' }}
           >
@@ -242,6 +282,22 @@ export function Bills() {
           </button>
         </div>
       </header>
+      )}
+
+      {wide && (
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          {[
+            ['Bills this cycle', summary.total],
+            ['Your share', summary.yourShare],
+            ['Paid from pots', summary.fromPots],
+          ].map(([label, value]) => (
+            <div key={label as string} className="rounded-2xl p-4 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+              <span className="text-xs text-[var(--color-ink-muted)]">{label}</span>
+              <span className="font-mono text-xl font-semibold text-[var(--color-ink)]">£{formatCurrency(value as number)}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {pickingBillOwner && (
         <PersonPickerCard
@@ -268,34 +324,39 @@ export function Bills() {
       )}
 
       {adding && (
-        <BillForm
-          people={data.people}
-          pots={data.pots}
-          canBeJoint={canBeJoint}
-          categories={visibleCategoriesFor(data)}
-          defaultOwnerId={billDefaultOwnerId}
-          defaultLocation={billDefaultLocation.location}
-          defaultPotId={billDefaultLocation.potId}
-          initial={prefill}
-          onAddCategory={addCategory}
-          onCancel={() => {
+        <SheetOnLaptop title="Add a bill" onClose={() => {
             setAdding(false)
             if (prefill) navigate('.', { replace: true, state: null })
-          }}
-          onSave={(template) => {
-            // Batch 9 (2026-09-07, Bug 11) — no card exists yet at the
-            // moment a brand-new bill saves (BillRow only mounts once
-            // `visibleBills` includes it, on the NEXT render), so a
-            // trigger() call here would have nothing to flash. Recording
-            // the new id and handing it to that row as `shouldFlashOnMount`
-            // lets IT fire its own flash the instant it mounts instead —
-            // same pattern used for new pensions/loans/credit cards.
-            const id = addRecurringTemplate(template)
-            setJustCreatedId(id)
-            setAdding(false)
-            if (prefill) navigate('.', { replace: true, state: null })
-          }}
-        />
+          }}>
+          <BillForm
+            people={data.people}
+            pots={data.pots}
+            canBeJoint={canBeJoint}
+            categories={visibleCategoriesFor(data)}
+            defaultOwnerId={billDefaultOwnerId}
+            defaultLocation={billDefaultLocation.location}
+            defaultPotId={billDefaultLocation.potId}
+            initial={prefill}
+            onAddCategory={addCategory}
+            onCancel={() => {
+              setAdding(false)
+              if (prefill) navigate('.', { replace: true, state: null })
+            }}
+            onSave={(template) => {
+              // Batch 9 (2026-09-07, Bug 11) — no card exists yet at the
+              // moment a brand-new bill saves (BillRow only mounts once
+              // `visibleBills` includes it, on the NEXT render), so a
+              // trigger() call here would have nothing to flash. Recording
+              // the new id and handing it to that row as `shouldFlashOnMount`
+              // lets IT fire its own flash the instant it mounts instead —
+              // same pattern used for new pensions/loans/credit cards.
+              const id = addRecurringTemplate(template)
+              setJustCreatedId(id)
+              setAdding(false)
+              if (prefill) navigate('.', { replace: true, state: null })
+            }}
+          />
+        </SheetOnLaptop>
       )}
 
       {filterOptions.length > 2 && (
@@ -319,19 +380,18 @@ export function Bills() {
         </div>
       )}
 
-      {wide && visibleBills.length > 0 && (
-        <div className={`${BILL_COLUMNS} px-4 pb-2 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]`}>
-          <span>BILL</span>
-          <span>CATEGORY</span>
-          <span>HOW OFTEN</span>
-          <span>PAID FROM</span>
-          <span>METHOD</span>
-          <span className="text-right">AMOUNT</span>
-          <span />
-        </div>
-      )}
-      <div className="flex flex-col gap-2">
-        {visibleBills.map((template) => (
+      <div className={wide ? 'rounded-[20px] px-2 pt-3 pb-2 flex flex-col gap-1' : 'flex flex-col gap-2'} style={wide ? { background: 'var(--color-surface)' } : undefined}>
+        {wide && listedBills.length > 0 && (
+          <div className={`${BILL_COLUMNS} px-3.5 py-2 text-xs font-semibold tracking-[0.06em] whitespace-nowrap text-[var(--color-ink-muted)]`}>
+            <span>BILL</span>
+            <span>CATEGORY</span>
+            <span>HOW OFTEN</span>
+            <span>PAID FROM</span>
+            <span>NEXT</span>
+            <span className="text-right">AMOUNT</span>
+          </div>
+        )}
+        {listedBills.map((template) => (
           <BillRow
             key={template.id}
             template={template}
@@ -345,12 +405,16 @@ export function Bills() {
             onRemove={() => removeRecurringTemplate(template.id)}
             shouldFlashOnMount={justCreatedId === template.id}
             onFlashedOnMount={() => setJustCreatedId(null)}
+            next={summary.nextById.get(template.id)}
+            personId={data.primaryPersonId}
           />
         ))}
         {visibleBills.length === 0 && !adding && (
           <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">No bills yet. Add one to get started.</p>
         )}
+        {visibleBills.length > 0 && listedBills.length === 0 && <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">No bills match “{search}”.</p>}
       </div>
+      </LaptopPanelLayout>
     </div>
     </OneOpenRowProvider>
   )
@@ -419,7 +483,14 @@ function PaymentMethodEditor({ value, onChange }: { value: PaymentMethod; onChan
 }
 
 /** The laptop table's columns, shared by its header and every row so the two cannot drift. */
-const BILL_COLUMNS = 'grid grid-cols-[minmax(0,1fr)_130px_120px_150px_130px_100px_16px] items-center gap-4'
+const BILL_COLUMNS = 'grid grid-cols-[minmax(150px,2.4fr)_minmax(64px,1fr)_minmax(64px,0.9fr)_minmax(84px,1.1fr)_60px_84px] items-center gap-3'
+
+const DELETE_BILL_DESCRIPTION = 'Already-cleared payments stay in the ledger as historic fact — only future, not-yet-happened ones are removed.'
+
+/** "1 Nov" — the laptop table's Next column. */
+function formatNextDate(iso: string): string {
+  return parseLocalDate(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
 
 function BillRow({
   template,
@@ -433,6 +504,8 @@ function BillRow({
   onRemove,
   shouldFlashOnMount,
   onFlashedOnMount,
+  next,
+  personId,
 }: {
   template: RecurringTemplate
   people: { id: string; name: string }[]
@@ -449,8 +522,13 @@ function BillRow({
    * button is clicked). */
   shouldFlashOnMount?: boolean
   onFlashedOnMount?: () => void
+  /** Laptop table: the next payment date (lib/billSummary.ts). */
+  next?: string
+  /** Laptop table: whose share a joint bill's tag shows. */
+  personId?: string
 }) {
   const [open, setOpen] = useOneOpenRow(`bill:${template.id}`)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const category = categories.find((c) => c.id === template.categoryId)
   // Batch 9 (2026-09-07, Bug 11) — this row is always an EXISTING bill
   // (a brand-new one flashes on mount instead, from BillsListSection's
@@ -498,35 +576,56 @@ function BillRow({
   // the panel's contents.
   if (wide) {
     const muted = { color: template.active ? 'var(--color-ink-muted)' : 'var(--color-ink-faint)' }
+    const myShare = template.payee === personId ? template.payeeSharePercent : 100 - template.payeeSharePercent
     return (
-      <SwipeToDelete onDelete={onRemove} confirmLabel={template.name} confirmDescription="Already-cleared payments stay in the ledger as historic fact — only future, not-yet-happened ones are removed.">
-        <div className="relative rounded-xl" style={{ background: template.active ? 'var(--color-surface)' : 'var(--color-bg-elevated)', outline: open ? '1px solid var(--color-coral)' : 'none' }}>
-          <button className={`${BILL_COLUMNS} w-full min-h-[52px] px-4 py-2 text-left text-sm`} onClick={() => setOpen(!open)} aria-expanded={open}>
+      <SwipeToDelete onDelete={onRemove} confirmLabel={template.name} confirmDescription={DELETE_BILL_DESCRIPTION}>
+        <div className="relative">
+          <button
+            className={`${BILL_COLUMNS} w-full min-h-[52px] px-3.5 py-1.5 rounded-2xl border text-left text-sm`}
+            style={{ background: open ? 'var(--color-surface-raised)' : 'var(--color-surface)', borderColor: open ? 'var(--color-coral)' : 'transparent' }}
+            onClick={() => setOpen(!open)}
+            aria-expanded={open}
+          >
             <span className="flex items-center gap-2.5 min-w-0">
               <CategoryIcon category={category} />
-              <span className="truncate" style={{ color: template.active ? 'var(--color-ink)' : 'var(--color-ink-muted)', textDecoration: template.active ? 'none' : 'line-through' }}>
+              <span className="font-medium truncate" style={{ color: template.active ? 'var(--color-ink)' : 'var(--color-ink-muted)', textDecoration: template.active ? 'none' : 'line-through' }}>
                 {template.name}
               </span>
-              {!template.active && <span className="text-[10px] shrink-0" style={muted}>Paused</span>}
-              {template.location === 'joint' && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0" style={{ background: 'var(--color-surface-raised)', border: '1px solid var(--color-track)', color: 'var(--color-ink-muted)' }}>
-                  Joint
-                </span>
-              )}
+              {!template.active && <span className="text-[11px] shrink-0" style={muted}>Paused</span>}
+              {template.location === 'joint' && <span className="text-[11px] whitespace-nowrap text-[var(--color-ink-muted)]">Joint · {myShare}%</span>}
             </span>
             <span className="truncate" style={muted}>{category?.name ?? ''}</span>
             <span className="truncate" style={muted}>{FREQUENCY_LABELS[template.frequency]}</span>
             <span className="truncate" style={muted}>{billLocationLabel(template.location, template.potId, pots)}</span>
-            <span className="truncate" style={muted}>{PAYMENT_METHOD_LABELS[template.paymentMethod]}</span>
+            <span className="truncate" style={muted}>{next ? formatNextDate(next) : '—'}</span>
             <span className="font-mono text-right whitespace-nowrap" style={{ color: template.active ? 'var(--color-ink)' : 'var(--color-ink-muted)', textDecoration: template.active ? 'none' : 'line-through' }}>
               £{formatCurrency(template.amount)}
             </span>
-            <ChevronDown size={14} className="text-[var(--color-ink-faint)] -rotate-90 justify-self-end" />
           </button>
           {open && (
-            <RowSheet title={template.name} onClose={() => setOpen(false)}>
+            <RowSheet title={template.name} subtitle={`Bill · ${category?.name ?? FREQUENCY_LABELS[template.frequency]}`} onClose={() => setOpen(false)}>
               {editPanel}
+              <button
+                onClick={() => setConfirmingDelete(true)}
+                className="mt-3 w-full h-11 rounded-full border text-[13px] font-semibold"
+                style={{ borderColor: 'var(--color-track)', color: 'var(--color-negative)' }}
+              >
+                Delete bill
+              </button>
             </RowSheet>
+          )}
+          {confirmingDelete && (
+            <ConfirmModal
+              title={`Delete ${template.name}?`}
+              description={DELETE_BILL_DESCRIPTION}
+              tone="danger"
+              onConfirm={() => {
+                setConfirmingDelete(false)
+                setOpen(false)
+                onRemove()
+              }}
+              onCancel={() => setConfirmingDelete(false)}
+            />
           )}
           <SavedFlashOverlay active={flashActive} message={flashMessage} />
         </div>
