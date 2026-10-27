@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { withLiveBalance } from '../lib/creditCards'
+import { loanOverpaymentSavings, overpaidThisYear } from '../lib/overpaymentSummary'
 import { recurringCycleSummary } from '../lib/recurringSummary'
 import { horizonCycles } from '../lib/projection'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -390,6 +392,12 @@ export function Expenses() {
   const routerLocation = useLocation()
   const navigate = useNavigate()
   const [recurringOverpaymentPrefill, setRecurringOverpaymentPrefill] = useState<{ loanId: string; amount: number; date?: string } | null>(null)
+  // Laptop Overpayments: which loan or card a card's own "+" button opened the add form on.
+  const [overpaymentStart, setOverpaymentStart] = useState<{ mode: OverpaymentMode; kind: 'loan' | 'card'; id: string } | null>(null)
+  // …forgotten as soon as the form closes, however it closes, so the header's "+" opens it blank.
+  useEffect(() => {
+    if (!adding) setOverpaymentStart(null)
+  }, [adding])
   useEffect(() => {
     const prefill = (
       routerLocation.state as { overpaymentPrefill?: { targetKind: 'loan' | 'credit_card'; targetId: string; mode: 'payoff' | 'recurring'; amount: number; date?: string } } | null
@@ -510,6 +518,11 @@ export function Expenses() {
     return recurringCycleSummary(data, recurringTransactions, depositingSavingsPots, depositingPots, horizonCycles(data, data.primaryPersonId, 'current_cycle', today)[0], today)
   }, [data, recurringTransactions, depositingSavingsPots, depositingPots])
   const recurringOut = recurringTransactions.filter((t) => t.recurringTransactionType !== 'income')
+  // Laptop Overpayments: every active loan with an overpayment of either kind, and the one finishing most months early.
+  const overpaidLoans = activeLoans.filter((l) => l.recurringOverpayment || l.overpayments.length > 0)
+  const earliestFinisher = overpaidLoans
+    .map((loan) => ({ loan, savings: loanOverpaymentSavings(loan) }))
+    .sort((a, b) => b.savings.monthsEarly - a.savings.monthsEarly || b.savings.interestSaved - a.savings.interestSaved)[0]
   const recurringIn = recurringTransactions.filter((t) => t.recurringTransactionType === 'income')
 
   // Pots pills used individually.
@@ -857,12 +870,13 @@ export function Expenses() {
               every other pill; there is deliberately no always-expanded
               per-loan editor sitting at the top of the page any more. */}
           {adding && (
-            <SheetOnLaptop title="Add an overpayment" onClose={() => setAdding(false)}>
+            <SheetOnLaptop title="Add an overpayment" onClose={() => { setAdding(false); setOverpaymentStart(null) }}>
               <OverpaymentCreateForm
                 loans={activeLoans}
                 cards={activeCards}
                 pots={data.pots}
                 prefill={recurringOverpaymentPrefill}
+                start={overpaymentStart}
                 onCancel={() => {
                   setAdding(false)
                   setRecurringOverpaymentPrefill(null)
@@ -886,6 +900,142 @@ export function Expenses() {
             </SheetOnLaptop>
           )}
 
+          {wide ? (
+            // Laptop (lib/laptop.ts): this year's overpayments and what they save, then one
+            // card per loan and per credit card with its own table and "+" buttons.
+            <div className="flex flex-col gap-5">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="rounded-2xl p-4 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+                  <span className="text-xs text-[var(--color-ink-muted)]">Overpaid so far</span>
+                  <span className="font-mono text-xl font-semibold text-[var(--color-ink)]">£{formatCurrency(overpaidThisYear(activeLoans, activeCards, new Date()))}</span>
+                  <span className="text-xs text-[var(--color-ink-muted)]">This year</span>
+                </div>
+                <div className="rounded-2xl p-4 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+                  <span className="text-xs text-[var(--color-ink-muted)]">Interest saved</span>
+                  <span className="font-mono text-xl font-semibold" style={{ color: 'var(--color-positive)' }}>£{formatCurrency(overpaidLoans.reduce((n, l) => n + loanOverpaymentSavings(l).interestSaved, 0))}</span>
+                  <span className="text-xs text-[var(--color-ink-muted)]">Across every loan</span>
+                </div>
+                <div className="rounded-2xl p-4 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+                  {earliestFinisher ? (
+                    <>
+                      <span className="text-xs text-[var(--color-ink-muted)]">{earliestFinisher.loan.name} ends</span>
+                      <span className="font-mono text-xl font-semibold text-[var(--color-ink)]">{earliestFinisher.savings.finishDate ? formatMonthYear(earliestFinisher.savings.finishDate) : '—'}</span>
+                      <span className="text-xs text-[var(--color-ink-muted)]">
+                        {earliestFinisher.savings.monthsEarly > 0 ? `${earliestFinisher.savings.monthsEarly} month${earliestFinisher.savings.monthsEarly === 1 ? '' : 's'} early` : 'Same end month as without them'}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-xs text-[var(--color-ink-muted)]">Loans</span>
+                      <span className="font-mono text-xl font-semibold text-[var(--color-ink-muted)]">—</span>
+                      <span className="text-xs text-[var(--color-ink-muted)]">No loan overpayments yet</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {overpaidLoans.map((loan) => {
+                const savings = loanOverpaymentSavings(loan)
+                const finishes = savings.finishDate ? formatMonthYear(savings.finishDate) : null
+                return (
+                  <section key={loan.id} aria-label={loan.name} className="rounded-[20px] px-2 pt-4 pb-2 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+                    <div className="flex flex-wrap items-center gap-2.5 px-3.5">
+                      <span className="text-xs tracking-[0.08em] text-[var(--color-ink-muted)]">LOAN</span>
+                      <h2 className="font-display text-xl font-semibold text-[var(--color-ink)] flex-1">{loan.name}</h2>
+                      {!loan.recurringOverpayment && (
+                        <button onClick={() => { setOverpaymentStart({ mode: 'recurring', kind: 'loan', id: loan.id }); setAdding(true) }} className="h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
+                          + Recurring
+                        </button>
+                      )}
+                      <button onClick={() => { setOverpaymentStart({ mode: 'one_off', kind: 'loan', id: loan.id }); setAdding(true) }} className="h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
+                        + One-off
+                      </button>
+                    </div>
+                    <p className="px-3.5 pt-1 pb-2.5 text-[13px] text-[var(--color-ink-muted)]">
+                      {savings.monthsEarly > 0
+                        ? `With these overpayments it finishes in ${finishes} — ${savings.monthsEarly} month${savings.monthsEarly === 1 ? '' : 's'} early — and saves £${formatCurrency(savings.interestSaved)} in interest.`
+                        : `These overpayments save £${formatCurrency(savings.interestSaved)} in interest${finishes ? `; it still finishes in ${finishes}` : ''}.`}
+                    </p>
+                    <div className={`${OVER_COLUMNS} px-3.5 py-2 text-xs font-semibold tracking-[0.06em] whitespace-nowrap text-[var(--color-ink-muted)]`}>
+                      <span>OVERPAYMENT</span>
+                      <span>EFFECT</span>
+                      <span>PAID FROM</span>
+                      <span>WHEN</span>
+                      <span className="text-right">AMOUNT</span>
+                    </div>
+                    {loan.recurringOverpayment && (
+                      <>
+                        <div className="px-3.5 pt-3 pb-1.5 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">RECURRING</div>
+                        <LoanRecurringOverpaymentRow
+                          loan={loan}
+                          pots={data.pots}
+                          category={data.categories.find((c) => c.id === loan.categoryId)}
+                          value={loan.recurringOverpayment}
+                          onUpdate={(v) => updateLoan(loan.id, { recurringOverpayment: v })}
+                          onAssignLocation={(effectiveFrom, location, potId) => assignLoanRecurringOverpaymentLocation(loan.id, location, effectiveFrom, potId)}
+                          onRemove={() => updateLoan(loan.id, { recurringOverpayment: undefined })}
+                        />
+                      </>
+                    )}
+                    {loan.overpayments.length > 0 && (
+                      <>
+                        <div className="px-3.5 pt-3 pb-1.5 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">ONE-OFF</div>
+                        {[...loan.overpayments].sort((a, b) => b.date.localeCompare(a.date)).map((payment) => (
+                          <OverpaymentRowItem
+                            key={payment.id}
+                            payment={payment}
+                            label={`${loan.name} overpayment`}
+                            category={data.categories.find((c) => c.id === loan.categoryId)}
+                            effect={recastEffect(payment.recastMode)}
+                            onUpdate={(amount, date, note) => updateLoanOverpayment(loan.id, payment.id, amount, date, note)}
+                            onRemove={() => removeLoanOverpayment(loan.id, payment.id)}
+                          />
+                        ))}
+                      </>
+                    )}
+                  </section>
+                )
+              })}
+
+              {cardsWithLumpPayments.map((card) => (
+                <section key={card.id} aria-label={card.name} className="rounded-[20px] px-2 pt-4 pb-2 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+                  <div className="flex flex-wrap items-center gap-2.5 px-3.5">
+                    <span className="text-xs tracking-[0.08em] text-[var(--color-ink-muted)]">CREDIT CARD</span>
+                    <h2 className="font-display text-xl font-semibold text-[var(--color-ink)] flex-1">{card.name}</h2>
+                    <button onClick={() => { setOverpaymentStart({ mode: 'one_off', kind: 'card', id: card.id }); setAdding(true) }} className="h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
+                      + Lump payment
+                    </button>
+                  </div>
+                  <p className="px-3.5 pt-1 pb-2.5 text-[13px] text-[var(--color-ink-muted)]">
+                    Lump payments on top of the minimum. £{formatCurrency(withLiveBalance(card, data.transactions).currentBalance)} owed today.
+                  </p>
+                  <div className={`${OVER_COLUMNS} px-3.5 py-2 text-xs font-semibold tracking-[0.06em] whitespace-nowrap text-[var(--color-ink-muted)]`}>
+                    <span>PAYMENT</span>
+                    <span>EFFECT</span>
+                    <span>PAID FROM</span>
+                    <span>WHEN</span>
+                    <span className="text-right">AMOUNT</span>
+                  </div>
+                  {[...card.lumpPayments].sort((a, b) => b.date.localeCompare(a.date)).map((payment) => (
+                    <OverpaymentRowItem
+                      key={payment.id}
+                      payment={payment}
+                      label={`${card.name} payment`}
+                      category={data.categories.find((c) => c.id === card.categoryId)}
+                      effect="On top of the minimum"
+                      onUpdate={(amount, date, note) => updateCreditCardLumpPayment(card.id, payment.id, amount, date, note)}
+                      onRemove={() => removeCreditCardLumpPayment(card.id, payment.id)}
+                    />
+                  ))}
+                </section>
+              ))}
+
+              {overpaidLoans.length === 0 && cardsWithLumpPayments.length === 0 && !adding && (
+                <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">No overpayments logged yet.</p>
+              )}
+            </div>
+          ) : (
+          <>
           {activeLoans.some((l) => l.recurringOverpayment) && (
             <div className="flex flex-col gap-2 mb-3">
               {activeLoans
@@ -934,6 +1084,8 @@ export function Expenses() {
               <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">No overpayments logged yet.</p>
             )}
           </div>
+          </>
+          )}
         </>
       )}
       </LaptopPanelLayout>
@@ -973,8 +1125,21 @@ function TransferLaptopRow({ open, onClick, color, label, tag, owner, howOften, 
   )
 }
 
+/** The laptop Overpayments tables' columns: overpayment, effect, paid from, when, amount. */
+const OVER_COLUMNS = 'grid grid-cols-[minmax(130px,1.3fr)_minmax(130px,1.5fr)_minmax(90px,1fr)_96px_96px] items-center gap-3'
+
+/** What a recast choice does, in the words of the laptop Overpayments table. */
+function recastEffect(mode: 'reduce_term' | 'reduce_payment' | undefined): string {
+  return mode === 'reduce_payment' ? 'Lower the payment — same end date' : 'Keep the payment — finish sooner'
+}
+
 /** The laptop Recurring table's columns, shared by its header and every row. */
 const REC_COLUMNS = 'grid grid-cols-[minmax(150px,1.6fr)_minmax(70px,1fr)_minmax(80px,1.1fr)_minmax(90px,1.1fr)_64px_96px] items-center gap-3'
+
+/** "12 Sep 2026" — the laptop Overpayments tables' date column. */
+function formatFullDateShort(iso: string): string {
+  return parseLocalDate(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
 
 /** "28 Oct" — a laptop table's date column. */
 function shortDayMonth(iso: string): string {
@@ -2233,6 +2398,7 @@ function OverpaymentCreateForm({
   cards,
   pots,
   prefill,
+  start,
   onCancel,
   onSaveLoan,
   onSaveCard,
@@ -2248,6 +2414,8 @@ function OverpaymentCreateForm({
    * person still steps through From (unless the loan's joint)/recast/
    * date/Save themselves. */
   prefill?: { loanId: string; amount: number; date?: string } | null
+  /** Laptop: open on this kind of overpayment for this loan or card — a loan card's "+ Recurring" / "+ One-off", a credit card's "+ Lump payment". */
+  start?: { mode: OverpaymentMode; kind: 'loan' | 'card'; id: string } | null
   onCancel: () => void
   onSaveLoan: (loanId: string, amount: number, date: string, note: string | undefined, recastMode: 'reduce_term' | 'reduce_payment') => void
   onSaveCard: (cardId: string, amount: number, date: string, note?: string) => void
@@ -2262,7 +2430,12 @@ function OverpaymentCreateForm({
   // still 0/unset, so the person needs the normal Amount step, just with
   // To already answered for them.
   const hasPrefillAmount = !!prefillLoan && (prefill?.amount ?? 0) > 0
-  const [mode, setMode] = useState<OverpaymentMode>(prefillLoan ? 'recurring' : 'one_off')
+  const startTarget: OverpaymentTarget | null = start
+    ? start.kind === 'loan'
+      ? (() => { const l = loans.find((x) => x.id === start.id); return l ? { kind: 'loan' as const, id: l.id, label: `Loan: ${l.name}` } : null })()
+      : (() => { const c = cards.find((x) => x.id === start.id); return c ? { kind: 'card' as const, id: c.id, label: `Credit Card: ${c.name}` } : null })()
+    : null
+  const [mode, setMode] = useState<OverpaymentMode>(prefillLoan ? 'recurring' : (start?.mode ?? 'one_off'))
   // Recurring is loan-only — a credit card target is never offered once
   // Recurring is picked.
   const targets: OverpaymentTarget[] =
@@ -2276,7 +2449,7 @@ function OverpaymentCreateForm({
   const [amount, setAmount] = useState(hasPrefillAmount ? String(prefill!.amount) : '')
   const [recurringAmountType, setRecurringAmountType] = useState<'fixed' | 'percent_of_balance'>('fixed')
   const [recurringPercent, setRecurringPercent] = useState('5')
-  const [target, setTarget] = useState<OverpaymentTarget | null>(prefillLoan ? { kind: 'loan', id: prefillLoan.id, label: `Loan: ${prefillLoan.name}` } : null)
+  const [target, setTarget] = useState<OverpaymentTarget | null>(prefillLoan ? { kind: 'loan', id: prefillLoan.id, label: `Loan: ${prefillLoan.name}` } : startTarget)
   const [fromLocation, setFromLocation] = useState<'personal' | 'pot' | undefined>(undefined)
   const [fromPotId, setFromPotId] = useState<string | undefined>(undefined)
   const [recastMode, setRecastMode] = useState<'reduce_term' | 'reduce_payment'>('reduce_term')
@@ -2732,19 +2905,33 @@ function OverpaymentRowItem({
   category,
   onUpdate,
   onRemove,
+  effect,
 }: {
   payment: LoggedPayment
   label: string
   category: Category | undefined
   onUpdate: (amount: number, date: string, note?: string) => void
   onRemove: () => void
+  /** Laptop table: what this payment does ("Keep the payment — finish sooner"). */
+  effect?: string
 }) {
   const [isEditing, setIsEditing] = useOneOpenRow(`overpayment:${payment.id}`)
+  const wide = useWide()
   const { active: flashActive, message: flashMessage, trigger: triggerFlash } = useSavedFlash('Payment updated.')
 
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={label}>
-      <div className="relative rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)' }}>
+      <div className="relative rounded-2xl overflow-hidden" style={{ background: wide ? undefined : 'var(--color-surface)' }}>
+        {wide ? (
+          // Laptop: a row of its loan's or card's table; the editor opens in the panel.
+          <button onClick={() => setIsEditing((e) => !e)} aria-expanded={isEditing} className={`${OVER_COLUMNS} w-full min-h-[52px] px-3.5 py-1.5 rounded-2xl border text-left text-sm`} style={{ background: isEditing ? 'var(--color-surface-raised)' : 'var(--color-surface)', borderColor: isEditing ? 'var(--color-coral)' : 'transparent', color: payment.date <= todayIso() ? 'var(--color-ink-muted)' : 'var(--color-ink)' }}>
+            <span className="font-medium break-words min-w-0">{payment.note || 'One-off'}</span>
+            <span className="text-[var(--color-ink-muted)] break-words min-w-0">{effect ?? ''}</span>
+            <span className="text-[var(--color-ink-muted)]">Current account</span>
+            <span className="text-[var(--color-ink-muted)]">{formatFullDateShort(payment.date)}</span>
+            <span className="font-mono text-right">£{formatCurrency(payment.amount)}</span>
+          </button>
+        ) : (
         <button onClick={() => setIsEditing((e) => !e)} className="w-full flex items-center gap-3 p-3 text-left">
           <CategoryIcon category={category} />
           <div className="flex-1 min-w-0">
@@ -2753,7 +2940,9 @@ function OverpaymentRowItem({
           </div>
           <p className="text-sm font-mono font-semibold shrink-0 text-[var(--color-ink)]">£{formatCurrency(payment.amount)}</p>
         </button>
+        )}
         {isEditing && (
+          <SheetOnLaptop title={payment.note || label} subtitle={label} onClose={() => setIsEditing(false)}>
           <OverpaymentEditForm
             payment={payment}
             onCancel={() => setIsEditing(false)}
@@ -2763,6 +2952,7 @@ function OverpaymentRowItem({
               triggerFlash()
             }}
           />
+          </SheetOnLaptop>
         )}
         <SavedFlashOverlay active={flashActive} message={flashMessage} />
       </div>
@@ -2838,6 +3028,7 @@ function LoanRecurringOverpaymentRow({
   onRemove: () => void
 }) {
   const [isEditing, setIsEditing] = useOneOpenRow(`recurring-overpayment:${loan.id}`)
+  const wide = useWide()
   const { active: flashActive, message: flashMessage, trigger: triggerFlash } = useSavedFlash('Recurring overpayment updated.')
   const ownerPots = fundablePots(pots).filter((p) => p.personId === loan.ownerId)
 
@@ -2846,7 +3037,17 @@ function LoanRecurringOverpaymentRow({
 
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={`${loan.name} recurring overpayment`}>
-      <div className="relative rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)' }}>
+      <div className="relative rounded-2xl overflow-hidden" style={{ background: wide ? undefined : 'var(--color-surface)' }}>
+        {wide ? (
+          // Laptop: a row of its loan's table; the editor opens in the panel.
+          <button onClick={() => setIsEditing((e) => !e)} aria-expanded={isEditing} className={`${OVER_COLUMNS} w-full min-h-[52px] px-3.5 py-1.5 rounded-2xl border text-left text-sm`} style={{ background: isEditing ? 'var(--color-surface-raised)' : 'var(--color-surface)', borderColor: isEditing ? 'var(--color-coral)' : 'transparent' }}>
+            <span className="font-medium text-[var(--color-ink)] break-words min-w-0">Monthly extra</span>
+            <span className="text-[var(--color-ink-muted)] break-words min-w-0">{recastEffect(value.recastMode)}</span>
+            <span className="text-[var(--color-ink-muted)] break-words min-w-0">{overpaymentFromLabel(loan, ownerPots, value.location, value.potId)}</span>
+            <span className="text-[var(--color-ink-muted)]">{value.endDate ? `To ${formatFullDateShort(value.endDate)}` : `From ${formatFullDateShort(value.startDate)}`}</span>
+            <span className="font-mono text-right text-[var(--color-ink)]">{summary}</span>
+          </button>
+        ) : (
         <button onClick={() => setIsEditing((e) => !e)} className="w-full flex items-center gap-3 p-3 text-left">
           <CategoryIcon category={category} />
           <div className="flex-1 min-w-0">
@@ -2858,7 +3059,9 @@ function LoanRecurringOverpaymentRow({
           </div>
           <p className="text-sm font-mono font-semibold shrink-0 text-[var(--color-ink)]">{summary}</p>
         </button>
+        )}
         {isEditing && (
+          <SheetOnLaptop title="Monthly extra" subtitle={`Recurring overpayment · ${loan.name}`} onClose={() => setIsEditing(false)}>
           <LoanRecurringOverpaymentEditForm
             loan={loan}
             pots={ownerPots}
@@ -2871,6 +3074,7 @@ function LoanRecurringOverpaymentRow({
             }}
             onAssignLocation={onAssignLocation}
           />
+          </SheetOnLaptop>
         )}
         <SavedFlashOverlay active={flashActive} message={flashMessage} />
       </div>
