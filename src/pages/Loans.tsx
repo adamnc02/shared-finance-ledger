@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { SheetOnLaptop, RowSheet } from '../components/RowSheet'
+import { SheetOnLaptop, RowSheet, LaptopPanelLayout } from '../components/RowSheet'
 import { useWide } from '../lib/useWide'
 import { createPortal } from 'react-dom'
 import { formatCurrency, formatFullDate, formatMonthYear } from '../lib/format'
@@ -374,6 +374,7 @@ export function Loans() {
     const th = 'text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]'
     return (
       <div className="px-10 pt-8 pb-4">
+        <LaptopPanelLayout>
           <header className="mb-6 flex items-center gap-3">
             <h1 className="font-display text-3xl font-semibold text-[var(--color-ink)] flex-1">Borrowing</h1>
             <button onClick={startAddingCard} className="h-11 px-4 rounded-full border text-[13px] font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}>
@@ -574,6 +575,7 @@ export function Loans() {
               {cardRowFor(panelCard, panel?.action === 'edit' ? 'edit' : 'actions')}
             </RowSheet>
           )}
+        </LaptopPanelLayout>
       </div>
     )
   }

@@ -6,7 +6,7 @@ import { useLedgerData } from '../context/LedgerContext'
 import { EditField } from '../components/EditField'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { CategoryPicker } from '../components/CategoryPicker'
-import { SheetOnLaptop } from '../components/RowSheet'
+import { SheetOnLaptop, LaptopPanelLayout } from '../components/RowSheet'
 import { useWide } from '../lib/useWide'
 import { SwipeToDelete } from '../components/SwipeToDelete'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
@@ -514,6 +514,7 @@ export function Expenses() {
     <OneOpenRowProvider key={mode}>
     {/* Laptop (lib/laptop.ts): one wider column; add and edit forms open in the right-hand panel (SheetOnLaptop). */}
     <div className={wide ? 'px-10 pt-8 pb-4' : 'max-w-md mx-auto px-4 pt-6'}>
+      <LaptopPanelLayout>
       {wide ? (
         <>
           <header className="mb-5 flex items-center gap-3">
@@ -848,6 +849,7 @@ export function Expenses() {
           </div>
         </>
       )}
+      </LaptopPanelLayout>
     </div>
     </OneOpenRowProvider>
   )

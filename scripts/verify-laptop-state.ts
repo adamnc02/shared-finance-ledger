@@ -15,8 +15,8 @@
 // 5. Source checks: only Rail's toggle writes; App hides the pill when wide;
 //    SwipeToDelete never captures the pointer before a drag (a mouse click
 //    on a row would otherwise land on the swipe wrapper, not the row);
-//    the laptop panel floats over the page without resizing it; the laptop
-//    Home ledger never collapses.
+//    the laptop panel docks beside the page, whose pay-period tiles never
+//    wrap when it narrows; the laptop Home ledger never collapses.
 
 import { readFileSync } from 'node:fs'
 import { LAPTOP_STATE_KEY, WIDE_QUERY, readRailExpanded, writeRailExpanded } from '../src/lib/laptop'
@@ -95,11 +95,12 @@ console.log('\n── 5. Source checks ──')
   const down = swipe.slice(swipe.indexOf('function handlePointerDown'), swipe.indexOf('function handlePointerMove'))
   check('SwipeToDelete takes no pointer capture on pointerdown (a mouse click would never reach the row)', down.includes('setPointerCapture'), false)
   check('…and takes it once the drag passes the threshold', /Math\.abs\(delta\) > DRAG_THRESHOLD[\s\S]{0,900}setPointerCapture/.test(swipe), true)
-  // The laptop panel floats over the page: fixed, portalled to body — never a column of the page's own layout, which narrows and reflows the page the moment a row opens.
-  const laptopSheet = sheet.slice(sheet.indexOf('  if (wide) {'), sheet.indexOf('  return createPortal(', sheet.indexOf('  if (wide) {') + 20))
-  check('the laptop panel is a fixed element portalled to document.body', /className="fixed z-\[450\]/.test(laptopSheet) && laptopSheet.includes('document.body'), true)
-  check('…with no backdrop over the page (another row stays clickable)', /inset-0/.test(laptopSheet), false)
-  check('no page lays the panel out as a column of its own (LaptopPanelLayout is gone)', ['Home', 'Salary', 'Loans', 'Bills', 'Expenses'].some((pg) => readFileSync(new URL(`../src/pages/${pg}.tsx`, import.meta.url), 'utf8').includes('LaptopPanelLayout')), false)
+  // The laptop panel docks in a right-hand column of the page (LaptopPanelLayout), as the laptop design draws it: opening a row narrows the page beside it.
+  check('RowSheet renders into the page panel column when there is one', /dock \?\? document\.body/.test(sheet), true)
+  check('every page with panels lays out a panel column', ['Salary', 'Loans', 'Bills', 'Expenses'].every((pg) => readFileSync(new URL(`../src/pages/${pg}.tsx`, import.meta.url), 'utf8').includes('<LaptopPanelLayout>')), true)
+  // 🚨 …and a page with a docked panel must not wrap when it narrows: the pay-period tiles share one row.
+  const salary = readFileSync(new URL('../src/pages/Salary.tsx', import.meta.url), 'utf8')
+  check('the pay-period tiles are one row that never wraps (grid-flow-col)', /const row = 'grid grid-flow-col auto-cols-\[minmax\(0,1fr\)\]/.test(salary) && !/repeat\(auto-fill,minmax\(150px,1fr\)\)/.test(salary), true)
   const home = readFileSync(new URL('../src/pages/Home.tsx', import.meta.url), 'utf8')
   const marker = '// Laptop (lib/laptop.ts): one flat table, never collapsible.'
   // The laptop branch runs from the marker to the phone's own `return (` at function level (two-space indent).

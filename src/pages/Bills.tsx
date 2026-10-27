@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { OneOpenRowProvider, useOneOpenRow } from '../components/OneOpenRow'
-import { RowSheet, SheetOnLaptop } from '../components/RowSheet'
+import { RowSheet, SheetOnLaptop, LaptopPanelLayout } from '../components/RowSheet'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { billsCycleSummary } from '../lib/billSummary'
 import { horizonCycles } from '../lib/projection'
@@ -249,6 +249,7 @@ export function Bills() {
     <OneOpenRowProvider>
     {/* Laptop (lib/laptop.ts): a searchable table with this cycle's totals above it, and the open bill in the docked panel on the right. */}
     <div className={wide ? 'px-10 pt-8 pb-4' : 'max-w-md mx-auto px-4 pt-6'}>
+      <LaptopPanelLayout>
       {wide ? (
         <header className="mb-6 flex flex-wrap items-center gap-3">
           <h1 className="font-display text-3xl font-semibold text-[var(--color-ink)] flex-1">Bills</h1>
@@ -413,6 +414,7 @@ export function Bills() {
         )}
         {visibleBills.length > 0 && listedBills.length === 0 && <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">No bills match “{search}”.</p>}
       </div>
+      </LaptopPanelLayout>
     </div>
     </OneOpenRowProvider>
   )

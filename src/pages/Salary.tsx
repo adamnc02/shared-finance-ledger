@@ -14,7 +14,7 @@ import type { AppDataV2, Category, Loan, PayCycleConfig, PaySchedule, Pension, P
 import { nanoid } from 'nanoid'
 import { DeductionModal } from '../components/DeductionModal'
 import { SwipeToDelete } from '../components/SwipeToDelete'
-import { OpensSheetIcon, RowSheet, SheetOnLaptop } from '../components/RowSheet'
+import { OpensSheetIcon, RowSheet, SheetOnLaptop, LaptopPanelLayout } from '../components/RowSheet'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { DeleteGuardModal } from '../components/DeleteGuardModal'
@@ -2836,6 +2836,8 @@ function SalaryEndDateField({ person, onChange }: { person: Person; onChange: (s
 export function Salary() {
   const wide = useWide()
   const [jointPanelOpen, setJointPanelOpen] = useState(false)
+  // Laptop: whose pay history is showing (the History button on the salary card).
+  const [historyOpenFor, setHistoryOpenFor] = useState<string | null>(null)
   const {
     data,
     setData,
@@ -3064,6 +3066,7 @@ export function Salary() {
 
   return (
     <div className={wide ? 'px-10 pt-8 pb-4' : 'max-w-md mx-auto px-4 pt-6'}>
+      <LaptopPanelLayout>
       <header className="mb-6 flex items-center justify-between gap-3">
         <h1 className={`font-display font-semibold text-[var(--color-ink)] ${wide ? 'text-3xl flex-1' : 'text-2xl'}`}>Wallet</h1>
         {wide && (
@@ -3104,9 +3107,9 @@ export function Salary() {
         </div>
       </header>
 
-      {/* Laptop (lib/laptop.ts): Salary across the top, then Pensions,
-          Savings, Pots, the Joint Account and Backup as a grid of cards
-          (CSS order puts Backup last). On the phone every wrapper is
+      {/* Laptop (lib/laptop.ts): Salary across the top, then Savings, Pots,
+          the Joint Account, Pensions and Backup as a grid of cards, in that
+          order (CSS order; the markup keeps the phone's order). On the phone every wrapper is
           display: contents, so the page keeps its order and layout. */}
       <div className={wide ? 'grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-x-6 items-start' : 'contents'}>
       {/* Renders here unless an app claims Backup & Restore for somewhere else (BackupSection.tsx). */}
@@ -3173,7 +3176,8 @@ export function Salary() {
               sort local to this list, not a change to data.people's own
               order (which stays whatever it was created in everywhere
               else in the app). */}
-          {[...data.people].sort((a, b) => (a.id === data.primaryPersonId ? -1 : b.id === data.primaryPersonId ? 1 : 0)).map((person) => {
+          {/* Laptop (lib/laptop.ts): only this device's own person's salary. */}
+          {[...data.people].filter((p) => !wide || p.id === data.primaryPersonId).sort((a, b) => (a.id === data.primaryPersonId ? -1 : b.id === data.primaryPersonId ? 1 : 0)).map((person) => {
             const payCycle = data.payCycles.find((pc) => pc.personId === person.id)
             const hasSalary = hasSalaryConfigured(person)
             const isOpen = expandedPersonId === person.id
@@ -3188,11 +3192,24 @@ export function Salary() {
                     {person.id === data.primaryPersonId && <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-coral)] shrink-0">Me</span>}
                     {showFollowingTag && <FollowingTag />}
                   </div>
-                  {hasSalary && (
-                    <button onClick={() => setSettingsOpenFor(person.id)} className="text-[var(--color-ink-muted)] shrink-0" aria-label="Pay cycle settings">
-                      <Settings size={16} />
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Laptop: History is a button at the top of the card, not a toggle under the pay periods. */}
+                    {wide && hasSalary && isOpen && (
+                      <button
+                        onClick={() => setHistoryOpenFor(historyOpenFor === person.id ? null : person.id)}
+                        aria-pressed={historyOpenFor === person.id}
+                        className="h-8 px-3 rounded-full text-xs font-semibold"
+                        style={{ background: historyOpenFor === person.id ? 'var(--color-coral)' : 'var(--color-surface-raised)', color: historyOpenFor === person.id ? '#fff' : 'var(--color-ink)' }}
+                      >
+                        History
+                      </button>
+                    )}
+                    {hasSalary && (
+                      <button onClick={() => setSettingsOpenFor(person.id)} className="text-[var(--color-ink-muted)] shrink-0" aria-label="Pay cycle settings">
+                        <Settings size={16} />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <button
@@ -3259,11 +3276,15 @@ export function Salary() {
                           }}
                           editingDeduction={editingDeduction}
                           setEditingDeduction={setEditingDeduction}
+                          historyOpen={historyOpenFor === person.id}
                         />
-                        <SalaryEndDateField
-                          person={person}
-                          onChange={(snapshotId, endDate) => updateSalarySnapshot(person.id, snapshotId, { endDate })}
-                        />
+                        {/* Laptop: the end date is in the salary settings (the cog). */}
+                        {!wide && (
+                          <SalaryEndDateField
+                            person={person}
+                            onChange={(snapshotId, endDate) => updateSalarySnapshot(person.id, snapshotId, { endDate })}
+                          />
+                        )}
                         {/* Only reachable once this person's current
                             salary has an end date set — see
                             peopleEligibleForNewSalary's own comment for
@@ -3331,7 +3352,7 @@ export function Salary() {
       <div className="contents">
       <CollapsibleSection
         title="Pensions"
-        className="mb-8"
+        className={wide ? 'mb-8 order-4' : 'mb-8'}
         card={wide}
         defaultOpen={myPensions.length > 0}
         open={pensionsSectionOpen}
@@ -3417,7 +3438,7 @@ export function Salary() {
 
       <CollapsibleSection
         title="Savings"
-        className="mb-8"
+        className={wide ? 'mb-8 order-1' : 'mb-8'}
         card={wide}
         defaultOpen={mySavingsPots.length > 0}
         open={savingsSectionOpen}
@@ -3545,7 +3566,7 @@ export function Salary() {
           to block on. */}
       <CollapsibleSection
         title="Pots"
-        className="mb-8"
+        className={wide ? 'mb-8 order-2' : 'mb-8'}
         card={wide}
         defaultOpen={myPots.length > 0}
         open={potsSectionOpen}
@@ -3642,7 +3663,7 @@ export function Salary() {
           // today's balance (the joint ledger's cleared balance, as Home
           // shows it), who shares it, and when it opened. Logging, the
           // recurring transfer and the opening balance are in its panel.
-          <div className="mb-8">
+          <div className="mb-8 order-3">
             <button
               onClick={() => setJointPanelOpen(true)}
               aria-expanded={jointPanelOpen}
@@ -3794,6 +3815,7 @@ export function Salary() {
                 setExpandedPersonId(null)
               }}
               onClose={() => setSettingsOpenFor(null)}
+              salaryEndDate={wide && hasSalaryConfigured(person) ? <SalaryEndDateField person={person} onChange={(snapshotId, endDate) => updateSalarySnapshot(person.id, snapshotId, { endDate })} /> : undefined}
             />
           )
         })()}
@@ -3861,6 +3883,7 @@ export function Salary() {
         reclaimed via Self Assessment.
       </p>
       <BuildStamp />
+      </LaptopPanelLayout>
     </div>
   )
 }
@@ -4323,6 +4346,7 @@ export function PayCycleSettingsModal({
   onSave,
   onDeleteSalary,
   onClose,
+  salaryEndDate,
   paydayOccurrences,
   onChangePayday,
   paySchedule,
@@ -4377,6 +4401,8 @@ export function PayCycleSettingsModal({
   paydayOccurrences: { date: string; isPast: boolean }[]
   /** A payday change, from a chosen payday — re-dates stored salary rather than duplicating it (lib/scheduleChange.ts). */
   onChangePayday: (next: PaydayChange, pickedDate: string) => void
+  /** Laptop: the salary's end date, which lives here rather than on the salary card. Saves as soon as it changes, like on the card. */
+  salaryEndDate?: React.ReactNode
 }) {
   // 2026-09-16 — set while a payday change waits for "which payday should
   // this start from". Saving it straight onto the pay cycle re-created
@@ -4686,6 +4712,12 @@ export function PayCycleSettingsModal({
 
         <FormButtonRow onCancel={onClose} onSave={handleSave} saveDisabled={!dirty || (draftNextPayDate !== (nextPayday ?? '') && nextPayDateError !== null)} />
 
+        {salaryEndDate && (
+          <div className="mt-6 pt-4 border-t" style={{ borderColor: 'var(--color-track)' }}>
+            {salaryEndDate}
+          </div>
+        )}
+
         <div className="mt-6 pt-4 border-t" style={{ borderColor: 'var(--color-track)' }}>
           <button onClick={() => setConfirmingDelete(true)} className="w-full text-center py-2 text-xs font-medium text-[var(--color-ink-faint)]">
             Delete {personName}'s salary
@@ -4723,6 +4755,7 @@ function PayPeriodsSection({
   onSaveAllFuture,
   editingDeduction,
   setEditingDeduction,
+  historyOpen,
 }: {
   person: Person
   payCycle: PayCycleConfig
@@ -4734,6 +4767,9 @@ function PayPeriodsSection({
   onSaveAllFuture: (dateIso: string, fields: ReturnType<typeof emptySalaryFields>) => void
   editingDeduction: { personId: string; deductionId: string } | null
   setEditingDeduction: (v: { personId: string; deductionId: string } | null) => void
+
+  /** Laptop: whether the History button on the salary card is on. */
+  historyOpen?: boolean
 }) {
   const [expandedDate, setExpandedDate] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
@@ -4816,22 +4852,22 @@ function PayPeriodsSection({
         tileLabel={label}
       />
     )
+    // One row each, never wrapping: the tiles share the width, so opening
+    // the panel (which narrows the page) narrows the tiles instead of
+    // pushing the last ones onto a row of their own.
+    const row = 'grid grid-flow-col auto-cols-[minmax(0,1fr)] gap-3'
     return (
-      <div className="mb-4 flex flex-col gap-3">
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+      <div className="mb-1 flex flex-col gap-3">
+        {historyOpen && (
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">HISTORY</span>
+            {historyOnly.length > 0 ? <div className={row}>{historyOnly.map((d) => tile(d, 'Paid', true, false))}</div> : <p className="text-xs text-[var(--color-ink-faint)]">No earlier pay periods yet.</p>}
+          </div>
+        )}
+        <div className={row}>
           {mostRecent && tile(mostRecent, 'Last paid', true, data.primaryPersonId === person.id)}
           {upcoming.map((d, i) => tile(d, i === 0 ? 'Next' : 'Then', false, data.primaryPersonId === person.id))}
         </div>
-        <button onClick={() => setShowHistory(!showHistory)} className="flex items-center justify-between w-full py-1 text-xs font-medium text-[var(--color-ink-muted)]">
-          <span>History ({historyOnly.length})</span>
-          {showHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
-        {showHistory && (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
-            {historyOnly.map((d) => tile(d, 'Paid', true, false))}
-            {historyOnly.length === 0 && <p className="text-xs text-[var(--color-ink-faint)] px-1">No earlier pay periods yet.</p>}
-          </div>
-        )}
       </div>
     )
   }
