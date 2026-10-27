@@ -158,3 +158,15 @@ textarea {
     border-radius: 1.5rem;
   }
 }
+
+/* The laptop's stretched Trends preview (TrendChart's `fill`): lines keep
+   their thickness however far the plot is stretched, and the today dot,
+   which would stretch into an oval, is not drawn. */
+.trend-fill path,
+.trend-fill line,
+.trend-fill polyline {
+  vector-effect: non-scaling-stroke;
+}
+.trend-fill circle {
+  display: none;
+}
