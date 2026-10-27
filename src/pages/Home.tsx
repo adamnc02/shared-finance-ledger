@@ -31,7 +31,8 @@ import { computePotProjection, potSignedAmount, buildPotTrendSeries } from '../l
 import { isLedgerTransaction, signedAmount, type BalanceSpendGranularity, type BalanceSpendTrendSeries } from '../lib/runningBalance'
 import { computeCycleSummary, compareByDateSalaryFirst } from '../lib/cycleSummary'
 import { WalletStack } from '../components/WalletStack'
-import { BankCard } from '../components/BankCard'
+import { BankCard, DeckRowContext } from '../components/BankCard'
+import { useWide } from '../lib/useWide'
 import { ProgressRing } from '../components/ProgressRing'
 import { RagLegend } from '../components/RagLegend'
 import { ToggleSwitch } from '../components/Toggle'
@@ -209,6 +210,7 @@ export function Home() {
   const [averageSpendForecast, setAverageSpendForecast] = useAppSessionState('home:averageSpendForecast', false)
 
   const deck = useMemo(() => buildDeck(data), [data])
+  const wide = useWide()
 
   // Full display order, back-to-front, re-derived every render from the
   // canonical buildDeck order plus the MRU pointer — never-selected
@@ -235,29 +237,15 @@ export function Home() {
     setMruSelections((prev) => [...prev.filter((k) => k !== key), key])
   }
 
-  return (
-    <div className="max-w-md mx-auto px-4 pt-6">
-      <header className="mb-6">
-        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Home</h1>
-      </header>
-
-      <WalletStack
-        items={backToFront.map((key) => {
-          const entry = deck.find((e) => deckEntryKey(e) === key)!
-          return { key, node: <DeckHero entry={entry} data={data} horizon={horizon} averageSpendForecast={averageSpendForecast} />, label: heroLabel(entry, data) }
-        })}
-        onSelect={onSelect}
-        // Salary card only — the joint/household/credit-card faces have no
-        // salary-vs-outgoings picture of their own to break down.
-        belowCards={
-          activeEntry?.kind === 'personal' ? (
-            <SalaryBreakdownCard data={data} horizon={horizon} />
-          ) : activeEntry?.kind === 'joint' ? (
-            <JointBreakdownCard data={data} horizon={horizon} />
-          ) : undefined
-        }
-      />
-
+  // Salary card only — the joint/household/credit-card faces have no
+  // salary-vs-outgoings picture of their own to break down.
+  const belowCards =
+    activeEntry?.kind === 'personal' ? (
+      <SalaryBreakdownCard data={data} horizon={horizon} />
+    ) : activeEntry?.kind === 'joint' ? (
+      <JointBreakdownCard data={data} horizon={horizon} />
+    ) : undefined
+  const controlsAndDetail = (
       <div className="mt-6">
         <DeckControls
           entry={activeEntry}
@@ -292,6 +280,76 @@ export function Home() {
           averageSpendForecast={averageSpendForecast}
         />
       </div>
+  )
+
+  // Laptop (lib/laptop.ts): two columns. The front card and its breakdown
+  // sit above a list of every deck entry, in buildDeck's own order, that
+  // replaces the fanned stack; picking a row is the same onSelect a tap on
+  // a sliver makes. The selected card's ledger fills the right-hand column.
+  if (wide) {
+    return (
+      <div className="max-w-[1240px] mx-auto px-10 pt-8">
+        <header className="mb-6 flex items-center">
+          <h1 className="font-display text-3xl font-semibold text-[var(--color-ink)]">Home</h1>
+        </header>
+        <div className="flex gap-6 items-start">
+          <section aria-label="Accounts" className="w-[400px] shrink-0 flex flex-col gap-4">
+            {activeEntry && (
+              <WalletStack
+                items={[{ key: deckEntryKey(activeEntry), node: <DeckHero entry={activeEntry} data={data} horizon={horizon} averageSpendForecast={averageSpendForecast} />, label: heroLabel(activeEntry, data) }]}
+                onSelect={onSelect}
+                belowCards={belowCards}
+              />
+            )}
+            {deck.length > 1 && (
+              <div className="rounded-[20px] p-2" style={{ background: 'var(--color-surface)' }}>
+                <div className="px-3 pt-2.5 pb-1.5 text-xs font-semibold tracking-[0.08em] text-[var(--color-ink-muted)]">ALL ACCOUNTS</div>
+                <DeckRowContext.Provider value>
+                  {deck.map((entry) => {
+                    const key = deckEntryKey(entry)
+                    const selected = entry === activeEntry
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => onSelect(key)}
+                        className="w-full min-h-[52px] px-3 rounded-[14px] flex items-center transition-colors hover:bg-[var(--color-surface-raised)]"
+                        style={{ background: selected ? 'var(--color-surface-raised)' : 'transparent' }}
+                      >
+                        <DeckHero entry={entry} data={data} horizon={horizon} averageSpendForecast={averageSpendForecast} />
+                      </button>
+                    )
+                  })}
+                </DeckRowContext.Provider>
+              </div>
+            )}
+            <StatementDownloadButton data={data} />
+          </section>
+          <section aria-label="Ledger" className="flex-1 min-w-0 -mt-6">
+            {controlsAndDetail}
+          </section>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-md mx-auto px-4 pt-6">
+      <header className="mb-6">
+        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Home</h1>
+      </header>
+
+      <WalletStack
+        items={backToFront.map((key) => {
+          const entry = deck.find((e) => deckEntryKey(e) === key)!
+          return { key, node: <DeckHero entry={entry} data={data} horizon={horizon} averageSpendForecast={averageSpendForecast} />, label: heroLabel(entry, data) }
+        })}
+        onSelect={onSelect}
+        belowCards={belowCards}
+      />
+
+      {controlsAndDetail}
 
       <StatementDownloadButton data={data} />
     </div>
@@ -2141,6 +2199,29 @@ function TransactionRow({
     : undefined
   const signed = amountSign ? amountSign(t) : signedAmount(t)
   const isPositive = signed > 0
+  const wide = useWide()
+  if (wide) {
+    // Laptop: the same row as columns — date, name and status, category,
+    // amount, running balance. Every value is the phone row's own.
+    return (
+      <div className="w-full grid grid-cols-[64px_minmax(0,1fr)_120px_104px_104px] items-center gap-3 min-h-11 py-1.5" style={{ opacity: t.status === 'cleared' ? 0.75 : 1 }}>
+        <span className="text-[13px] text-[var(--color-ink-muted)] tabular-nums">{formatCycleDate(t.date)}</span>
+        <span className="flex items-center gap-2.5 min-w-0">
+          <CategoryIcon category={potIconCategory ?? category} size={14} />
+          <span className="min-w-0">
+            <span className="block text-sm text-[var(--color-ink)] truncate">{t.note || category?.name || t.type}</span>
+            {t.status === 'cleared' && <span className="block text-[11px] font-semibold text-[var(--color-ink)]">Cleared</span>}
+            {t.status === 'pending' && <span className="block text-[11px] text-[var(--color-ink-muted)]">Pending</span>}
+          </span>
+        </span>
+        <span className="text-[13px] text-[var(--color-ink-muted)] truncate">{category?.name ?? ''}</span>
+        <span className="text-sm font-mono font-semibold text-right" style={{ color: isPositive ? 'var(--color-positive)' : 'var(--color-ink)' }}>
+          {isPositive ? '+' : '-'}£{formatCurrency(Math.abs(signed))}
+        </span>
+        <span className="text-[13px] font-mono text-right text-[var(--color-ink-muted)] tabular-nums">{runningBalance !== undefined ? `£${formatCurrency(runningBalance)}` : ''}</span>
+      </div>
+    )
+  }
   return (
     <div className="flex items-center gap-3 py-2">
       <CategoryIcon category={potIconCategory ?? category} size={14} />
