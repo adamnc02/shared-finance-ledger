@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useWide } from '../lib/useWide'
 import { createPortal } from 'react-dom'
 import { formatCurrency } from '../lib/format'
 import { useLedgerData } from '../context/LedgerContext'
@@ -2656,6 +2657,7 @@ function SalaryEndDateField({ person, onChange }: { person: Person; onChange: (s
 }
 
 export function Salary() {
+  const wide = useWide()
   const {
     data,
     setData,
@@ -2883,9 +2885,9 @@ export function Salary() {
   const anyoneHasSalary = data.people.some(hasSalaryConfigured)
 
   return (
-    <div className="max-w-md mx-auto px-4 pt-6">
+    <div className={wide ? 'max-w-[1240px] mx-auto px-10 pt-8' : 'max-w-md mx-auto px-4 pt-6'}>
       <header className="mb-6 flex items-center justify-between">
-        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Wallet</h1>
+        <h1 className={`font-display font-semibold text-[var(--color-ink)] ${wide ? 'text-3xl' : 'text-2xl'}`}>Wallet</h1>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setPeopleModalOpen(true)}
@@ -2900,9 +2902,16 @@ export function Salary() {
         </div>
       </header>
 
+      {/* Laptop (lib/laptop.ts): Salary in the wide left column, the other
+          sections stacked on the right. On the phone every wrapper is
+          display: contents, so the page keeps its order and layout. */}
+      <div className={wide ? 'grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-x-8 items-start' : 'contents'}>
       {/* Renders here unless an app claims Backup & Restore for somewhere else (BackupSection.tsx). */}
-      <WalletBackupSlot data={data} onRestore={setData} />
+        <div className={wide ? 'col-start-2 row-start-1' : 'contents'}>
+        <WalletBackupSlot data={data} onRestore={setData} />
+        </div>
 
+      <div className={wide ? 'col-start-1 row-start-1 row-span-2' : 'contents'}>
       <CollapsibleSection
         title="Salary"
         className="mb-8"
@@ -3114,7 +3123,9 @@ export function Salary() {
           })}
         </div>
       </CollapsibleSection>
+      </div>
 
+      <div className={wide ? 'col-start-2 row-start-2' : 'contents'}>
       <CollapsibleSection
         title="Pensions"
         className="mb-8"
@@ -3456,6 +3467,8 @@ export function Salary() {
           </div>
         </CollapsibleSection>
       )}
+      </div>
+      </div>
       {editingJointAccount && data.jointAccount && (
         <JointAccountSetupModal
           initial={data.jointAccount}

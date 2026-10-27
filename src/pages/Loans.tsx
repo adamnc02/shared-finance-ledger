@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { SheetOnLaptop } from '../components/RowSheet'
+import { useWide } from '../lib/useWide'
 import { createPortal } from 'react-dom'
 import { formatCurrency, formatFullDate, formatMonthYear } from '../lib/format'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -148,6 +150,7 @@ function LocationPickerCard({
 }
 
 export function Loans() {
+  const wide = useWide()
   const {
     data,
     importGeneration,
@@ -258,9 +261,10 @@ export function Loans() {
   }, [routerLocation.state])
 
   return (
-    <div className="max-w-md mx-auto px-4 pt-6">
+    // Laptop (lib/laptop.ts): loans and cards as a two-column grid of the same cards; add forms open in the right-hand panel.
+    <div className={wide ? 'max-w-[1240px] mx-auto px-10 pt-8' : 'max-w-md mx-auto px-4 pt-6'}>
       <header className="mb-6">
-        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Borrowing</h1>
+        <h1 className={`font-display font-semibold text-[var(--color-ink)] ${wide ? 'text-3xl' : 'text-2xl'}`}>Borrowing</h1>
       </header>
 
       <CollapsibleSection
@@ -308,36 +312,38 @@ export function Loans() {
         )}
 
         {addingLoan && (
-          <LoanForm
-            people={data.people}
-            pots={data.pots}
-            categories={visibleCategoriesFor(data)}
-            defaultOwnerId={loanDefaultOwnerId}
-            defaultLocation={loanDefaultLocation.location}
-            defaultPotId={loanDefaultLocation.potId}
-            initial={loanPrefill}
-            hasJointBills={hasJointBills}
-            canBeJoint={canBeJoint}
-            existingLoans={data.loans}
-            onAddCategory={addCategory}
-            onCancel={() => {
-              setAddingLoan(false)
-              if (loanPrefill) navigate('.', { replace: true, state: null })
-            }}
-            onSave={(loan) => {
-              // The loan's own hero-card colour, picked here rather than in
-              // the form (same convention as the credit card / pot / savings
-              // pot creation paths) because it needs the whole AppDataV2 to
-              // scan what's already taken. PROMPT-08a Part C.
-              const id = addLoan({ ...loan, color: pickNextSharedCardColor(data) })
-              setJustCreatedLoanId(id)
-              setAddingLoan(false)
-              if (loanPrefill) navigate('.', { replace: true, state: null })
-            }}
-          />
+          <SheetOnLaptop title="Add a loan" onClose={() => setAddingLoan(false)}>
+            <LoanForm
+              people={data.people}
+              pots={data.pots}
+              categories={visibleCategoriesFor(data)}
+              defaultOwnerId={loanDefaultOwnerId}
+              defaultLocation={loanDefaultLocation.location}
+              defaultPotId={loanDefaultLocation.potId}
+              initial={loanPrefill}
+              hasJointBills={hasJointBills}
+              canBeJoint={canBeJoint}
+              existingLoans={data.loans}
+              onAddCategory={addCategory}
+              onCancel={() => {
+                setAddingLoan(false)
+                if (loanPrefill) navigate('.', { replace: true, state: null })
+              }}
+              onSave={(loan) => {
+                // The loan's own hero-card colour, picked here rather than in
+                // the form (same convention as the credit card / pot / savings
+                // pot creation paths) because it needs the whole AppDataV2 to
+                // scan what's already taken. PROMPT-08a Part C.
+                const id = addLoan({ ...loan, color: pickNextSharedCardColor(data) })
+                setJustCreatedLoanId(id)
+                setAddingLoan(false)
+                if (loanPrefill) navigate('.', { replace: true, state: null })
+              }}
+            />
+          </SheetOnLaptop>
         )}
 
-        <div className="flex flex-col gap-3">
+        <div className={wide ? 'grid grid-cols-2 gap-4 items-start' : 'flex flex-col gap-3'}>
           {myLoans.map((loan) => {
             const summary = summarizeLoan(loan)
             const progress = summarizeLoanProgress(loan)
@@ -370,7 +376,7 @@ export function Loans() {
               />
             )
           })}
-          {myLoans.length === 0 && !addingLoan && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No loans yet.</p>}
+          {myLoans.length === 0 && !addingLoan && <p className="col-span-2 text-sm text-[var(--color-ink-muted)] text-center py-8">No loans yet.</p>}
         </div>
       </CollapsibleSection>
 
@@ -407,22 +413,24 @@ export function Loans() {
         )}
 
         {addingCard && (
-          <CreditCardForm
-            people={data.people}
-            categories={visibleCategoriesFor(data, CREDIT_CARD_CATEGORY_ID)}
-            defaultOwnerId={cardDefaultOwnerId}
-            nextColor={pickNextSharedCardColor(data)}
-            onAddCategory={addCategory}
-            onCancel={() => setAddingCard(false)}
-            onSave={(card) => {
-              const id = addCreditCard(card)
-              setJustCreatedCardId(id)
-              setAddingCard(false)
-            }}
-          />
+          <SheetOnLaptop title="Add a credit card" onClose={() => setAddingCard(false)}>
+            <CreditCardForm
+              people={data.people}
+              categories={visibleCategoriesFor(data, CREDIT_CARD_CATEGORY_ID)}
+              defaultOwnerId={cardDefaultOwnerId}
+              nextColor={pickNextSharedCardColor(data)}
+              onAddCategory={addCategory}
+              onCancel={() => setAddingCard(false)}
+              onSave={(card) => {
+                const id = addCreditCard(card)
+                setJustCreatedCardId(id)
+                setAddingCard(false)
+              }}
+            />
+          </SheetOnLaptop>
         )}
 
-        <div className="flex flex-col gap-3">
+        <div className={wide ? 'grid grid-cols-2 gap-4 items-start' : 'flex flex-col gap-3'}>
           {myCreditCards.map((storedCard) => {
             // The row shows what's actually owed right now — the stored
             // anchor with every payment and spend since replayed onto it.
@@ -463,7 +471,7 @@ export function Loans() {
               />
             )
           })}
-          {myCreditCards.length === 0 && !addingCard && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No credit cards yet.</p>}
+          {myCreditCards.length === 0 && !addingCard && <p className="col-span-2 text-sm text-[var(--color-ink-muted)] text-center py-8">No credit cards yet.</p>}
         </div>
       </CollapsibleSection>
     </div>
