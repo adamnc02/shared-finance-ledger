@@ -116,3 +116,26 @@ textarea {
   bottom: 0;
   background: linear-gradient(to top, rgba(var(--bg-rgb), 1) 0%, rgba(var(--bg-rgb), 0) 100%);
 }
+
+/* The collapsed laptop rail's labels (components/Rail.tsx): hovering or
+   focusing a tab icon names it at once, beside the rail. A native `title`
+   waits about a second and is drawn in the system font. */
+.rail-min [data-tip] {
+  position: relative;
+}
+.rail-min [data-tip]:hover::after,
+.rail-min [data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #05070d;
+  color: var(--color-ink);
+  font: 600 12px var(--font-body);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 200;
+}

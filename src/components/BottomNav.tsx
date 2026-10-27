@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { Home, Wallet, Landmark, Receipt, Banknote, FlaskConical } from 'lucide-react'
 
-const TABS = [
+export const TABS = [
   { to: '/', label: 'Home', icon: Home, end: true },
   { to: '/salary', label: 'Wallet', icon: Wallet },
   { to: '/loans', label: 'Borrowing', icon: Landmark },
