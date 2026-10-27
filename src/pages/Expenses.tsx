@@ -39,7 +39,7 @@ import {
   payCycleForTemplate,
 } from '../lib/schedule'
 import { transferLocationLabel, buildTransferLocationOptions, transferLocationKey, locationsEqual, type TransferLocationOption } from '../lib/transferLedger'
-import { TransferFromTiles } from '../components/TransferFromTiles'
+import { TRANSFER_COLUMNS, TransferFromTiles } from '../components/TransferFromTiles'
 import { OneOpenRowProvider, useOneOpenRow } from '../components/OneOpenRow'
 import { groupTransfersByFrom, isSettled } from '../lib/transferGroups'
 import { LocationStep, FrequencyStep, DateStep, TransferFrequencySelect, TRANSFER_FREQUENCY_LABELS, type TransferFrequencyChoice, resolveTransferFrequencyChoice, transferFrequencyChoiceFor } from '../components/TransferSteps'
@@ -945,6 +945,34 @@ export function Expenses() {
 // ── Ad-hoc transaction row — swipe to delete, tap to expand/edit (same
 // interaction pattern RecurringTransactionRow already uses below, and now
 // Savings/Joint too — see SavingsTransactionRowItem/JointTransactionRowItem). ──
+/** One laptop Transfers row: where the money goes, how often, when, how much. */
+function TransferLaptopRow({ open, onClick, color, label, tag, owner, howOften, when, amount, positive }: {
+  open: boolean
+  onClick: () => void
+  color?: string
+  label: string
+  tag?: string
+  owner?: string
+  howOften: string
+  when?: string
+  amount: string
+  positive?: boolean
+}) {
+  return (
+    <button onClick={onClick} aria-expanded={open} className={`${TRANSFER_COLUMNS} w-full min-h-[52px] px-3.5 py-1.5 rounded-2xl border text-left text-sm`} style={{ background: open ? 'var(--color-surface-raised)' : 'var(--color-surface)', borderColor: open ? 'var(--color-coral)' : 'transparent' }}>
+      <span className="flex items-center gap-2 min-w-0 flex-wrap">
+        {color && <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: color }} aria-hidden="true" />}
+        <span className="font-medium text-[var(--color-ink)] break-words min-w-0">{label}</span>
+        {tag && <span className="text-[11px] text-[var(--color-ink-muted)]">{tag}</span>}
+        {owner && <OwnerBadge name={owner} />}
+      </span>
+      <span className="text-[var(--color-ink-muted)] break-words min-w-0">{howOften}</span>
+      <span className="text-[var(--color-ink-muted)]">{when ? shortDayMonth(when) : '—'}</span>
+      <span className="font-mono text-right whitespace-nowrap" style={{ color: positive ? 'var(--color-positive)' : 'var(--color-ink)' }}>{amount}</span>
+    </button>
+  )
+}
+
 /** The laptop Recurring table's columns, shared by its header and every row. */
 const REC_COLUMNS = 'grid grid-cols-[minmax(150px,1.6fr)_minmax(70px,1fr)_minmax(80px,1.1fr)_minmax(90px,1.1fr)_64px_96px] items-center gap-3'
 
@@ -2586,6 +2614,7 @@ function TransferRowItem({
   onFlashedOnMount?: () => void
 }) {
   const [isEditing, setIsEditing] = useOneOpenRow(`transfer:${t.id}`)
+  const wide = useWide()
   const { active: flashActive, message: flashMessage, trigger: triggerFlash } = useSavedFlash('Transfer updated.')
   useEffect(() => {
     if (shouldFlashOnMount) {
@@ -2609,7 +2638,22 @@ function TransferRowItem({
     <SwipeToDelete onDelete={onRemove} confirmLabel={`${fromLabel} → ${toLabel}`}>
       {/* Same container, header and chevron as TransferRecurringRow, so a one-off and a recurring
           transfer sit and expand identically in one list. */}
-      <div className="relative rounded-xl px-4 py-3" style={{ background: 'var(--color-surface)' }}>
+      <div className={wide ? 'relative' : 'relative rounded-xl px-4 py-3'} style={wide ? undefined : { background: 'var(--color-surface)' }}>
+        {wide ? (
+          // Laptop: a row of the From table; the editor opens in the panel.
+          <TransferLaptopRow
+            open={isEditing}
+            onClick={() => setIsEditing((e) => !e)}
+            color={destinationColor}
+            label={isSalarySort ? `Salary Sort · ${isWithdrawal ? fromLabel : toLabel}` : destinationColor ? toLabel : `${fromLabel} → ${toLabel}`}
+            tag={t.note || (touchesPersonal && !isSalarySort ? (isWithdrawal ? 'Withdrawal' : 'Deposit') : undefined)}
+            owner={owner?.name}
+            howOften={t.status === 'pending' ? 'One-off · pending' : 'One-off'}
+            when={t.date}
+            amount={`${touchesPersonal ? (isWithdrawal ? '+' : '-') : ''}£${formatCurrency(t.amount)}`}
+            positive={touchesPersonal && isWithdrawal}
+          />
+        ) : (
         <button onClick={() => setIsEditing((e) => !e)} className="w-full flex items-start justify-between gap-2 text-left">
           <div className="min-w-0">
             <p className="font-body text-sm text-[var(--color-ink)] truncate flex items-center gap-1.5">
@@ -2652,7 +2696,9 @@ function TransferRowItem({
             {isEditing ? <ChevronUp size={14} className="text-[var(--color-ink-faint)]" /> : <ChevronDown size={14} className="text-[var(--color-ink-faint)]" />}
           </div>
         </button>
+        )}
         {isEditing && (
+          <SheetOnLaptop title={isSalarySort ? 'Salary Sort' : toLabel} subtitle={`Transfer · ${fromLabel} → ${toLabel}`} onClose={() => setIsEditing(false)}>
           <EditSimpleTransactionForm
             transaction={t}
             locations={isSalarySort ? undefined : { options: locationOptions, savingsPots, pots }}
@@ -2663,6 +2709,7 @@ function TransferRowItem({
               triggerFlash()
             }}
           />
+          </SheetOnLaptop>
         )}
         <SavedFlashOverlay active={flashActive} message={flashMessage} />
       </div>
@@ -3239,6 +3286,11 @@ function TransferRecurringRow({
   onFlashedOnMount?: () => void
 }) {
   const [open, setOpen] = useOneOpenRow(`recurring-transfer:${template.id}`)
+  const wide = useWide()
+  // Laptop panel: the transfer's other fields behind "Edit details", and its own Delete.
+  const transferHowOften = `${template.frequency === 'every_n_weeks' ? `Every ${template.intervalWeeks ?? 2} weeks` : (RECURRING_FREQUENCY_LABELS[template.frequency as RecurringFrequency] ?? template.frequency)}${template.followsPayday ? ' · follows payday' : ''}${template.followsCycleStart ? ' · follows cycle start' : ''}`
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [name, setName] = useState(template.name)
   // Batch 9 (2026-09-07, Bug 11) — the "Save changes"/"Save amount" button
   // below always edits an EXISTING recurring transfer, so "updated" is
@@ -3450,7 +3502,7 @@ function TransferRecurringRow({
 
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={template.name}>
-      <div className="relative rounded-2xl px-4 py-3" style={{ background: 'var(--color-surface)' }}>
+      <div className={wide ? 'relative' : 'relative rounded-2xl px-4 py-3'} style={wide ? undefined : { background: 'var(--color-surface)' }}>
         {choosingEffectiveDate && (
           <EffectiveDatedChangeFlow
             scopeStep={
@@ -3545,6 +3597,21 @@ function TransferRecurringRow({
             }}
           />
         )}
+        {wide ? (
+          // Laptop: a row of the From table; the editor opens in the panel.
+          <TransferLaptopRow
+            open={open}
+            onClick={() => setOpen(!open)}
+            color={destinationColor}
+            label={destinationColor ? toLabel : `${fromLabel} → ${toLabel}`}
+            tag={touchesPersonal ? (isWithdrawal ? 'Withdrawal' : 'Deposit') : undefined}
+            owner={owner?.name}
+            howOften={transferHowOften}
+            when={nextOccurrence?.date}
+            amount={`${touchesPersonal ? (isWithdrawal ? '+' : '-') : ''}£${formatCurrency(template.amount)}`}
+            positive={touchesPersonal && isWithdrawal}
+          />
+        ) : (
         <button className="w-full flex items-start justify-between gap-2 text-left" onClick={() => setOpen(!open)}>
           <div className="min-w-0">
             <p className="font-body text-sm text-[var(--color-ink)] truncate flex items-center gap-1.5">
@@ -3578,6 +3645,9 @@ function TransferRecurringRow({
             {open ? <ChevronUp size={14} className="text-[var(--color-ink-faint)]" /> : <ChevronDown size={14} className="text-[var(--color-ink-faint)]" />}
           </div>
         </button>
+        )}
+        {open && (
+        <SheetOnLaptop title={toLabel} subtitle={`Transfer · ${fromLabel} → ${toLabel}`} onClose={() => setOpen(false)}>
         {open && pickingSide && (
           <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
             <LocationStep
@@ -3594,9 +3664,31 @@ function TransferRecurringRow({
           </div>
         )}
         {open && !pickingSide && (
-          <div className="mt-3 pt-3 border-t flex flex-col gap-2" style={{ borderColor: 'var(--color-track)' }}>
-            {transferFrom && transferTo && (
-              <div className="flex items-center gap-2">
+          <div className={wide ? 'flex flex-col gap-3.5' : 'mt-3 pt-3 border-t flex flex-col gap-2'} style={{ borderColor: 'var(--color-track)' }}>
+            {/* Laptop: amount → From / To / how often / next → "Edit details" → upcoming transfers → Save, Delete. CSS order only. */}
+            {wide && (
+              <>
+                <div className="order-2 grid grid-cols-2 gap-3">
+                  {[
+                    ['From', transferFrom ? transferLocationLabel(transferFrom, savingsPots, pots) : '—'],
+                    ['To', transferTo ? transferLocationLabel(transferTo, savingsPots, pots) : '—'],
+                    ['How often', transferHowOften],
+                    ['Next', nextOccurrence ? formatFullDate(nextOccurrence.date) : '—'],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex flex-col gap-1 text-[13px]">
+                      <span className="text-[var(--color-ink-muted)]">{label}</span>
+                      <span className="text-[var(--color-ink)]">{value}</span>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setDetailsOpen(!detailsOpen)} aria-expanded={detailsOpen} className="order-3 w-full flex items-center justify-between py-2 border-t text-sm font-semibold text-[var(--color-ink)]" style={{ borderColor: 'var(--color-track)' }}>
+                  Edit details
+                  {detailsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+              </>
+            )}
+            {transferFrom && transferTo && (!wide || detailsOpen) && (
+              <div className={`flex items-center gap-2 ${wide ? 'order-4' : ''}`}>
                 <button onClick={() => setPickingSide('from')} className="flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm truncate" style={{ background: 'var(--color-bg-elevated)', color: 'var(--color-ink)' }}>
                   {transferLocationLabel(transferFrom, savingsPots, pots)}
                 </button>
@@ -3616,8 +3708,8 @@ function TransferRecurringRow({
                 </button>
               </div>
             )}
-            <EditField label="Name" type="text" value={name} onChange={setName} />
-            <EditField label="Amount (£)" type="number" value={amount} onChange={setAmount} />
+            {(!wide || detailsOpen) && <div className={wide ? 'order-4' : 'contents'}><EditField label="Name" type="text" value={name} onChange={setName} /></div>}
+            <div className={wide ? 'order-1' : 'contents'}><EditField label="Amount (£)" type="number" value={amount} onChange={setAmount} /></div>
             {/* Bug B (UAT 2026-09-10) — replaces the two raw followsPayday/
                 followsCycleStart checkboxes with the exact dropdown
                 built for the creation wizard (Adam's own spec: "remove
@@ -3630,6 +3722,8 @@ function TransferRecurringRow({
                 via local draft state (freqDirty) same as amount/name,
                 rather than writing straight through onUpdate on every
                 change; only commits when Save below is pressed. */}
+            {(!wide || detailsOpen) && (
+            <div className={wide ? 'order-4' : 'contents'}>
             <TransferFrequencySelect
               choice={freqChoice}
               intervalWeeks={intervalWeeks}
@@ -3638,11 +3732,14 @@ function TransferRecurringRow({
               onIntervalWeeksChange={setIntervalWeeks}
               onAnchorDateChange={setAnchorDate}
             />
+            </div>
+            )}
             {/* UAT 2026-09-08 (followup-confirm-recurring-transfer note) —
                 was a bespoke inline text button whose label flip-flopped
                 between "Save amount"/"Save changes"; now the same
                 full-width Save/Cancel pair every other edit form in the
                 app uses, dimmed the same way via the same dirty check. */}
+            <div className={wide ? 'order-6 flex flex-col gap-3' : 'contents'}>
             <FormButtonRow
               onCancel={() => {
                 setAmount(String(template.amount))
@@ -3657,7 +3754,15 @@ function TransferRecurringRow({
               onSave={handleSaveClick}
               saveDisabled={!amountDirty && !locationsDirty && !nameDirty && !freqDirty}
             />
+            {wide && (
+              <button onClick={() => setConfirmingDelete(true)} className="w-full h-11 rounded-full border text-[13px] font-semibold" style={{ borderColor: 'var(--color-track)', color: 'var(--color-negative)' }}>
+                Delete
+              </button>
+            )}
+            </div>
+            <div className={wide ? 'order-5' : 'contents'}>
             <PausedOccurrencesControl
+              defaultExpanded={wide}
               windowDates={windowDates}
               currentlyPaused={currentlyPaused}
               amountForDate={(date) => resolveOccurrenceAmount(template, date)}
@@ -3671,7 +3776,23 @@ function TransferRecurringRow({
               onSaveDate={(originalDate, newDate) => onUpdate(applyTemplateSingleOccurrenceDateChange(template, newDate, originalDate))}
               isAdjusted={(originalDate) => templateOccurrenceAdjusted(template, originalDate, payCycle)}
             />
+            </div>
           </div>
+        )}
+        </SheetOnLaptop>
+        )}
+        {confirmingDelete && (
+          <ConfirmModal
+            title={`Delete ${template.name}?`}
+            description="Already-cleared transfers stay in the ledger as historic fact — only future, not-yet-happened ones are removed."
+            tone="danger"
+            onConfirm={() => {
+              setConfirmingDelete(false)
+              setOpen(false)
+              onRemove()
+            }}
+            onCancel={() => setConfirmingDelete(false)}
+          />
         )}
         <SavedFlashOverlay active={flashActive} message={flashMessage} />
       </div>

@@ -3,6 +3,10 @@ import { ChevronDown, ChevronUp, Landmark, PiggyBank, Users, Wallet } from 'luci
 import type { AppDataV2, RecurringTemplate, Transaction, TransferLocation } from '../types/ledger'
 import { isSettled, type TransferDestination, type TransferGroup } from '../lib/transferGroups'
 import { formatCurrency } from '../lib/format'
+import { useWide } from '../lib/useWide'
+
+/** The laptop Transfers table's columns: to, how often, next, amount. Shared with each row (pages/Expenses.tsx). */
+export const TRANSFER_COLUMNS = 'grid grid-cols-[minmax(160px,1.6fr)_minmax(110px,1.2fr)_76px_104px] items-center gap-3'
 
 // Transactions → Transfers: one tile per From location in a single row
 // that scrolls sideways, and the selected location's transfers in a panel
@@ -83,8 +87,10 @@ export function TransferFromTiles({ groups, data, renderRecurring, renderOneOff,
   const [clearedOpen, setClearedOpen] = useState(false)
   const rowRef = useRef<HTMLDivElement>(null)
   const tileRefs = useRef(new Map<string, HTMLButtonElement>())
+  const wide = useWide()
 
-  const selected = groups.find((g) => g.key === selectedKey) ?? null
+  // Laptop: one From is always selected — the first until another is picked — so the table is never empty.
+  const selected = groups.find((g) => g.key === selectedKey) ?? (wide ? groups[0] ?? null : null)
 
   useEffect(() => {
     if (!revealId) return
@@ -111,6 +117,109 @@ export function TransferFromTiles({ groups, data, renderRecurring, renderOneOff,
   const pendingOneOffs = selected ? selected.oneOffs.filter((t) => !isSettled(t.date, t.status === 'cleared')) : []
   const settledOneOffs = selected ? selected.oneOffs.filter((t) => isSettled(t.date, t.status === 'cleared')) : []
   const legend = selected ? selected.recurringByDestination : []
+
+  // Laptop (lib/laptop.ts): the From tiles as a grid, then the selected
+  // From's transfers as one table — recurring, then one-off, with cleared
+  // one-offs folded — each row opening in the docked panel.
+  if (wide) {
+    const heading = 'px-3.5 pt-3.5 pb-1.5 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]'
+    return (
+      <div className="flex flex-col gap-5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4" role="tablist" aria-label="Transfers by where the money comes from">
+          {groups.map((g) => {
+            const isSel = g.key === selected?.key
+            const accent = transferLocationColor(g.from, data)
+            const count = g.recurring.length + g.oneOffs.length
+            return (
+              <button
+                key={g.key}
+                role="tab"
+                aria-selected={isSel}
+                onClick={() => {
+                  setClearedOpen(false)
+                  setSelectedKey(g.key)
+                }}
+                className="rounded-[18px] p-4 flex flex-col gap-2 text-left border"
+                style={{ background: isSel ? 'var(--color-surface-raised)' : 'var(--color-surface)', borderColor: isSel ? 'var(--color-coral)' : 'var(--color-track)' }}
+              >
+                <span className="flex items-center gap-2.5">
+                  <span className="w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0" style={{ background: accent }}>
+                    <LocationIcon location={g.from} size={16} />
+                  </span>
+                  <span className="text-xs tracking-[0.08em] uppercase text-[var(--color-ink-muted)]">{KIND_LABEL[g.from.type]}</span>
+                </span>
+                <span className="text-base font-semibold text-[var(--color-ink)] break-words">{g.label}</span>
+                <span className="text-[13px] text-[var(--color-ink-muted)]">
+                  {count} transfer{count === 1 ? '' : 's'}
+                </span>
+                {g.perCycleTotal > 0 ? (
+                  <span className="font-mono text-lg font-semibold text-[var(--color-ink)]">
+                    £{formatCurrency(g.perCycleTotal)} <span className="font-body text-xs font-normal text-[var(--color-ink-muted)]">this cycle</span>
+                  </span>
+                ) : (
+                  <span className="font-mono text-lg font-semibold text-[var(--color-ink-muted)]">
+                    — <span className="font-body text-xs font-normal">{g.recurring.length > 0 ? 'none due this cycle' : 'one-off only'}</span>
+                  </span>
+                )}
+                <DestinationBar destinations={g.recurringByDestination} colorOf={colorOf} />
+              </button>
+            )
+          })}
+        </div>
+
+        {selected && (
+          <section aria-label={`From ${selected.label}`} className="rounded-[20px] px-2 pt-4 pb-2 flex flex-col gap-1" style={{ background: 'var(--color-surface)' }}>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3.5 pb-3">
+              <h2 className="font-display text-xl font-semibold text-[var(--color-ink)] flex-1">From {selected.label}</h2>
+              {legend.map((d) => (
+                <span key={d.key} className="flex items-center gap-1.5 text-xs text-[var(--color-ink-muted)]">
+                  <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: colorOf(d) }} />
+                  {d.label} <span className="font-mono">£{formatCurrency(d.amount)}</span>
+                </span>
+              ))}
+            </div>
+            <div className={`${TRANSFER_COLUMNS} px-3.5 py-2 text-xs font-semibold tracking-[0.06em] whitespace-nowrap text-[var(--color-ink-muted)]`}>
+              <span>TO</span>
+              <span>HOW OFTEN</span>
+              <span>NEXT</span>
+              <span className="text-right">AMOUNT</span>
+            </div>
+            {selected.recurring.length > 0 && (
+              <>
+                <div className={heading}>
+                  RECURRING · {selected.recurring.length}
+                  {selected.perCycleTotal > 0 && <span className="tracking-normal"> · £{formatCurrency(selected.perCycleTotal)} this cycle</span>}
+                </div>
+                {selected.recurring.map((t) => (
+                  <div key={t.id}>{renderRecurring(t, destColor(t.transferTo))}</div>
+                ))}
+              </>
+            )}
+            {selected.oneOffs.length > 0 && (
+              <>
+                <div className={heading}>ONE-OFF</div>
+                {pendingOneOffs.map((t) => (
+                  <div key={t.id}>{renderOneOff(t, destColor(t.toLocation))}</div>
+                ))}
+                {settledOneOffs.length > 0 && (
+                  <>
+                    <button onClick={() => setClearedOpen((o) => !o)} className="flex items-center gap-2 mx-1.5 mt-1 h-11 px-3.5 rounded-2xl text-[13px] font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }} aria-expanded={clearedOpen}>
+                      {clearedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      Cleared
+                      <span className="font-medium text-[var(--color-ink-muted)]">
+                        · {settledOneOffs.length} · £{formatCurrency(settledOneOffs.reduce((n, t) => n + t.amount, 0))}
+                      </span>
+                    </button>
+                    {clearedOpen && settledOneOffs.map((t) => <div key={t.id}>{renderOneOff(t, destColor(t.toLocation))}</div>)}
+                  </>
+                )}
+              </>
+            )}
+          </section>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div>
