@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useWide } from '../lib/useWide'
 import { formatCurrency } from '../lib/format'
 import { toLocalIsoDate, todayIso } from '../lib/date'
 import { useNavigate } from 'react-router-dom'
@@ -91,6 +92,9 @@ export function Scenarios() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [confirmingRemoveScenarioId, setConfirmingRemoveScenarioId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'personal' | 'household'>('personal')
+  // Laptop (lib/laptop.ts): which scenario the right-hand detail shows — the first until another is picked.
+  const wide = useWide()
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const me = data.people.find((p) => p.id === data.primaryPersonId) ?? data.people[0]
   const allBills = combineBillsWithLoans(data.bills, data.loans)
@@ -195,6 +199,220 @@ export function Scenarios() {
     includedScenarios.length > 0 && purchasePayCycle
       ? computePurchaseImpactsForScenarios(ledgerData, ledgerData.primaryPersonId, purchasePayCycle, includedScenarios)
       : []
+
+  // Laptop (lib/laptop.ts): the combined view across the top; the scenarios
+  // as cards on the left, each with its own "Include in combined view"; the
+  // selected one on the right — its actions and the full impact summary.
+  // Creating or editing a scenario uses the same ScenarioForm, in that space.
+  if (wide) {
+    const selected = data.scenarios.find((sc) => sc.id === selectedId) ?? data.scenarios[0]
+    const selectedImpact = selected ? getImpact(selected) : null
+    const headline = (impact: ScenarioImpact | null): { text: string; good: boolean } => {
+      if (!impact) return { text: '', good: true }
+      if (impact.monthlyImpact !== 0) return { text: `${impact.monthlyImpact > 0 ? '+' : '-'}£${formatCurrency(Math.abs(impact.monthlyImpact))} a month`, good: impact.monthlyImpact > 0 }
+      if (impact.oneOffCashImpact !== 0) return { text: `${impact.oneOffCashImpact > 0 ? '+' : '-'}£${formatCurrency(Math.abs(impact.oneOffCashImpact))} one-off`, good: impact.oneOffCashImpact > 0 }
+      const sooner = Math.max(0, ...impact.debtImpacts.map((d) => d.totalMonthsSaved))
+      if (sooner > 0) return { text: `${monthsLabel(sooner)} sooner`, good: true }
+      return { text: 'No change', good: true }
+    }
+    const editing = creating || (selected && editingId === selected.id)
+    return (
+      <div className="px-10 pt-8 pb-4 flex flex-col gap-6">
+        <header className="flex flex-wrap items-center gap-3">
+          <h1 className="font-display text-3xl font-semibold text-[var(--color-ink)] flex-1">What-if</h1>
+          {hasJointItem && (
+            <div role="group" aria-label="View" className="flex gap-1.5 p-1 rounded-full" style={{ background: 'var(--color-bg-elevated)' }}>
+              {(['personal', 'household'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setViewMode(mode)}
+                  aria-pressed={viewMode === mode}
+                  className="h-9 px-4 rounded-full text-[13px] font-semibold capitalize"
+                  style={{ background: viewMode === mode ? 'var(--color-coral)' : 'transparent', color: viewMode === mode ? '#fff' : 'var(--color-ink-muted)' }}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          )}
+          <button onClick={() => { setEditingId(null); setCreating(true) }} className="h-11 px-[18px] rounded-full text-[13px] font-semibold text-white" style={{ background: 'var(--color-coral)' }}>
+            + New scenario
+          </button>
+        </header>
+
+        {combinedImpact && (
+          <section aria-label="Combined" className="rounded-[20px] p-5 flex flex-col gap-3.5 border" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-coral)' }}>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Layers size={18} style={{ color: 'var(--color-coral)' }} />
+              <h2 className="font-display text-xl font-semibold text-[var(--color-ink)] flex-1">
+                Combined · {includedScenarios.length} scenario{includedScenarios.length === 1 ? '' : 's'}
+              </h2>
+              <span className="text-[13px] text-[var(--color-ink-muted)]">{includedScenarios.map((sc) => sc.name).join(' + ')}</span>
+            </div>
+            <ImpactSummary impact={combinedImpact} viewerId={viewMode === 'personal' ? me?.id : undefined} purchases={combinedPurchases} laptop combined />
+          </section>
+        )}
+
+        {data.scenarios.length === 0 && !creating ? (
+          <p className="text-sm text-[var(--color-ink-muted)] text-center py-10">
+            No scenarios yet. Try modelling something like selling the car and putting the money toward a loan, or
+            clearing a loan completely to see what it frees up.
+          </p>
+        ) : (
+          <div className="flex gap-6 items-start">
+            <div className="w-[300px] shrink-0 flex flex-col gap-3">
+              <div className="text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">SCENARIOS</div>
+              {data.scenarios.map((sc) => {
+                const on = !creating && sc.id === selected?.id
+                const h = headline(getImpact(sc))
+                return (
+                  <div key={sc.id} className="rounded-[18px] p-4 flex flex-col gap-1.5 border" style={{ background: on ? 'var(--color-surface-raised)' : 'var(--color-surface)', borderColor: on ? 'var(--color-coral)' : 'var(--color-track)' }}>
+                    <button onClick={() => { setCreating(false); setEditingId(null); setSelectedId(sc.id) }} aria-pressed={on} className="text-left flex flex-col gap-1">
+                      <span className="text-base font-semibold text-[var(--color-ink)] break-words">{sc.name}</span>
+                      <span className="text-[13px] text-[var(--color-ink-muted)]">
+                        {sc.actions.length} action{sc.actions.length === 1 ? '' : 's'}
+                      </span>
+                      <span className="font-mono text-[15px]" style={{ color: h.good ? 'var(--color-positive)' : 'var(--color-ink)' }}>{h.text}</span>
+                    </button>
+                    <label className="flex items-center gap-2 mt-1 pt-2.5 border-t text-[13px] text-[var(--color-ink-muted)] cursor-pointer" style={{ borderColor: 'var(--color-track)' }}>
+                      <input type="checkbox" checked={sc.includeInCumulative} onChange={(e) => updateScenario(sc.id, { includeInCumulative: e.target.checked })} className="w-4 h-4 accent-[var(--color-coral)]" />
+                      Include in combined view
+                    </label>
+                  </div>
+                )
+              })}
+            </div>
+
+            <section aria-label={editing ? 'Scenario form' : selected?.name} className="flex-1 min-w-0 rounded-[20px] p-5 flex flex-col gap-4" style={{ background: 'var(--color-surface)' }}>
+              {creating ? (
+                <ScenarioForm
+                  people={data.people}
+                  onCancel={() => setCreating(false)}
+                  onSave={(sc) => {
+                    addScenario(sc)
+                    setCreating(false)
+                  }}
+                />
+              ) : selected && editingId === selected.id ? (
+                <ScenarioForm
+                  key={selected.id}
+                  people={data.people}
+                  initial={selected}
+                  onCancel={() => setEditingId(null)}
+                  onSave={(sc) => {
+                    updateScenario(selected.id, sc)
+                    setEditingId(null)
+                  }}
+                />
+              ) : selected ? (
+                <>
+                  <div className="flex items-center gap-2.5">
+                    <h2 className="font-display text-[22px] font-semibold text-[var(--color-ink)] flex-1 break-words">{selected.name}</h2>
+                    <button onClick={() => setEditingId(selected.id)} className="h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
+                      Edit
+                    </button>
+                    <button onClick={() => setConfirmingRemoveScenarioId(selected.id)} className="h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
+                      Delete
+                    </button>
+                  </div>
+                  <div className="text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">ACTIONS</div>
+                  <div className="flex flex-col gap-2">
+                    {selected.actions.map((action) => (
+                      <div key={action.id} className="rounded-2xl px-3.5 py-3" style={{ background: 'var(--color-bg-elevated)' }}>
+                        {renderAction(action)}
+                      </div>
+                    ))}
+                  </div>
+                  {selectedImpact && (
+                    <>
+                      <div className="text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">IMPACT</div>
+                      <ImpactSummary
+                        impact={selectedImpact}
+                        viewerId={viewMode === 'personal' ? me?.id : undefined}
+                        onMakeReal={(li) =>
+                          makeImpactReal(
+                            li,
+                            selected.actions.find(
+                              (a) => (a.type === 'loan_overpayment' && a.linkedTargetId === li.loanId) || (a.type === 'pay_off_loan' && a.targets?.some((t) => t.id === li.loanId)),
+                            )?.date,
+                          )
+                        }
+                        purchases={getPurchases(selected)}
+                        laptop
+                      />
+                    </>
+                  )}
+                </>
+              ) : null}
+            </section>
+          </div>
+        )}
+
+        {confirmingRemoveScenarioId &&
+          (() => {
+            const target = data.scenarios.find((sc) => sc.id === confirmingRemoveScenarioId)
+            if (!target) return null
+            return (
+              <ConfirmModal
+                title={`Delete "${target.name}"?`}
+                description="This can't be undone."
+                confirmLabel="Delete"
+                tone="danger"
+                onConfirm={() => {
+                  removeScenario(target.id)
+                  setConfirmingRemoveScenarioId(null)
+                  if (selectedId === target.id) setSelectedId(null)
+                }}
+                onCancel={() => setConfirmingRemoveScenarioId(null)}
+              />
+            )
+          })()}
+      </div>
+    )
+  }
+
+  // One action of a scenario: what it is, what it targets, and its amount — the same line on the phone card and in the laptop detail.
+  function renderAction(action: Scenario['actions'][number]) {
+    return (
+      <div key={action.id} className="flex items-start justify-between text-sm gap-3">
+        <span className="text-[var(--color-ink-muted)]">
+          {action.name || ACTION_LABELS[action.type]}
+          {(() => {
+            const targets = resolveTargets(action)
+            if (targets.length === 0) return null
+            const parts = targets.map((t) => {
+              const name = t.kind === 'loan' ? data.loans.find((l) => l.id === t.id)?.name : data.creditCards.find((c) => c.id === t.id)?.name
+              const label = name ?? (t.kind === 'loan' ? 'loan' : 'credit card')
+              return t.amount != null ? `${label} (£${formatCurrency(t.amount)})` : label
+            })
+            return ` → ${parts.join(' → ')}`
+          })()}
+          {action.type === 'purchase' && action.purchaseDate ? (
+            <span className="block text-xs text-[var(--color-ink-faint)] mt-0.5">{formatFullDate(action.purchaseDate)}</span>
+          ) : null}
+          {REQUIRES_SAVINGS_POT_TARGET.includes(action.type) ? (
+            <span className="block text-xs text-[var(--color-ink-faint)] mt-0.5">
+              {data.savingsPots.find((p) => p.id === action.savingsPotId)?.name ?? 'Savings pot'} ·{' '}
+              {action.type === 'savings_pot_recurring_deposit_change' ? 'from ' : ''}
+              {action.date ? formatFullDate(action.date) : 'today'}
+            </span>
+          ) : null}
+          {action.type === 'new_finance_agreement' && action.termMonths ? (
+            <span className="block text-xs text-[var(--color-ink-faint)] mt-0.5">
+              £{formatCurrency(action.borrowAmount ?? 0)} at {action.aprPercent ?? 0}% APR over {action.termMonths}mo · total £
+              {formatCurrency(action.totalRepayable ?? 0)}
+            </span>
+          ) : null}
+        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="font-mono text-[var(--color-ink)]">£{formatCurrency(action.value)}</span>
+          {(action.type === 'new_bill' || action.type === 'new_finance_agreement') && (
+            <ConvertButtons action={action} people={data.people} />
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-md mx-auto px-4 pt-6">
@@ -323,45 +541,7 @@ export function Scenarios() {
 
               {isOpen && impact && (
                 <div className="mt-4 pt-4 border-t flex flex-col gap-3" style={{ borderColor: 'var(--color-track)' }}>
-                  {scenario.actions.map((action) => (
-                    <div key={action.id} className="flex items-start justify-between text-sm gap-3">
-                      <span className="text-[var(--color-ink-muted)]">
-                        {action.name || ACTION_LABELS[action.type]}
-                        {(() => {
-                          const targets = resolveTargets(action)
-                          if (targets.length === 0) return null
-                          const parts = targets.map((t) => {
-                            const name = t.kind === 'loan' ? data.loans.find((l) => l.id === t.id)?.name : data.creditCards.find((c) => c.id === t.id)?.name
-                            const label = name ?? (t.kind === 'loan' ? 'loan' : 'credit card')
-                            return t.amount != null ? `${label} (£${formatCurrency(t.amount)})` : label
-                          })
-                          return ` → ${parts.join(' → ')}`
-                        })()}
-                        {action.type === 'purchase' && action.purchaseDate ? (
-                          <span className="block text-xs text-[var(--color-ink-faint)] mt-0.5">{formatFullDate(action.purchaseDate)}</span>
-                        ) : null}
-                        {REQUIRES_SAVINGS_POT_TARGET.includes(action.type) ? (
-                          <span className="block text-xs text-[var(--color-ink-faint)] mt-0.5">
-                            {data.savingsPots.find((p) => p.id === action.savingsPotId)?.name ?? 'Savings pot'} ·{' '}
-                            {action.type === 'savings_pot_recurring_deposit_change' ? 'from ' : ''}
-                            {action.date ? formatFullDate(action.date) : 'today'}
-                          </span>
-                        ) : null}
-                        {action.type === 'new_finance_agreement' && action.termMonths ? (
-                          <span className="block text-xs text-[var(--color-ink-faint)] mt-0.5">
-                            £{formatCurrency(action.borrowAmount ?? 0)} at {action.aprPercent ?? 0}% APR over {action.termMonths}mo · total £
-                            {formatCurrency(action.totalRepayable ?? 0)}
-                          </span>
-                        ) : null}
-                      </span>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="font-mono text-[var(--color-ink)]">£{formatCurrency(action.value)}</span>
-                        {(action.type === 'new_bill' || action.type === 'new_finance_agreement') && (
-                          <ConvertButtons action={action} people={data.people} />
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                  {scenario.actions.map((action) => renderAction(action))}
 
                   <div className="h-px my-1" style={{ background: 'var(--color-track)' }} />
 
@@ -544,12 +724,138 @@ function ImpactSummary({
   viewerId,
   onMakeReal,
   purchases = [],
+  laptop = false,
+  combined = false,
 }: {
   impact: ScenarioImpact
   viewerId?: string
   onMakeReal?: (li: LoanImpact) => void
   purchases?: PurchaseImpact[]
+  /** The laptop form (lib/laptop.ts): "Impact on available cash" becomes the stat tiles across the top — the same figures and words — and every other card sits in a two-column grid below them. */
+  laptop?: boolean
+  /** Laptop, the combined view: a third tile for when the debts these scenarios touch are paid off. */
+  combined?: boolean
 }) {
+  const [breakdownOpen, setBreakdownOpen] = useState(false)
+  if (laptop) {
+    const sign = (n: number) => (n > 0 ? '+' : n < 0 ? '-' : '')
+    // "-£49.37", never "£-49.37".
+    const money = (n: number) => `${n < 0 ? '-' : ''}£${formatCurrency(Math.abs(n))}`
+    const lastDate = (dates: (string | null)[]) => dates.filter((d): d is string => !!d).sort().at(-1) ?? null
+    const debtNow = lastDate(impact.debtImpacts.map((d) => d.finishDateNow))
+    const allCleared = impact.debtImpacts.length > 0 && impact.debtImpacts.every((d) => d.fullyPaidOff)
+    const debtAfter = allCleared ? null : lastDate(impact.debtImpacts.map((d) => d.finishDateAfterAll))
+    const monthsSooner = Math.max(0, ...impact.debtImpacts.map((d) => d.totalMonthsSaved))
+    const tile = (label: string, body: ReactNode, note: ReactNode) => (
+      <div className="rounded-2xl p-4 flex flex-col gap-1" style={{ background: 'var(--color-bg-elevated)' }}>
+        <span className="text-xs text-[var(--color-ink-muted)]">{label}</span>
+        <span className="font-mono text-sm text-[var(--color-ink-muted)]">{body}</span>
+        <span className="text-xs leading-relaxed">{note}</span>
+      </div>
+    )
+    const big = (v: string) => <span className="text-lg font-semibold text-[var(--color-ink)]">{v}</span>
+    const cards = [
+      ...purchases.map((p) => <PurchaseCard key={p.actionId} purchase={p} />),
+    ]
+    return (
+      <div className="flex flex-col gap-3">
+        <div className={`grid gap-3 ${combined && impact.debtImpacts.length > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          {tile(
+            'Available each month',
+            impact.monthlyImpact !== 0 ? (
+              <>
+                {money(impact.monthlyAvailableBefore)} → {big(money(impact.monthlyAvailableAfter))}
+              </>
+            ) : (
+              big(money(impact.monthlyAvailableBefore))
+            ),
+            impact.monthlyImpact !== 0 ? (
+              <span style={{ color: impact.monthlyImpact > 0 ? 'var(--color-positive)' : 'var(--color-negative)' }}>
+                {sign(impact.monthlyImpact)}£{formatCurrency(Math.abs(impact.monthlyImpact))} a month
+              </span>
+            ) : (
+              <span className="text-[var(--color-ink-muted)]">No monthly change</span>
+            ),
+          )}
+          {tile(
+            'One-off cash',
+            big(impact.oneOffCashImpact !== 0 ? `${sign(impact.oneOffCashImpact)}£${formatCurrency(Math.abs(impact.oneOffCashImpact))}` : '£0.00'),
+            impact.oneOffCashImpact !== 0 ? (
+              <span className="text-[var(--color-ink-muted)]">
+                A single payment, not a monthly change, so it's kept separate from the figures above
+                {impact.loanImpacts.some((li) => li.kind === 'payoff') ? " — whatever's left after every linked loan target in this scenario has taken what it needs." : '.'}
+              </span>
+            ) : (
+              <span className="text-[var(--color-ink-muted)]">No one-off cash change</span>
+            ),
+          )}
+          {combined &&
+            impact.debtImpacts.length > 0 &&
+            tile(
+              'Debt-free',
+              <>
+                {debtNow ? formatFullDate(debtNow) : '—'} → {big(allCleared ? 'Now' : debtAfter ? formatFullDate(debtAfter) : '—')}
+              </>,
+              <span className="text-[var(--color-ink-muted)]">
+                {impact.debtImpacts.map((d) => d.targetName).join(', ')}
+                {monthsSooner > 0 ? ` · up to ${monthsLabel(monthsSooner)} sooner` : ''}
+              </span>,
+            )}
+        </div>
+        {/* The combined view keeps its three figures in view and the full breakdown one click away. */}
+        {combined && (
+          <button onClick={() => setBreakdownOpen(!breakdownOpen)} aria-expanded={breakdownOpen} className="self-start h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)] flex items-center gap-1.5" style={{ background: 'var(--color-surface-raised)' }}>
+            {breakdownOpen ? 'Hide the full breakdown' : 'Show the full breakdown'}
+            {breakdownOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+        )}
+        {(!combined || breakdownOpen) && (
+        <div className="grid grid-cols-2 gap-3 items-start">
+          {cards}
+          {impact.salaryChangeImpact && (
+            <div className="rounded-xl p-3" style={{ background: 'var(--color-bg-elevated)' }}>
+              <p className="text-sm font-medium text-[var(--color-ink)] mb-2">{impact.salaryChangeImpact.personName}'s salary change</p>
+              <div className="flex justify-between text-xs text-[var(--color-ink-muted)]">
+                <span>Net pay now</span>
+                <span className="font-mono">£{formatCurrency(impact.salaryChangeImpact.oldNetMonthly)}/mo</span>
+              </div>
+              <div className="flex justify-between text-xs text-[var(--color-ink-muted)]">
+                <span>Net pay after</span>
+                <span className="font-mono">£{formatCurrency(impact.salaryChangeImpact.newNetMonthly)}/mo</span>
+              </div>
+              {viewerId && impact.salaryChangeImpact.personId !== viewerId && (
+                <p className="text-[11px] text-[var(--color-ink-faint)] mt-2 leading-relaxed">This doesn't count toward your own available cash below, since it's not your salary.</p>
+              )}
+            </div>
+          )}
+          {impact.loanImpacts
+            .filter((li) => li.kind === 'exclude')
+            .map((li) => (
+              <div key={`${li.targetKind}-${li.loanId}-exclude`} className="rounded-xl p-3" style={{ background: 'var(--color-bg-elevated)' }}>
+                <p className="text-sm font-medium text-[var(--color-ink)] mb-2">
+                  {li.loanName}
+                  <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--color-ink-faint)' }}>
+                    Excluded
+                  </span>
+                </p>
+                <p className="text-xs text-[var(--color-ink-muted)]">Balance unchanged (£{formatCurrency(li.originalRemaining)}) — this just stops counting toward your monthly outgoings.</p>
+                {li.originalMonthlyCostForPerson !== li.newMonthlyCostForPerson && (
+                  <CardRow label={viewerId ? 'Your payment' : 'Household payment'} value={`£${formatCurrency(li.originalMonthlyCostForPerson)} → £${formatCurrency(li.newMonthlyCostForPerson)}/mo`} color={'var(--color-positive)'} />
+                )}
+              </div>
+            ))}
+          {impact.debtImpacts.map((di) => (
+            <DebtCard key={`${di.targetKind}-${di.targetId}`} impact={di} viewerId={viewerId} onMakeReal={onMakeReal} loanImpacts={impact.loanImpacts} />
+          ))}
+          {impact.savingsPotImpacts.map((si) => (
+            <SavingsPotCard key={si.savingsPotId} impact={si} />
+          ))}
+        </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-3">
       {purchases.map((p) => (
