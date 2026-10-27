@@ -6,6 +6,8 @@ import { useLedgerData } from '../context/LedgerContext'
 import { EditField } from '../components/EditField'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { CategoryPicker } from '../components/CategoryPicker'
+import { SheetOnLaptop } from '../components/RowSheet'
+import { useWide } from '../lib/useWide'
 import { SwipeToDelete } from '../components/SwipeToDelete'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
 import { scheduledDepositDates, depositOccurrencePreviews, setPausedDeposits, resolveSavingsPotDepositOccurrenceAmount, applySavingsPotSingleDepositAmountChange, savingsPotDepositOccurrenceAdjusted } from '../lib/savingsPotLedger'
@@ -308,6 +310,7 @@ function EditSimpleTransactionForm({
 }
 
 export function Expenses() {
+  const wide = useWide()
   const {
     data,
     addAdHocTransaction,
@@ -464,9 +467,10 @@ export function Expenses() {
   return (
     /* One expanded row at a time; changing pill starts with every row closed. */
     <OneOpenRowProvider key={mode}>
-    <div className="max-w-md mx-auto px-4 pt-6">
+    {/* Laptop (lib/laptop.ts): one wider column; add and edit forms open in the right-hand panel (SheetOnLaptop). */}
+    <div className={wide ? 'max-w-[1040px] mx-auto px-10 pt-8' : 'max-w-md mx-auto px-4 pt-6'}>
       <header className="mb-6 flex items-center justify-between">
-        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Transactions</h1>
+        <h1 className={`font-display font-semibold text-[var(--color-ink)] ${wide ? 'text-3xl' : 'text-2xl'}`}>Transactions</h1>
         <button
           onClick={() => setAdding(true)}
           className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -495,30 +499,32 @@ export function Expenses() {
       {mode === 'transactions' ? (
         <>
           {adding && (
-            <ExpenseForm
-              onCancel={() => setAdding(false)}
-              onSave={(entry) => {
-                const id =
-                  entry.type === 'expense' && entry.paymentMethod === 'card' && entry.creditCardId
-                    ? logCreditCardSpend(entry.creditCardId, entry.amount, entry.date, entry.note || undefined)
-                    : addAdHocTransaction({
-                        type: entry.type,
-                        amount: entry.amount,
-                        date: entry.date,
-                        categoryId: entry.categoryId,
-                        paymentMethod: entry.paymentMethod,
-                        personId: entry.personId,
-                        note: entry.note || undefined,
-                        location: entry.location,
-                        potId: entry.potId,
-                        roundUpSkipped: entry.roundUpSkipped,
-                      })
-                setJustCreatedTransactionId(id)
-                setAdding(false)
-              }}
-              onAddCategory={addCategory}
-              data={data}
-            />
+            <SheetOnLaptop title="Add a transaction" onClose={() => setAdding(false)}>
+              <ExpenseForm
+                onCancel={() => setAdding(false)}
+                onSave={(entry) => {
+                  const id =
+                    entry.type === 'expense' && entry.paymentMethod === 'card' && entry.creditCardId
+                      ? logCreditCardSpend(entry.creditCardId, entry.amount, entry.date, entry.note || undefined)
+                      : addAdHocTransaction({
+                          type: entry.type,
+                          amount: entry.amount,
+                          date: entry.date,
+                          categoryId: entry.categoryId,
+                          paymentMethod: entry.paymentMethod,
+                          personId: entry.personId,
+                          note: entry.note || undefined,
+                          location: entry.location,
+                          potId: entry.potId,
+                          roundUpSkipped: entry.roundUpSkipped,
+                        })
+                  setJustCreatedTransactionId(id)
+                  setAdding(false)
+                }}
+                onAddCategory={addCategory}
+                data={data}
+              />
+            </SheetOnLaptop>
           )}
 
           <MonthCollapsedTransactionList
@@ -543,18 +549,20 @@ export function Expenses() {
       ) : mode === 'recurring' ? (
         <>
           {adding && (
-            <RecurringTransactionForm
-              data={data}
-              categories={visibleCategoriesFor(data)}
-              defaultPersonId={data.primaryPersonId}
-              onAddCategory={addCategory}
-              onCancel={() => setAdding(false)}
-              onSave={(template) => {
-                const id = addRecurringTemplate(template)
-                setJustCreatedRecurringId(id)
-                setAdding(false)
-              }}
-            />
+            <SheetOnLaptop title="Add a recurring transaction" onClose={() => setAdding(false)}>
+              <RecurringTransactionForm
+                data={data}
+                categories={visibleCategoriesFor(data)}
+                defaultPersonId={data.primaryPersonId}
+                onAddCategory={addCategory}
+                onCancel={() => setAdding(false)}
+                onSave={(template) => {
+                  const id = addRecurringTemplate(template)
+                  setJustCreatedRecurringId(id)
+                  setAdding(false)
+                }}
+              />
+            </SheetOnLaptop>
           )}
 
           <div className="flex flex-col gap-2">
@@ -605,20 +613,22 @@ export function Expenses() {
       ) : mode === 'transfer' ? (
         <>
           {adding && (
-            <TransferForm
-              data={data}
-              onCancel={() => setAdding(false)}
-              onSaveOneOff={(from, to, amount, date, note) => {
-                const id = logTransfer(from, to, amount, date, note)
-                setJustCreatedTransferId(id)
-                setAdding(false)
-              }}
-              onSaveRecurring={(template) => {
-                const id = addRecurringTransfer(template)
-                setJustCreatedTransferId(id)
-                setAdding(false)
-              }}
-            />
+            <SheetOnLaptop title="Add a transfer" onClose={() => setAdding(false)}>
+              <TransferForm
+                data={data}
+                onCancel={() => setAdding(false)}
+                onSaveOneOff={(from, to, amount, date, note) => {
+                  const id = logTransfer(from, to, amount, date, note)
+                  setJustCreatedTransferId(id)
+                  setAdding(false)
+                }}
+                onSaveRecurring={(template) => {
+                  const id = addRecurringTransfer(template)
+                  setJustCreatedTransferId(id)
+                  setAdding(false)
+                }}
+              />
+            </SheetOnLaptop>
           )}
 
           <TransferFromTiles
@@ -674,31 +684,33 @@ export function Expenses() {
               every other pill; there is deliberately no always-expanded
               per-loan editor sitting at the top of the page any more. */}
           {adding && (
-            <OverpaymentCreateForm
-              loans={activeLoans}
-              cards={activeCards}
-              pots={data.pots}
-              prefill={recurringOverpaymentPrefill}
-              onCancel={() => {
-                setAdding(false)
-                setRecurringOverpaymentPrefill(null)
-              }}
-              onSaveLoan={(loanId, amount, date, note, recastMode) => {
-                logLoanOverpayment(loanId, amount, date, note, recastMode)
-                setAdding(false)
-                setRecurringOverpaymentPrefill(null)
-              }}
-              onSaveCard={(cardId, amount, date, note) => {
-                logCreditCardLumpPayment(cardId, amount, date, note)
-                setAdding(false)
-                setRecurringOverpaymentPrefill(null)
-              }}
-              onSaveRecurring={(loanId, recurringOverpayment) => {
-                updateLoan(loanId, { recurringOverpayment })
-                setAdding(false)
-                setRecurringOverpaymentPrefill(null)
-              }}
-            />
+            <SheetOnLaptop title="Add an overpayment" onClose={() => setAdding(false)}>
+              <OverpaymentCreateForm
+                loans={activeLoans}
+                cards={activeCards}
+                pots={data.pots}
+                prefill={recurringOverpaymentPrefill}
+                onCancel={() => {
+                  setAdding(false)
+                  setRecurringOverpaymentPrefill(null)
+                }}
+                onSaveLoan={(loanId, amount, date, note, recastMode) => {
+                  logLoanOverpayment(loanId, amount, date, note, recastMode)
+                  setAdding(false)
+                  setRecurringOverpaymentPrefill(null)
+                }}
+                onSaveCard={(cardId, amount, date, note) => {
+                  logCreditCardLumpPayment(cardId, amount, date, note)
+                  setAdding(false)
+                  setRecurringOverpaymentPrefill(null)
+                }}
+                onSaveRecurring={(loanId, recurringOverpayment) => {
+                  updateLoan(loanId, { recurringOverpayment })
+                  setAdding(false)
+                  setRecurringOverpaymentPrefill(null)
+                }}
+              />
+            </SheetOnLaptop>
           )}
 
           {activeLoans.some((l) => l.recurringOverpayment) && (
@@ -759,6 +771,12 @@ export function Expenses() {
 // ── Ad-hoc transaction row — swipe to delete, tap to expand/edit (same
 // interaction pattern RecurringTransactionRow already uses below, and now
 // Savings/Joint too — see SavingsTransactionRowItem/JointTransactionRowItem). ──
+/** "9 Oct" — the laptop row's date column. */
+function formatDayMonthShort(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
+
 function AdHocTransactionRow({
   t,
   data,
@@ -792,10 +810,33 @@ function AdHocTransactionRow({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  const wide = useWide()
+  const title = t.note || category?.name || (t.type === 'bonus' ? 'Bonus' : t.type === 'income' ? 'Income' : 'Expense')
 
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={t.note || category?.name || 'this entry'}>
-      <div className="relative rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)' }}>
+      <div className="relative rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', outline: wide && isEditing ? '1px solid var(--color-coral)' : 'none' }}>
+        {wide ? (
+          // Laptop: the same row as columns — date, name and status, category, paid with, amount.
+          <button onClick={() => setIsEditing((e) => !e)} aria-expanded={isEditing} className="w-full grid grid-cols-[72px_minmax(0,1fr)_140px_170px_110px] items-center gap-4 min-h-[52px] px-4 py-2 text-left text-sm">
+            <span className="text-[13px] text-[var(--color-ink-muted)] tabular-nums">{formatDayMonthShort(t.date)}</span>
+            <span className="flex items-center gap-2.5 min-w-0">
+              <CategoryIcon category={category} />
+              <span className="min-w-0">
+                <span className="block font-medium text-[var(--color-ink)] truncate">{title}</span>
+                {t.status === 'pending' && <span className="block text-[11px] text-[var(--color-ink-muted)]">Pending</span>}
+              </span>
+            </span>
+            <span className="text-[13px] text-[var(--color-ink-muted)] truncate">{category?.name ?? ''}</span>
+            <span className="text-[13px] text-[var(--color-ink-muted)] truncate">
+              {PAYMENT_METHOD_LABELS[t.paymentMethod]}
+              {card ? ` · ${card.name}` : ''}
+            </span>
+            <span className="font-mono font-semibold text-right" style={{ color: isPositive ? 'var(--color-positive)' : 'var(--color-negative)' }}>
+              {isPositive ? '+' : '-'}£{formatCurrency(t.amount)}
+            </span>
+          </button>
+        ) : (
         <button onClick={() => setIsEditing((e) => !e)} className="w-full flex items-center gap-3 p-3 text-left">
           <CategoryIcon category={category} />
           <div className="flex-1 min-w-0">
@@ -812,18 +853,21 @@ function AdHocTransactionRow({
             {isPositive ? '+' : '-'}£{formatCurrency(t.amount)}
           </p>
         </button>
+        )}
         {isEditing && (
-          <EditEntryForm
-            transaction={t}
-            data={data}
-            onAddCategory={onAddCategory}
-            onCancel={() => setIsEditing(false)}
-            onSave={(updates) => {
-              onUpdate(updates)
-              setIsEditing(false)
-              triggerFlash()
-            }}
-          />
+          <SheetOnLaptop title={title} onClose={() => setIsEditing(false)}>
+            <EditEntryForm
+              transaction={t}
+              data={data}
+              onAddCategory={onAddCategory}
+              onCancel={() => setIsEditing(false)}
+              onSave={(updates) => {
+                onUpdate(updates)
+                setIsEditing(false)
+                triggerFlash()
+              }}
+            />
+          </SheetOnLaptop>
         )}
         <SavedFlashOverlay active={flashActive} message={flashMessage} />
       </div>

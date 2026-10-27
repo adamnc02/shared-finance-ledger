@@ -73,3 +73,19 @@ export function OpensSheetIcon() {
   const Icon = useWide() ? PanelRightOpen : PanelBottomOpen
   return <Icon size={16} className="text-[var(--color-ink-muted)] shrink-0" aria-hidden />
 }
+
+/**
+ * On a laptop (lib/laptop.ts), its children in the right-hand RowSheet;
+ * on a phone, its children exactly where they are. For a surface that
+ * opens in place on the phone — an add form at the top of a list, a row's
+ * edit form under the row — so the phone layout stays as it was.
+ */
+export function SheetOnLaptop({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) {
+  const wide = useWide()
+  if (!wide) return <>{children}</>
+  return (
+    <RowSheet title={title} onClose={onClose}>
+      {children}
+    </RowSheet>
+  )
+}
