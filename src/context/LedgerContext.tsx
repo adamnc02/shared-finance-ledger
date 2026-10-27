@@ -1449,3 +1449,8 @@ export function useLedgerData(): LedgerContextValue {
   if (!ctx) throw new Error('useLedgerData must be used within a LedgerProvider')
   return ctx
 }
+
+/** The ledger if there is one around this component, else null — for a shared component that only uses the ledger to refine what it shows (CategoryPicker's laptop shortlist) and must still render on its own, as it does in a component test. */
+export function useOptionalLedgerData(): LedgerContextValue | null {
+  return useContext(LedgerContext)
+}

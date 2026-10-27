@@ -3130,3 +3130,91 @@ app, so white on whatever it holds would be an untested contrast gamble, and an
 outlined pill reads against any background.
 
 The Transactions pill is deliberately NOT badged — only Transfers.
+
+---
+
+## 48. The laptop view
+
+At **1024px wide and 500px tall**, and up, the app is laid out for a laptop. Below that it is the phone
+layout, unchanged. `lib/laptop.ts` holds the rule (`WIDE_QUERY`) and the per-device state;
+`lib/useWide.ts` follows the query live, so resizing a window switches layout without a reload.
+
+> 🚨 **The height clause keeps phones out.** The manifest does not lock orientation, and an iPhone on its
+> side is 844–932px wide but under 500px tall. A width-only query would put a sideways phone into the
+> laptop view.
+
+> 🚨 **The laptop view is layout only.** Every figure it shows comes from the same function the phone
+> calls. The three it adds are built from the engines' own occurrences, never from a headline amount:
+> `lib/billSummary.ts` (Bills' tiles and Next column), `lib/recurringSummary.ts` (Recurring's tiles and
+> Next column) and `lib/overpaymentSummary.ts` (interest saved: the loan schedule run with and without
+> the overpayments, against the nominal loan `loanFinishInfo` uses). Each has a verify script whose
+> control computes the headline-amount way and fails.
+
+### The rail (`components/Rail.tsx`)
+
+The bottom pill becomes a side rail: the app's logo and name, the six tabs, and the current pay cycle
+(from `horizonCycles`, the same bounds Home's "This cycle" uses). The logo is `./icon-192.png` and the
+name is the page's `apple-mobile-web-app-title`, so the one shared file shows each ledger app's own
+artwork and name. It is **expanded by default**; the button at its foot collapses it to icons, whose
+names show in an instant label on hover or focus (`data-tip`, styled in `index.css`).
+
+A collapse is remembered per device in `ledger:laptop-state:v1` as `railExpanded`. 🚨 **Only the button
+writes it; absent means expanded.** A store that writes its default on first load can no longer tell a
+choice from a default. All the ledger apps share one origin, so they share this key on a device —
+harmless for a layout preference, and the reason it must never hold anything else.
+
+### The right-hand panel (`components/RowSheet.tsx`)
+
+What opens as a bottom sheet on the phone opens on a laptop as a panel **docked** in a right-hand column
+of the page (`LaptopPanelLayout`): opening a row narrows the page beside it, the page stays usable (no
+backdrop, so opening another row swaps the panel — `useOneOpenRow`), and the X or Escape closes it.
+`SheetOnLaptop` puts a surface that opens in place on the phone (an add form, a row's edit form) into the
+panel on a laptop and leaves the phone as it was. Every other bottom sheet opens as a centred dialog,
+from one rule in `index.css` whose media query must stay `WIDE_QUERY` word for word.
+
+> 🚨 **A page with a docked panel must narrow without wrapping.** Rows of tiles share the width
+> (Wallet's pay periods are one `grid-flow-col` row) rather than pushing the last tile onto a row of its
+> own. Table cells wrap onto a second line rather than truncating, so a long name stays readable.
+
+A panel reads in the laptop order — the amount, the item's facts, "Edit details" (every other field),
+its upcoming payments already open, then Save and Delete. That order is **CSS `order`** inside the
+existing edit forms (`PeriodEditor`, `BillEditPanel`, `RecurringTransactionEditPanel`, the recurring
+transfer editor): the markup keeps the phone's order, and every field and save path is the phone's.
+
+### The pages
+
+- **Home** — the header holds the horizon (one segmented control), a labelled Filters button and
+  Statement. On the left: the front card, every deck entry as a list (`DeckRowContext` turns each
+  `BankCard` into a row with the same figure the fanned stack shows), and Personal's "in and out" card.
+  On the right: the ledger as one flat table that **never collapses** (Date, Description, Category, Paid
+  from, Amount, Balance), with a Today line and, for Next 3 cycles, a heading per cycle.
+- **Wallet** — Manage people, Pay cycle settings and Rebalance in the header. Only this device's own
+  person's salary is shown, always open, with its pay periods as tiles and History as a button; the
+  salary's end date is in its settings. Savings, Pots, the Joint Account, Pensions and Backup follow as a
+  grid of cards of equal height per row; each item's logging, recurring transfer, ledger and icon are in
+  its panel.
+- **Borrowing** — loan and card tiles; the selected one's upcoming repayments as a table; Calibrate
+  interest, Overpay, Settle and Edit open the panel on that action (`LoanEditPanel`'s `initialAction`).
+- **Bills** — Search, three tiles, and a table with each bill's Next payment.
+- **Transactions** — one-off transactions, Recurring (tiles; going out / coming in / into savings and
+  pots), Transfers (From tiles; the selected From's transfers) and Overpayments (tiles; a card per loan
+  and credit card) as tables. The add form is one page, with the wizard's own state and `commitSave`.
+  Category is buttons — the most used, then More… — wherever one is picked (`CategoryPicker`, ranking
+  through `useOptionalLedgerData` so it still renders outside a provider).
+- **What-if** — the combined view as three figures with its full breakdown one click away; the scenarios
+  as cards with their own "Include in combined view"; the selected one's actions (the phone's
+  `renderAction`) and full impact (`ImpactSummary`'s laptop form keeps every card and line).
+
+> 🚨 **`SwipeToDelete` takes pointer capture only once a drag starts.** Captured on `pointerdown`, a
+> mouse click is delivered to the swipe wrapper instead of the row under the pointer, so clicking a row
+> never opens it. Touch is captured to its target implicitly, which is why phones never showed it. On a
+> laptop its delete button is hidden until a drag starts, so its red edge never shows at the corners of a
+> closed row.
+
+### Checks
+
+`scripts/verify-laptop-state.ts` (the stored state, the breakpoint, the docked panel, the tiles that
+never wrap, the never-collapsing ledger, the swipe capture), `verify-bill-summary.ts`,
+`verify-recurring-summary.ts` and `verify-overpayment-summary.ts`. The phone layout is checked by
+screenshot: build the previous `main` and the branch, and compare every page at 390px pixel for pixel —
+after `document.fonts.ready`, or font-loading timing reads as a difference.

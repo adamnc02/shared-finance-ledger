@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { SheetOnLaptop, RowSheet, LaptopPanelLayout } from '../components/RowSheet'
+import { useWide } from '../lib/useWide'
 import { createPortal } from 'react-dom'
 import { formatCurrency, formatFullDate, formatMonthYear } from '../lib/format'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -148,6 +150,10 @@ function LocationPickerCard({
 }
 
 export function Loans() {
+  const wide = useWide()
+  // Laptop only: the tile whose payments show below, and what the docked panel holds.
+  const [selected, setSelected] = useState<{ kind: 'loan' | 'card'; id: string } | null>(null)
+  const [panel, setPanel] = useState<{ kind: 'loan' | 'card'; id: string; action?: LoanPanelAction } | null>(null)
   const {
     data,
     importGeneration,
@@ -257,6 +263,323 @@ export function Loans() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routerLocation.state])
 
+  function startAddingLoan() {
+    if (data.people.length === 1) {
+      proceedPastLoanOwner(data.people[0].id)
+    } else {
+      setPickingLoanOwner(true)
+    }
+  }
+  function startAddingCard() {
+    if (data.people.length === 1) {
+      setCardDefaultOwnerId(data.people[0].id)
+      setAddingCard(true)
+    } else {
+      setPickingCardOwner(true)
+    }
+  }
+
+  const loanRowFor = (loan: Loan, panelAction?: LoanPanelAction) => {
+    const summary = summarizeLoan(loan)
+    const progress = summarizeLoanProgress(loan)
+    const category = data.categories.find((c) => c.id === loan.categoryId)
+    const isOpen = panelAction ? panelAction === 'edit' : expandedLoan === loan.id
+    return (
+      <LoanRow
+        key={loan.id}
+        loan={loan}
+        category={category}
+        summary={summary}
+        progress={progress}
+        isOpen={isOpen}
+        onToggle={panelAction ? () => setPanel(null) : () => setExpandedLoan(isOpen ? null : loan.id)}
+          initialAction={panelAction}
+        onRemove={() => removeLoan(loan.id)}
+        categories={visibleCategoriesFor(data, loan.categoryId)}
+        people={data.people}
+        pots={data.pots}
+        canBeJoint={canBeJoint}
+        onAddCategory={addCategory}
+        onSave={(u) => updateLoan(loan.id, u)}
+        onAssignLocation={(location, effectiveFrom, potId) => assignLoanLocation(loan.id, location, effectiveFrom, { potId })}
+        onLogOverpayment={(amount, date, note, recastMode) => logLoanOverpayment(loan.id, amount, date, note, recastMode)}
+        onSettle={(amount, date, note) => settleLoanAction(loan.id, amount, date, note)}
+        onCalibrate={(lines) => calibrateLoanAction(loan.id, lines)}
+        overpaymentPrefill={overpaymentPrefill?.targetKind === 'loan' && overpaymentPrefill.targetId === loan.id ? overpaymentPrefill : null}
+        onPrefillConsumed={() => setOverpaymentPrefill(null)}
+        shouldFlashOnMount={justCreatedLoanId === loan.id}
+        onFlashedOnMount={() => setJustCreatedLoanId(null)}
+      />
+    )
+  }
+
+  const cardRowFor = (storedCard: CreditCard, panelAction?: LoanPanelAction) => {
+    // The row shows what's actually owed right now — the stored
+    // anchor with every payment and spend since replayed onto it.
+    // The card handed down to CreditCardRow is the LIVE one, but
+    // the edit panel deliberately reads the anchor back off
+    // `storedCard` for its editable balance field; see
+    // CreditCardEditPanel for why those must not be confused.
+    const card = withLiveBalance(storedCard, data.transactions)
+    // Routed through the shared generator so this row honours
+    // per-date minimumPaymentOverrides exactly as the Summary
+    // page and the ledger modal do; computeMinimumPaymentAmount
+    // is date-blind and silently ignored them. See
+    // nextMinimumChargeAmount.
+    const minPayment = nextMinimumChargeAmount(storedCard, data.transactions) ?? 0
+    const isOpen = panelAction ? panelAction === 'edit' : expandedCard === card.id
+    return (
+      <CreditCardRow
+        key={card.id}
+        card={card}
+        storedCard={storedCard}
+        minPayment={minPayment}
+        isOpen={isOpen}
+        onToggle={panelAction ? () => setPanel(null) : () => setExpandedCard(isOpen ? null : card.id)}
+        onRemove={() => removeCreditCard(card.id)}
+        people={data.people}
+        pots={data.pots}
+        onAssignLocation={(location, effectiveFrom, potId) => assignCreditCardLocation(card.id, location, effectiveFrom, potId)}
+        categories={visibleCategoriesFor(data, card.categoryId)}
+        transactions={data.transactions}
+        onAddCategory={addCategory}
+        onSave={(u) => updateCreditCard(card.id, u)}
+        onLogLumpPayment={(amount, date, note) => logCreditCardLumpPayment(card.id, amount, date, note)}
+        onUpdateMinimumCharge={(date, amount) => updateCreditCardMinimumCharge(card.id, date, amount)}
+        overpaymentPrefill={overpaymentPrefill?.targetKind === 'credit_card' && overpaymentPrefill.targetId === card.id ? overpaymentPrefill : null}
+        onPrefillConsumed={() => setOverpaymentPrefill(null)}
+        shouldFlashOnMount={justCreatedCardId === card.id}
+        onFlashedOnMount={() => setJustCreatedCardId(null)}
+      />
+    )
+  }
+
+  // Laptop (lib/laptop.ts): every loan and card as a tile; the selected
+  // one's upcoming payments as a table beneath; editing, overpaying,
+  // settling and calibrating in the docked panel, through the same
+  // LoanRow / CreditCardRow the phone uses.
+  if (wide) {
+    const today = todayIso()
+    const sel = selected ?? (myLoans[0] ? { kind: 'loan' as const, id: myLoans[0].id } : myCreditCards[0] ? { kind: 'card' as const, id: myCreditCards[0].id } : null)
+    const selLoan = sel?.kind === 'loan' ? myLoans.find((l) => l.id === sel.id) : undefined
+    const selCard = sel?.kind === 'card' ? myCreditCards.find((c) => c.id === sel.id) : undefined
+    const panelLoan = panel?.kind === 'loan' ? myLoans.find((l) => l.id === panel.id) : undefined
+    const panelCard = panel?.kind === 'card' ? myCreditCards.find((c) => c.id === panel.id) : undefined
+    const tileStyle = (on: boolean) => ({ background: on ? 'var(--color-surface-raised)' : 'var(--color-surface)', borderColor: on ? 'var(--color-coral)' : 'var(--color-track)' })
+    const actionButton = (label: string, onClick: () => void) => (
+      <button key={label} onClick={onClick} className="h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
+        {label}
+      </button>
+    )
+    const th = 'text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]'
+    return (
+      <div className="px-10 pt-8 pb-4">
+        <LaptopPanelLayout>
+          <header className="mb-6 flex items-center gap-3">
+            <h1 className="font-display text-3xl font-semibold text-[var(--color-ink)] flex-1">Borrowing</h1>
+            <button onClick={startAddingCard} className="h-11 px-4 rounded-full border text-[13px] font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}>
+              + Credit card
+            </button>
+            <button onClick={startAddingLoan} className="h-11 px-[18px] rounded-full text-[13px] font-semibold text-white" style={{ background: 'var(--color-coral)' }}>
+              + Loan
+            </button>
+          </header>
+        {pickingLoanOwner && (
+          <PersonPickerCard
+            people={data.people}
+            onPick={(id) => {
+              setPickingLoanOwner(false)
+              proceedPastLoanOwner(id)
+            }}
+            onCancel={() => setPickingLoanOwner(false)}
+          />
+        )}
+
+        {pickingLoanLocation && (
+          <LocationPickerCard
+            canBeJoint={canBeJoint}
+            ownerPots={fundablePots(data.pots).filter((p) => p.personId === loanDefaultOwnerId && p.active)}
+            onPick={(pick) => {
+              setLoanDefaultLocation(pick)
+              setPickingLoanLocation(false)
+              setAddingLoan(true)
+            }}
+            onCancel={() => setPickingLoanLocation(false)}
+          />
+        )}
+
+        {addingLoan && (
+          <SheetOnLaptop title="Add a loan" onClose={() => setAddingLoan(false)}>
+            <LoanForm
+              people={data.people}
+              pots={data.pots}
+              categories={visibleCategoriesFor(data)}
+              defaultOwnerId={loanDefaultOwnerId}
+              defaultLocation={loanDefaultLocation.location}
+              defaultPotId={loanDefaultLocation.potId}
+              initial={loanPrefill}
+              hasJointBills={hasJointBills}
+              canBeJoint={canBeJoint}
+              existingLoans={data.loans}
+              onAddCategory={addCategory}
+              onCancel={() => {
+                setAddingLoan(false)
+                if (loanPrefill) navigate('.', { replace: true, state: null })
+              }}
+              onSave={(loan) => {
+                // The loan's own hero-card colour, picked here rather than in
+                // the form (same convention as the credit card / pot / savings
+                // pot creation paths) because it needs the whole AppDataV2 to
+                // scan what's already taken. PROMPT-08a Part C.
+                const id = addLoan({ ...loan, color: pickNextSharedCardColor(data) })
+                setJustCreatedLoanId(id)
+                setAddingLoan(false)
+                if (loanPrefill) navigate('.', { replace: true, state: null })
+              }}
+            />
+          </SheetOnLaptop>
+        )}
+        {pickingCardOwner && (
+          <PersonPickerCard
+            people={data.people}
+            onPick={(id) => {
+              setCardDefaultOwnerId(id)
+              setPickingCardOwner(false)
+              setAddingCard(true)
+            }}
+            onCancel={() => setPickingCardOwner(false)}
+          />
+        )}
+
+        {addingCard && (
+          <SheetOnLaptop title="Add a credit card" onClose={() => setAddingCard(false)}>
+            <CreditCardForm
+              people={data.people}
+              categories={visibleCategoriesFor(data, CREDIT_CARD_CATEGORY_ID)}
+              defaultOwnerId={cardDefaultOwnerId}
+              nextColor={pickNextSharedCardColor(data)}
+              onAddCategory={addCategory}
+              onCancel={() => setAddingCard(false)}
+              onSave={(card) => {
+                const id = addCreditCard(card)
+                setJustCreatedCardId(id)
+                setAddingCard(false)
+              }}
+            />
+          </SheetOnLaptop>
+        )}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-6 mb-6">
+            {myLoans.map((loan) => {
+              const progress = summarizeLoanProgress(loan)
+              const finish = loanFinishInfo(loan).finishDate
+              const on = sel?.kind === 'loan' && sel.id === loan.id
+              return (
+                <button key={loan.id} onClick={() => setSelected({ kind: 'loan', id: loan.id })} aria-pressed={on} className="rounded-[20px] border p-[22px] flex gap-5 items-center text-left" style={tileStyle(on)}>
+                  <TileRing percent={progress.percentPaid} />
+                  <span className="flex flex-col gap-1 min-w-0">
+                    <span className="text-xs tracking-[0.08em] text-[var(--color-ink-muted)]">LOAN</span>
+                    <span className="text-lg font-semibold text-[var(--color-ink)] truncate">{loan.name}</span>
+                    <span className="font-mono text-base text-[var(--color-ink)]">£{formatCurrency(progress.capitalRemaining)} owed</span>
+                    <span className="text-[13px] text-[var(--color-ink-muted)]">
+                      £{formatCurrency(loan.monthlyPayment)} a month{finish ? ` · ends ${formatMonthYear(finish)}` : ''}
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
+            {myCreditCards.map((storedCard) => {
+              const card = withLiveBalance(storedCard, data.transactions)
+              const minPayment = nextMinimumChargeAmount(storedCard, data.transactions) ?? 0
+              const on = sel?.kind === 'card' && sel.id === card.id
+              return (
+                <button key={card.id} onClick={() => setSelected({ kind: 'card', id: card.id })} aria-pressed={on} className="rounded-[20px] border p-[22px] flex flex-col gap-2.5 text-left" style={tileStyle(on)}>
+                  <span className="text-xs tracking-[0.08em] text-[var(--color-ink-muted)]">CREDIT CARD</span>
+                  <span className="text-lg font-semibold text-[var(--color-ink)] truncate">{card.name}</span>
+                  <span className="font-mono text-base text-[var(--color-ink)]">£{formatCurrency(card.currentBalance)} owed today</span>
+                  <span className="text-[13px] text-[var(--color-ink-muted)]">
+                    £{formatCurrency(minPayment)} minimum due on the {card.paymentDayOfMonth}
+                    {ordinalSuffix(card.paymentDayOfMonth)} · {card.interestRatePercent}% APR
+                  </span>
+                </button>
+              )
+            })}
+            {myLoans.length === 0 && myCreditCards.length === 0 && <p className="text-sm text-[var(--color-ink-muted)] py-8">No loans or credit cards yet.</p>}
+          </div>
+
+          {selLoan && (
+            <section aria-label={`${selLoan.name} repayments`} className="rounded-[20px] px-2 pt-5 pb-2" style={{ background: 'var(--color-surface)' }}>
+              <div className="flex flex-wrap items-center gap-2.5 px-3.5 pb-3.5">
+                <h2 className="font-display text-xl font-semibold text-[var(--color-ink)] flex-1">{selLoan.name} · upcoming repayments</h2>
+                {actionButton('Calibrate interest', () => setPanel({ kind: 'loan', id: selLoan.id, action: 'calibrate' }))}
+                {actionButton('Overpay', () => setPanel({ kind: 'loan', id: selLoan.id, action: 'overpay' }))}
+                {actionButton('Settle this loan', () => setPanel({ kind: 'loan', id: selLoan.id, action: 'settle' }))}
+                {actionButton('Edit', () => setPanel({ kind: 'loan', id: selLoan.id, action: 'edit' }))}
+              </div>
+              <div className={`${LOAN_COLUMNS} px-3.5 py-2 ${th}`}>
+                <span>DATE</span>
+                <span>PAYMENT</span>
+                <span className="text-right">INTEREST</span>
+                <span className="text-right">CAPITAL</span>
+                <span className="text-right">BALANCE</span>
+              </div>
+              {buildLoanLedgerRows(selLoan)
+                .filter((r) => r.date >= today)
+                .slice(0, 12)
+                .map((r, i) => (
+                  <div key={i} className={`${LOAN_COLUMNS} min-h-12 px-3.5 text-sm border-t`} style={{ borderColor: 'var(--color-surface-raised)' }}>
+                    <span className="text-[var(--color-ink-muted)]">{shortDate(r.date)}</span>
+                    <span className="font-mono text-[var(--color-ink)]">
+                      £{formatCurrency(r.amount)}
+                      {r.type !== 'Monthly Repayment' && <span className="ml-2 font-body text-[11px] text-[var(--color-coral)]">{r.type === 'Ad-hoc Overpayment' ? 'Overpayment' : 'Recurring overpayment'}</span>}
+                    </span>
+                    <span className="font-mono text-right" style={{ color: 'var(--color-warning)' }}>£{formatCurrency(r.interest)}</span>
+                    <span className="font-mono text-right" style={{ color: 'var(--color-positive)' }}>£{formatCurrency(r.capital)}</span>
+                    <span className="font-mono text-right text-[var(--color-ink)]">£{formatCurrency(r.balanceAfter)}</span>
+                  </div>
+                ))}
+            </section>
+          )}
+
+          {selCard && (
+            <section aria-label={`${selCard.name} payments`} className="rounded-[20px] px-2 pt-5 pb-2" style={{ background: 'var(--color-surface)' }}>
+              <div className="flex flex-wrap items-center gap-2.5 px-3.5 pb-3.5">
+                <h2 className="font-display text-xl font-semibold text-[var(--color-ink)] flex-1">{selCard.name} · minimum payments</h2>
+                {actionButton('Log a payment', () => setPanel({ kind: 'card', id: selCard.id }))}
+                {actionButton('Edit', () => setPanel({ kind: 'card', id: selCard.id, action: 'edit' }))}
+              </div>
+              <div className={`grid grid-cols-[minmax(0,1fr)_140px_120px] items-center gap-3 px-3.5 py-2 ${th}`}>
+                <span>DATE</span>
+                <span className="text-right">MINIMUM</span>
+                <span className="text-right">STATUS</span>
+              </div>
+              {buildCreditCardMinimumChargeRows(selCard, data.transactions)
+                .filter((r) => r.date >= today)
+                .slice(0, 12)
+                .map((r) => (
+                  <div key={r.date} className="grid grid-cols-[minmax(0,1fr)_140px_120px] items-center gap-3 min-h-12 px-3.5 text-sm border-t" style={{ borderColor: 'var(--color-surface-raised)' }}>
+                    <span className="text-[var(--color-ink-muted)]">{shortDate(r.date)}</span>
+                    <span className="font-mono text-right text-[var(--color-ink)]">£{formatCurrency(r.amount)}</span>
+                    <span className="text-right text-[var(--color-ink-muted)]">{r.status === 'cleared' ? 'Cleared' : 'Upcoming'}</span>
+                  </div>
+                ))}
+            </section>
+          )}
+
+          {panelLoan && (
+            <RowSheet key={`${panelLoan.id}:${panel?.action}`} title={panelLoan.name} subtitle="Loan" onClose={() => setPanel(null)}>
+              {loanRowFor(panelLoan, panel?.action ?? 'edit')}
+            </RowSheet>
+          )}
+          {panelCard && (
+            <RowSheet key={`${panelCard.id}:${panel?.action}`} title={panelCard.name} subtitle="Credit card" onClose={() => setPanel(null)}>
+              {cardRowFor(panelCard, panel?.action === 'edit' ? 'edit' : 'actions')}
+            </RowSheet>
+          )}
+        </LaptopPanelLayout>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-md mx-auto px-4 pt-6">
       <header className="mb-6">
@@ -308,68 +631,39 @@ export function Loans() {
         )}
 
         {addingLoan && (
-          <LoanForm
-            people={data.people}
-            pots={data.pots}
-            categories={visibleCategoriesFor(data)}
-            defaultOwnerId={loanDefaultOwnerId}
-            defaultLocation={loanDefaultLocation.location}
-            defaultPotId={loanDefaultLocation.potId}
-            initial={loanPrefill}
-            hasJointBills={hasJointBills}
-            canBeJoint={canBeJoint}
-            existingLoans={data.loans}
-            onAddCategory={addCategory}
-            onCancel={() => {
-              setAddingLoan(false)
-              if (loanPrefill) navigate('.', { replace: true, state: null })
-            }}
-            onSave={(loan) => {
-              // The loan's own hero-card colour, picked here rather than in
-              // the form (same convention as the credit card / pot / savings
-              // pot creation paths) because it needs the whole AppDataV2 to
-              // scan what's already taken. PROMPT-08a Part C.
-              const id = addLoan({ ...loan, color: pickNextSharedCardColor(data) })
-              setJustCreatedLoanId(id)
-              setAddingLoan(false)
-              if (loanPrefill) navigate('.', { replace: true, state: null })
-            }}
-          />
+          <SheetOnLaptop title="Add a loan" onClose={() => setAddingLoan(false)}>
+            <LoanForm
+              people={data.people}
+              pots={data.pots}
+              categories={visibleCategoriesFor(data)}
+              defaultOwnerId={loanDefaultOwnerId}
+              defaultLocation={loanDefaultLocation.location}
+              defaultPotId={loanDefaultLocation.potId}
+              initial={loanPrefill}
+              hasJointBills={hasJointBills}
+              canBeJoint={canBeJoint}
+              existingLoans={data.loans}
+              onAddCategory={addCategory}
+              onCancel={() => {
+                setAddingLoan(false)
+                if (loanPrefill) navigate('.', { replace: true, state: null })
+              }}
+              onSave={(loan) => {
+                // The loan's own hero-card colour, picked here rather than in
+                // the form (same convention as the credit card / pot / savings
+                // pot creation paths) because it needs the whole AppDataV2 to
+                // scan what's already taken. PROMPT-08a Part C.
+                const id = addLoan({ ...loan, color: pickNextSharedCardColor(data) })
+                setJustCreatedLoanId(id)
+                setAddingLoan(false)
+                if (loanPrefill) navigate('.', { replace: true, state: null })
+              }}
+            />
+          </SheetOnLaptop>
         )}
 
         <div className="flex flex-col gap-3">
-          {myLoans.map((loan) => {
-            const summary = summarizeLoan(loan)
-            const progress = summarizeLoanProgress(loan)
-            const category = data.categories.find((c) => c.id === loan.categoryId)
-            const isOpen = expandedLoan === loan.id
-            return (
-              <LoanRow
-                key={loan.id}
-                loan={loan}
-                category={category}
-                summary={summary}
-                progress={progress}
-                isOpen={isOpen}
-                onToggle={() => setExpandedLoan(isOpen ? null : loan.id)}
-                onRemove={() => removeLoan(loan.id)}
-                categories={visibleCategoriesFor(data, loan.categoryId)}
-                people={data.people}
-                pots={data.pots}
-                canBeJoint={canBeJoint}
-                onAddCategory={addCategory}
-                onSave={(u) => updateLoan(loan.id, u)}
-                onAssignLocation={(location, effectiveFrom, potId) => assignLoanLocation(loan.id, location, effectiveFrom, { potId })}
-                onLogOverpayment={(amount, date, note, recastMode) => logLoanOverpayment(loan.id, amount, date, note, recastMode)}
-                onSettle={(amount, date, note) => settleLoanAction(loan.id, amount, date, note)}
-                onCalibrate={(lines) => calibrateLoanAction(loan.id, lines)}
-                overpaymentPrefill={overpaymentPrefill?.targetKind === 'loan' && overpaymentPrefill.targetId === loan.id ? overpaymentPrefill : null}
-                onPrefillConsumed={() => setOverpaymentPrefill(null)}
-                shouldFlashOnMount={justCreatedLoanId === loan.id}
-                onFlashedOnMount={() => setJustCreatedLoanId(null)}
-              />
-            )
-          })}
+          {myLoans.map((loan) => loanRowFor(loan))}
           {myLoans.length === 0 && !addingLoan && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No loans yet.</p>}
         </div>
       </CollapsibleSection>
@@ -407,62 +701,25 @@ export function Loans() {
         )}
 
         {addingCard && (
-          <CreditCardForm
-            people={data.people}
-            categories={visibleCategoriesFor(data, CREDIT_CARD_CATEGORY_ID)}
-            defaultOwnerId={cardDefaultOwnerId}
-            nextColor={pickNextSharedCardColor(data)}
-            onAddCategory={addCategory}
-            onCancel={() => setAddingCard(false)}
-            onSave={(card) => {
-              const id = addCreditCard(card)
-              setJustCreatedCardId(id)
-              setAddingCard(false)
-            }}
-          />
+          <SheetOnLaptop title="Add a credit card" onClose={() => setAddingCard(false)}>
+            <CreditCardForm
+              people={data.people}
+              categories={visibleCategoriesFor(data, CREDIT_CARD_CATEGORY_ID)}
+              defaultOwnerId={cardDefaultOwnerId}
+              nextColor={pickNextSharedCardColor(data)}
+              onAddCategory={addCategory}
+              onCancel={() => setAddingCard(false)}
+              onSave={(card) => {
+                const id = addCreditCard(card)
+                setJustCreatedCardId(id)
+                setAddingCard(false)
+              }}
+            />
+          </SheetOnLaptop>
         )}
 
         <div className="flex flex-col gap-3">
-          {myCreditCards.map((storedCard) => {
-            // The row shows what's actually owed right now — the stored
-            // anchor with every payment and spend since replayed onto it.
-            // The card handed down to CreditCardRow is the LIVE one, but
-            // the edit panel deliberately reads the anchor back off
-            // `storedCard` for its editable balance field; see
-            // CreditCardEditPanel for why those must not be confused.
-            const card = withLiveBalance(storedCard, data.transactions)
-            // Routed through the shared generator so this row honours
-            // per-date minimumPaymentOverrides exactly as the Summary
-            // page and the ledger modal do; computeMinimumPaymentAmount
-            // is date-blind and silently ignored them. See
-            // nextMinimumChargeAmount.
-            const minPayment = nextMinimumChargeAmount(storedCard, data.transactions) ?? 0
-            const isOpen = expandedCard === card.id
-            return (
-              <CreditCardRow
-                key={card.id}
-                card={card}
-                storedCard={storedCard}
-                minPayment={minPayment}
-                isOpen={isOpen}
-                onToggle={() => setExpandedCard(isOpen ? null : card.id)}
-                onRemove={() => removeCreditCard(card.id)}
-                people={data.people}
-                pots={data.pots}
-                onAssignLocation={(location, effectiveFrom, potId) => assignCreditCardLocation(card.id, location, effectiveFrom, potId)}
-                categories={visibleCategoriesFor(data, card.categoryId)}
-                transactions={data.transactions}
-                onAddCategory={addCategory}
-                onSave={(u) => updateCreditCard(card.id, u)}
-                onLogLumpPayment={(amount, date, note) => logCreditCardLumpPayment(card.id, amount, date, note)}
-                onUpdateMinimumCharge={(date, amount) => updateCreditCardMinimumCharge(card.id, date, amount)}
-                overpaymentPrefill={overpaymentPrefill?.targetKind === 'credit_card' && overpaymentPrefill.targetId === card.id ? overpaymentPrefill : null}
-                onPrefillConsumed={() => setOverpaymentPrefill(null)}
-                shouldFlashOnMount={justCreatedCardId === card.id}
-                onFlashedOnMount={() => setJustCreatedCardId(null)}
-              />
-            )
-          })}
+          {myCreditCards.map((storedCard) => cardRowFor(storedCard))}
           {myCreditCards.length === 0 && !addingCard && <p className="text-sm text-[var(--color-ink-muted)] text-center py-8">No credit cards yet.</p>}
         </div>
       </CollapsibleSection>
@@ -475,6 +732,33 @@ export function Loans() {
  * already being printed next to it ({day}{ordinalSuffix(day)}) but renders
  * as a bare "th" on its own — a mistake the statement-window caption was
  * already making before PROMPT-01 (2026-09-16). */
+/** What the laptop Borrowing panel opens on: the edit form, or one of the loan's actions. 'actions' is a card's own payment actions. */
+type LoanPanelAction = 'edit' | 'overpay' | 'settle' | 'calibrate' | 'actions'
+
+/** A laptop loan tile's ring: paid (green) against what is still owed (red), with the percentage paid in the middle. */
+function TileRing({ percent }: { percent: number }) {
+  const r = 40
+  const c = 2 * Math.PI * r
+  const paid = Math.max(0, Math.min(100, percent))
+  return (
+    <svg width={96} height={96} viewBox="0 0 96 96" role="img" aria-label={`${Math.round(paid)}% paid`} className="shrink-0">
+      <circle cx={48} cy={48} r={r} fill="none" stroke="var(--color-negative)" strokeWidth={13} />
+      <circle cx={48} cy={48} r={r} fill="none" stroke="var(--color-positive)" strokeWidth={13} strokeDasharray={`${(paid / 100) * c} ${c}`} transform="rotate(-90 48 48)" />
+      <text x={48} y={54} textAnchor="middle" fill="var(--color-ink)" fontFamily="Space Grotesk, sans-serif" fontSize={18} fontWeight={600}>
+        {Math.round(paid)}%
+      </text>
+    </svg>
+  )
+}
+
+/** "1 Nov 2026" — the laptop tables' date column. */
+function shortDate(iso: string): string {
+  return parseLocalDate(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/** The laptop repayments table's columns. */
+const LOAN_COLUMNS = 'grid grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_110px_110px_120px] items-center gap-3'
+
 function ordinalDay(day: number): string {
   return `${day}${ordinalSuffix(day)}`
 }
@@ -514,6 +798,7 @@ function LoanRow({
   onPrefillConsumed,
   shouldFlashOnMount,
   onFlashedOnMount,
+  initialAction,
 }: {
   loan: Loan
   category: { id: string; name: string; icon: string; iconColor: string } | undefined
@@ -540,6 +825,8 @@ function LoanRow({
    * button is clicked). */
   shouldFlashOnMount?: boolean
   onFlashedOnMount?: () => void
+  /** Laptop panel: the action the loan's panel opens on (LoanEditPanel). */
+  initialAction?: LoanPanelAction
 }) {
   const { active: flashActive, message: flashMessage, trigger: triggerFlash } = useSavedFlash()
   const [ledgerOpen, setLedgerOpen] = useState(false)
@@ -631,6 +918,7 @@ function LoanRow({
             overpaymentPrefill={overpaymentPrefill}
             onPrefillConsumed={onPrefillConsumed}
             onCancel={() => isOpen && onToggle()}
+            initialAction={initialAction}
           />
 
         <SavedFlashOverlay active={flashActive} message={flashMessage} />
@@ -814,6 +1102,7 @@ function LoanEditPanel({
   overpaymentPrefill,
   onPrefillConsumed,
   onCancel,
+  initialAction,
 }: {
   loan: Loan
   /** UAT 2026-09-08 (6-bug4-loans) — gates only the Name/Amount/etc.
@@ -839,6 +1128,8 @@ function LoanEditPanel({
   /** UAT 2026-09-08 (7-bug8.2-confirm-loans note) — this fields form had
    * no Cancel at all; collapses the card without saving. */
   onCancel: () => void
+  /** Laptop panel: open straight on Overpay, Settle or Calibrate. */
+  initialAction?: LoanPanelAction
 }) {
   // 2026-09-09 followup — a 'recurring' prefill from the What-if page's
   // "Make this a real recurring overpayment" button now goes straight to
@@ -847,9 +1138,9 @@ function LoanEditPanel({
   // all — see Scenarios.tsx's makeImpactReal), so overpaymentPrefill
   // reaching this panel is always a 'payoff' (one-off) prefill now.
   const [draft, setDraft] = useState<LoanDraft>(() => draftFromLoan(loan))
-  const [loggingOverpayment, setLoggingOverpayment] = useState(overpaymentPrefill?.mode === 'payoff')
-  const [settlingLoan, setSettlingLoan] = useState(false)
-  const [calibratingLoan, setCalibratingLoan] = useState(false)
+  const [loggingOverpayment, setLoggingOverpayment] = useState(overpaymentPrefill?.mode === 'payoff' || initialAction === 'overpay')
+  const [settlingLoan, setSettlingLoan] = useState(initialAction === 'settle')
+  const [calibratingLoan, setCalibratingLoan] = useState(initialAction === 'calibrate')
   const navigate = useNavigate()
   // UAT follow-up (2026-09-04, Adam-requested app-wide sweep): dims Save
   // when nothing's changed — this panel's Save was a plain always-on

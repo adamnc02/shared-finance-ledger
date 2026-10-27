@@ -1,7 +1,16 @@
 import { CreditCard } from 'lucide-react'
-import { useContext, type ReactNode } from 'react'
+import { createContext, useContext, type ReactNode } from 'react'
 import { StackSliverContext } from './WalletStack'
 import { formatCurrency } from '../lib/format'
+
+/**
+ * True inside the laptop Home's account list (pages/Home.tsx): every deck
+ * card renders as one compact row — colour swatch, name, type and its
+ * current figure — instead of the card. The figure is the same
+ * `sliverValue` the fanned stack shows, so the list and the stack can never
+ * disagree about what an account holds.
+ */
+export const DeckRowContext = createContext(false)
 
 interface BankCardProps {
   variant: 'coral' | 'light' | 'dark' | 'custom'
@@ -27,11 +36,30 @@ interface BankCardProps {
 
 export function BankCard({ variant, bankLabel, accountLabel, children, customColor, icon, sliverValue }: BankCardProps) {
   const showSliver = useContext(StackSliverContext)
+  const asRow = useContext(DeckRowContext)
   const isCoral = variant === 'coral'
   const isDark = variant === 'dark'
   const isCustom = variant === 'custom'
   const textColor = isCoral || isDark || isCustom ? '#fff' : '#1a1a1a'
   const accentColor = isCoral ? '#fff' : isDark ? 'var(--color-coral)' : isCustom ? '#fff' : 'var(--color-coral)'
+
+  if (asRow) {
+    const swatch = isCoral ? 'var(--color-coral)' : isDark ? 'var(--color-ink-faint)' : isCustom ? customColor : 'var(--color-joint)'
+    return (
+      <span className="flex items-center gap-3 w-full">
+        <span className="w-7 h-5 rounded-[5px] shrink-0" style={{ background: swatch }} />
+        <span className="flex-1 min-w-0 text-left">
+          <span className="block text-sm font-medium text-[var(--color-ink)] truncate">{bankLabel}</span>
+          {accountLabel && <span className="block text-xs text-[var(--color-ink-muted)]">{accountLabel}</span>}
+        </span>
+        {sliverValue !== undefined && (
+          <span className="font-mono text-[13px] tabular-nums whitespace-nowrap text-[var(--color-ink)]">
+            {sliverValue < 0 ? '-' : ''}£{formatCurrency(Math.abs(sliverValue))}
+          </span>
+        )}
+      </span>
+    )
+  }
 
   return (
     <div

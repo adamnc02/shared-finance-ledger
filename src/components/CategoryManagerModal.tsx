@@ -18,11 +18,21 @@ import type { Category } from '../types/ledger'
  * until it's migrated to RecurringTemplate in a later phase. The
  * categories managed here are already live for Transactions and Borrowing.
  */
-export function CategoryManagerButton() {
+/** `labelled`: the laptop header's form, a bordered "Categories" pill instead of the round tag icon. */
+export function CategoryManagerButton({ labelled = false }: { labelled?: boolean } = {}) {
   const [open, setOpen] = useState(false)
 
   return (
     <>
+      {labelled ? (
+        <button
+          onClick={() => setOpen(true)}
+          className="h-11 px-4 rounded-full border text-[13px] font-semibold text-[var(--color-ink)]"
+          style={{ background: 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}
+        >
+          Categories
+        </button>
+      ) : (
       <button
         onClick={() => setOpen(true)}
         className="w-9 h-9 rounded-full flex items-center justify-center border"
@@ -31,6 +41,7 @@ export function CategoryManagerButton() {
       >
         <Tag size={16} className="text-[var(--color-ink-muted)]" />
       </button>
+      )}
 
       {open &&
         createPortal(

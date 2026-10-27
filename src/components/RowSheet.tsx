@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { PanelBottomOpen, X } from 'lucide-react'
+import { PanelBottomOpen, PanelRightOpen, X } from 'lucide-react'
+import { useWide } from '../lib/useWide'
 
 // A card's edit surface, as a bottom sheet rather than an in-place
 // expansion. On the Salary page: pay periods, pensions, savings pots, pots
@@ -19,7 +20,67 @@ import { PanelBottomOpen, X } from 'lucide-react'
 //
 // The backdrop and the X both close it, discarding an unsaved edit, as
 // collapsing the card always did.
-export function RowSheet({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) {
+//
+// On a laptop (lib/laptop.ts) it is a panel DOCKED in the page's right-hand
+// column (LaptopPanelLayout), as the laptop design draws it: opening a row
+// narrows the page beside it, and the page stays usable — no backdrop, so
+// opening another row replaces the panel (useOneOpenRow), and the X or
+// Escape closes it. Outside a LaptopPanelLayout it floats over the page
+// at the right instead.
+//
+// 🚨 A page with a docked panel must lay out to the narrower width without
+// wrapping: rows of tiles share the width (Wallet's pay periods) rather than
+// pushing the last tile onto a row of its own.
+export function RowSheet({ title, subtitle, onClose, children }: { title: ReactNode; subtitle?: ReactNode; onClose: () => void; children: ReactNode }) {
+  const wide = useWide()
+  const dock = useContext(LaptopPanelContext)
+  // Escape closes the topmost panel only, and never while a dialog the panel opened is on top of it.
+  const [el, setEl] = useState<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!wide || !el) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const panels = document.querySelectorAll('[data-row-sheet]')
+      if (panels[panels.length - 1] !== el || document.querySelector('.fixed.inset-0')) return
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [wide, el, onClose])
+  if (wide) {
+    return createPortal(
+      <div
+        ref={setEl}
+        data-row-sheet
+        role="dialog"
+        aria-label={typeof title === 'string' ? title : undefined}
+        className={dock ? 'rounded-[20px] p-[22px] border' : 'fixed z-[450] right-6 w-[420px] max-w-[calc(100vw-48px)] overflow-y-auto rounded-[20px] p-[22px] border'}
+        style={{
+          ...(dock
+            ? {}
+            : {
+                top: 'calc(var(--safe-top) + 24px)',
+                maxHeight: 'calc(var(--app-height, 100dvh) - var(--safe-top) - 48px)',
+                boxShadow: '0 24px 64px rgba(0,0,0,0.55), 0 4px 16px rgba(0,0,0,0.3)',
+              }),
+          background: 'var(--color-bg-elevated)',
+          borderColor: 'var(--color-track)',
+        }}
+      >
+        <div className="flex items-start gap-3 mb-4">
+          <div className="flex-1 min-w-0">
+            {subtitle && <div className="text-xs text-[var(--color-ink-muted)]">{subtitle}</div>}
+            <h2 className="font-display text-[22px] font-semibold text-[var(--color-ink)] truncate mt-0.5">{title}</h2>
+          </div>
+          <button onClick={onClose} className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }} aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+        {children}
+      </div>,
+      dock ?? document.body,
+    )
+  }
   return createPortal(
     <div className="fixed inset-0 z-[450] flex items-end justify-center" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
       <div
@@ -40,7 +101,58 @@ export function RowSheet({ title, onClose, children }: { title: ReactNode; onClo
   )
 }
 
-/** The mark on a card that opens a RowSheet. A panel rising from the bottom, not a chevron: a chevron says "expands here". */
+/** The mark on a card that opens a RowSheet. A panel rising from the bottom (from the right on a laptop), not a chevron: a chevron says "expands here". */
 export function OpensSheetIcon() {
-  return <PanelBottomOpen size={16} className="text-[var(--color-ink-muted)] shrink-0" aria-hidden />
+  const Icon = useWide() ? PanelRightOpen : PanelBottomOpen
+  return <Icon size={16} className="text-[var(--color-ink-muted)] shrink-0" aria-hidden />
+}
+
+/**
+ * On a laptop (lib/laptop.ts), its children in the right-hand RowSheet;
+ * on a phone, its children exactly where they are. For a surface that
+ * opens in place on the phone — an add form at the top of a list, a row's
+ * edit form under the row — so the phone layout stays as it was.
+ */
+export function SheetOnLaptop({ title, subtitle, onClose, children }: { title: ReactNode; subtitle?: ReactNode; onClose: () => void; children: ReactNode }) {
+  const wide = useWide()
+  if (!wide) return <>{children}</>
+  return (
+    <RowSheet title={title} subtitle={subtitle} onClose={onClose}>
+      {children}
+    </RowSheet>
+  )
+}
+
+
+/** The element a page's laptop panel column renders into; null outside a LaptopPanelLayout. */
+const LaptopPanelContext = createContext<HTMLElement | null>(null)
+
+/**
+ * A laptop page with a docked right-hand panel column (lib/laptop.ts): the
+ * page on the left, and on the right whatever RowSheet is open inside it.
+ * The column takes no room while nothing is open (`empty:hidden`), so the
+ * page uses the full width until a row is opened, and narrows beside the
+ * panel while one is. On a phone it renders its children and nothing else.
+ *
+ * The column is sticky inside #app-content (the app's only scroll
+ * container), so a long page scrolls under an open panel and the panel stays
+ * in view; it scrolls on its own when it is taller than the window.
+ */
+export function LaptopPanelLayout({ children }: { children: ReactNode }) {
+  const wide = useWide()
+  const [dock, setDock] = useState<HTMLElement | null>(null)
+  if (!wide) return <>{children}</>
+  return (
+    <div className="flex gap-6 items-start">
+      <div className="flex-1 min-w-0">
+        <LaptopPanelContext.Provider value={dock}>{children}</LaptopPanelContext.Provider>
+      </div>
+      <aside
+        ref={setDock}
+        aria-label="Details"
+        className="w-[400px] shrink-0 sticky top-8 flex flex-col gap-4 overflow-y-auto empty:hidden"
+        style={{ maxHeight: 'calc(var(--app-height, 100dvh) - 64px)' }}
+      />
+    </div>
+  )
 }

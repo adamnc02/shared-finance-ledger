@@ -31,7 +31,8 @@ import { computePotProjection, potSignedAmount, buildPotTrendSeries } from '../l
 import { isLedgerTransaction, signedAmount, type BalanceSpendGranularity, type BalanceSpendTrendSeries } from '../lib/runningBalance'
 import { computeCycleSummary, compareByDateSalaryFirst } from '../lib/cycleSummary'
 import { WalletStack } from '../components/WalletStack'
-import { BankCard } from '../components/BankCard'
+import { BankCard, DeckRowContext } from '../components/BankCard'
+import { useWide } from '../lib/useWide'
 import { ProgressRing } from '../components/ProgressRing'
 import { RagLegend } from '../components/RagLegend'
 import { ToggleSwitch } from '../components/Toggle'
@@ -209,6 +210,7 @@ export function Home() {
   const [averageSpendForecast, setAverageSpendForecast] = useAppSessionState('home:averageSpendForecast', false)
 
   const deck = useMemo(() => buildDeck(data), [data])
+  const wide = useWide()
 
   // Full display order, back-to-front, re-derived every render from the
   // canonical buildDeck order plus the MRU pointer — never-selected
@@ -235,29 +237,15 @@ export function Home() {
     setMruSelections((prev) => [...prev.filter((k) => k !== key), key])
   }
 
-  return (
-    <div className="max-w-md mx-auto px-4 pt-6">
-      <header className="mb-6">
-        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Home</h1>
-      </header>
-
-      <WalletStack
-        items={backToFront.map((key) => {
-          const entry = deck.find((e) => deckEntryKey(e) === key)!
-          return { key, node: <DeckHero entry={entry} data={data} horizon={horizon} averageSpendForecast={averageSpendForecast} />, label: heroLabel(entry, data) }
-        })}
-        onSelect={onSelect}
-        // Salary card only — the joint/household/credit-card faces have no
-        // salary-vs-outgoings picture of their own to break down.
-        belowCards={
-          activeEntry?.kind === 'personal' ? (
-            <SalaryBreakdownCard data={data} horizon={horizon} />
-          ) : activeEntry?.kind === 'joint' ? (
-            <JointBreakdownCard data={data} horizon={horizon} />
-          ) : undefined
-        }
-      />
-
+  // Salary card only — the joint/household/credit-card faces have no
+  // salary-vs-outgoings picture of their own to break down.
+  const belowCards =
+    activeEntry?.kind === 'personal' ? (
+      <SalaryBreakdownCard data={data} horizon={horizon} />
+    ) : activeEntry?.kind === 'joint' ? (
+      <JointBreakdownCard data={data} horizon={horizon} />
+    ) : undefined
+  const controlsAndDetail = (
       <div className="mt-6">
         <DeckControls
           entry={activeEntry}
@@ -292,6 +280,114 @@ export function Home() {
           averageSpendForecast={averageSpendForecast}
         />
       </div>
+  )
+
+  // Laptop (lib/laptop.ts): two columns. The header carries the horizon,
+  // Filters and Statement. On the left, the front card, then every deck
+  // entry as a list in buildDeck's own order (picking a row is the same
+  // onSelect a tap on a sliver makes), then Personal's income/outgoings.
+  // On the right, the selected card's ledger as a flat table.
+  if (wide) {
+    return (
+      <div className="px-10 pt-8 pb-4">
+        <header className="mb-6 flex flex-wrap items-center gap-4">
+          <h1 className="font-display text-3xl font-semibold text-[var(--color-ink)] flex-1">Home</h1>
+          {activeEntry && (
+            <DeckControls
+              laptop
+              entry={activeEntry}
+              data={data}
+              horizon={horizon}
+              setHorizon={setHorizon}
+              grouping={grouping}
+              setGrouping={setGrouping}
+              order={order}
+              setOrder={setOrder}
+              cycleTotals={cycleTotals}
+              setCycleTotals={setCycleTotals}
+              showCleared={showCleared}
+              setShowCleared={setShowCleared}
+              groupByDirection={groupByDirection}
+              setGroupByDirection={setGroupByDirection}
+              averageSpendForecast={averageSpendForecast}
+              setAverageSpendForecast={setAverageSpendForecast}
+            />
+          )}
+          <StatementDownloadButton data={data} compact />
+        </header>
+        <div className="flex gap-6 items-start">
+          <section aria-label="Accounts" className="w-[360px] shrink-0 flex flex-col gap-4">
+            {activeEntry && (
+              <WalletStack
+                items={[{ key: deckEntryKey(activeEntry), node: <DeckHero entry={activeEntry} data={data} horizon={horizon} averageSpendForecast={averageSpendForecast} />, label: heroLabel(activeEntry, data) }]}
+                onSelect={onSelect}
+                belowCards={activeEntry.kind === 'joint' ? <JointBreakdownCard data={data} horizon={horizon} /> : undefined}
+              />
+            )}
+            {deck.length > 1 && (
+              <div className="rounded-[20px] p-2" style={{ background: 'var(--color-surface)' }}>
+                <div className="px-3 pt-2.5 pb-1.5 text-xs font-semibold tracking-[0.08em] text-[var(--color-ink-muted)]">ALL ACCOUNTS</div>
+                <DeckRowContext.Provider value>
+                  {deck.map((entry) => {
+                    const key = deckEntryKey(entry)
+                    const selected = entry === activeEntry
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => onSelect(key)}
+                        className="w-full min-h-[52px] px-3 rounded-[14px] flex items-center transition-colors hover:bg-[var(--color-surface-raised)]"
+                        style={{ background: selected ? 'var(--color-surface-raised)' : 'transparent' }}
+                      >
+                        <DeckHero entry={entry} data={data} horizon={horizon} averageSpendForecast={averageSpendForecast} />
+                      </button>
+                    )
+                  })}
+                </DeckRowContext.Provider>
+              </div>
+            )}
+            {activeEntry?.kind === 'personal' && <InAndOutCard data={data} horizon={horizon} />}
+          </section>
+          <section aria-label="Ledger" className="flex-1 min-w-0">
+            {activeEntry && (
+              <DeckDetail
+                entry={activeEntry}
+                data={data}
+                horizon={horizon}
+                setHorizon={setHorizon}
+                grouping={grouping}
+                setGrouping={setGrouping}
+                order={order}
+                setOrder={setOrder}
+                cycleTotals={cycleTotalsActive}
+                showCleared={showCleared}
+                groupByDirection={groupByDirection}
+                averageSpendForecast={averageSpendForecast}
+              />
+            )}
+          </section>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-md mx-auto px-4 pt-6">
+      <header className="mb-6">
+        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Home</h1>
+      </header>
+
+      <WalletStack
+        items={backToFront.map((key) => {
+          const entry = deck.find((e) => deckEntryKey(e) === key)!
+          return { key, node: <DeckHero entry={entry} data={data} horizon={horizon} averageSpendForecast={averageSpendForecast} />, label: heroLabel(entry, data) }
+        })}
+        onSelect={onSelect}
+        belowCards={belowCards}
+      />
+
+      {controlsAndDetail}
 
       <StatementDownloadButton data={data} />
     </div>
@@ -308,27 +404,27 @@ export function Home() {
  * per card: one file covers the whole deck (§0 Q2), and a button on a
  * card face would imply otherwise.
  */
-function StatementDownloadButton({ data }: { data: AppDataV2 }) {
+function StatementDownloadButton({ data, compact }: { data: AppDataV2; compact?: boolean }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [statement, setStatement] = useState<{ html: string; filename: string } | null>(null)
 
   return (
-    <div className="mt-6 mb-2">
+    <div className={compact ? 'relative' : 'mt-6 mb-2'}>
       <button
         onClick={() => {
           setError(null)
           setOpen(true)
         }}
         disabled={busy}
-        className="w-full py-3 rounded-full text-sm font-semibold text-white flex items-center justify-center gap-2"
+        className={compact ? 'h-11 px-[18px] rounded-full text-[13px] font-semibold text-white whitespace-nowrap' : 'w-full py-3 rounded-full text-sm font-semibold text-white flex items-center justify-center gap-2'}
         style={{ background: 'var(--color-coral)', opacity: busy ? 0.6 : 1 }}
       >
-        <FileText size={15} />
+        {!compact && <FileText size={15} />}
         {busy ? 'Building your statement…' : 'Statement'}
       </button>
-      {error && <p className="text-[11px] text-center mt-2" style={{ color: 'var(--color-negative)' }}>{error}</p>}
+      {error && <p className={`text-[11px] mt-2 ${compact ? 'absolute right-0 whitespace-nowrap' : 'text-center'}`} style={{ color: 'var(--color-negative)' }}>{error}</p>}
       {open && (
         <StatementRangeSheet
           data={data}
@@ -783,11 +879,10 @@ function BreakdownRow({ label, value, emphasized, muted }: { label: string; valu
   )
 }
 
-function SalaryBreakdownCard({ data, horizon }: { data: AppDataV2; horizon: ProjectionHorizon }) {
-  const [open, setOpen] = useState(false)
+/** Personal's income/outgoings summary for the horizon — one computation for the phone's pull-down and the laptop's card, so the two cannot disagree. */
+function usePersonalCycleSummary(data: AppDataV2, horizon: ProjectionHorizon) {
   const payCycle = data.payCycles.find((pc) => pc.personId === data.primaryPersonId)
-
-  const summary = useMemo(() => {
+  return useMemo(() => {
     if (!payCycle) return null
     const projection = computeProjection(data, data.primaryPersonId, payCycle, horizon)
     const cycles = horizonCycles(data, data.primaryPersonId, horizon, new Date())
@@ -796,6 +891,47 @@ function SalaryBreakdownCard({ data, horizon }: { data: AppDataV2; horizon: Proj
       endIso: toLocalIsoDate(cycles[cycles.length - 1].end),
     })
   }, [data, payCycle, horizon])
+}
+
+/**
+ * The laptop's form of the Personal breakdown (lib/laptop.ts): always
+ * open, the two totals as bars, and what is left at the end of the
+ * horizon. Every figure is the phone pull-down's own (usePersonalCycleSummary);
+ * "Left" is its Available.
+ */
+function InAndOutCard({ data, horizon }: { data: AppDataV2; horizon: ProjectionHorizon }) {
+  const summary = usePersonalCycleSummary(data, horizon)
+  if (!summary) return null
+  const scale = Math.max(summary.income.total, summary.outgoings.total, 1)
+  const bar = (value: number, color: string) => (
+    <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--color-track)' }}>
+      <div className="h-full rounded-full" style={{ width: `${Math.min(100, (value / scale) * 100)}%`, background: color }} />
+    </div>
+  )
+  return (
+    <div className="rounded-[20px] p-5 flex flex-col gap-2.5" style={{ background: 'var(--color-surface)' }}>
+      <div className="text-[15px] font-semibold text-[var(--color-ink)]">{horizon === 'current_cycle' ? 'This cycle, in and out' : 'Next 3 cycles, in and out'}</div>
+      <div className="flex justify-between text-sm">
+        <span className="text-[var(--color-ink-muted)]">Income</span>
+        <span className="font-mono" style={{ color: 'var(--color-positive)' }}>+£{formatCurrency(summary.income.total)}</span>
+      </div>
+      {bar(summary.income.total, 'var(--color-positive)')}
+      <div className="flex justify-between text-sm">
+        <span className="text-[var(--color-ink-muted)]">Outgoings</span>
+        <span className="font-mono text-[var(--color-ink)]">-£{formatCurrency(summary.outgoings.total)}</span>
+      </div>
+      {bar(summary.outgoings.total, 'var(--color-coral)')}
+      <div className="flex justify-between text-sm font-semibold pt-1.5 border-t" style={{ borderColor: 'var(--color-track)' }}>
+        <span className="text-[var(--color-ink)]">{horizon === 'current_cycle' ? 'Left at cycle end' : 'Left at the end of the third cycle'}</span>
+        <span className="font-mono text-[var(--color-ink)]">{summary.available < 0 ? '-' : ''}£{formatCurrency(Math.abs(summary.available))}</span>
+      </div>
+    </div>
+  )
+}
+
+function SalaryBreakdownCard({ data, horizon }: { data: AppDataV2; horizon: ProjectionHorizon }) {
+  const [open, setOpen] = useState(false)
+  const summary = usePersonalCycleSummary(data, horizon)
 
   if (!summary) return null
 
@@ -1371,6 +1507,7 @@ function DeckControls({
   setGroupByDirection,
   averageSpendForecast,
   setAverageSpendForecast,
+  laptop,
 }: {
   entry: DeckEntry
   data: AppDataV2
@@ -1388,6 +1525,8 @@ function DeckControls({
   setGroupByDirection: (v: boolean) => void
   averageSpendForecast: boolean
   setAverageSpendForecast: (v: boolean) => void
+  /** The laptop header's form (lib/laptop.ts): the horizon as one segmented control and a labelled Filters button, in a row; the active filters show as chips over the ledger instead of a caption here. */
+  laptop?: boolean
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const activeLabels = activeFilterLabels(entry, grouping, order, showCleared, cycleTotals, groupByDirection, averageSpendForecast)
@@ -1402,6 +1541,62 @@ function DeckControls({
     setCycleTotals(true)
     setGroupByDirection(false)
     setAverageSpendForecast(false)
+  }
+
+  const filtersSheet = filtersOpen && (
+    <FiltersSheet
+      entry={entry}
+      data={data}
+      horizon={horizon}
+      grouping={grouping}
+      setGrouping={setGrouping}
+      order={order}
+      setOrder={setOrder}
+      cycleTotals={cycleTotals}
+      setCycleTotals={setCycleTotals}
+      showCleared={showCleared}
+      setShowCleared={setShowCleared}
+      groupByDirection={groupByDirection}
+      setGroupByDirection={setGroupByDirection}
+      averageSpendForecast={averageSpendForecast}
+      setAverageSpendForecast={setAverageSpendForecast}
+      onClose={() => setFiltersOpen(false)}
+    />
+  )
+
+  if (laptop) {
+    return (
+      <div className="flex items-center gap-4">
+        <div role="group" aria-label="Horizon" className="flex gap-1.5 p-1 rounded-full" style={{ background: 'var(--color-bg-elevated)' }}>
+          {(['current_cycle', 'three_cycles'] as ProjectionHorizon[]).map((h) => (
+            <button
+              key={h}
+              onClick={() => setHorizon(h)}
+              aria-pressed={horizon === h}
+              className="h-9 px-4 rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors"
+              style={{ background: horizon === h ? 'var(--color-coral)' : 'transparent', color: horizon === h ? '#fff' : 'var(--color-ink-muted)' }}
+            >
+              {HORIZON_LABELS[h]}
+            </button>
+          ))}
+        </div>
+        {isNonDefault && (
+          <button onClick={resetToDefault} aria-label="Reset to default" style={{ color: 'var(--color-coral)' }}>
+            <RotateCcw size={17} />
+          </button>
+        )}
+        <button
+          onClick={() => setFiltersOpen(true)}
+          className="h-11 px-4 rounded-full flex items-center gap-2 text-[13px] font-semibold text-[var(--color-ink)]"
+          style={{ background: 'var(--color-bg-elevated)', border: '1px solid var(--color-track)' }}
+        >
+          <SlidersHorizontal size={16} />
+          Filters
+          {isNonDefault && <span className="font-mono font-bold" style={{ color: 'var(--color-coral)' }}>{activeLabels.length}</span>}
+        </button>
+        {filtersSheet}
+      </div>
+    )
   }
 
   return (
@@ -1451,26 +1646,7 @@ function DeckControls({
           {activeLabels.join(' · ')}
         </p>
       )}
-      {filtersOpen && (
-        <FiltersSheet
-          entry={entry}
-          data={data}
-          horizon={horizon}
-          grouping={grouping}
-          setGrouping={setGrouping}
-          order={order}
-          setOrder={setOrder}
-          cycleTotals={cycleTotals}
-          setCycleTotals={setCycleTotals}
-          showCleared={showCleared}
-          setShowCleared={setShowCleared}
-          groupByDirection={groupByDirection}
-          setGroupByDirection={setGroupByDirection}
-          averageSpendForecast={averageSpendForecast}
-          setAverageSpendForecast={setAverageSpendForecast}
-          onClose={() => setFiltersOpen(false)}
-        />
-      )}
+      {filtersSheet}
     </div>
   )
 }
@@ -2046,6 +2222,7 @@ function TrendPreview({
   savingsPot?: { buildSeries: (granularity: SavingsPotPillGranularity) => SavingsPotTrendSeries }
 }) {
   const [open, setOpen] = useState(false)
+  const wide = useWide()
   const previewSeries = balanceSpend ? balanceSpend.buildSeries('this_cycle') : null
   const previewPillSeries = savingsPot ? savingsPot.buildSeries('this_cycle') : null
 
@@ -2081,7 +2258,7 @@ function TrendPreview({
         <p className="text-xs text-[var(--color-ink-faint)] mb-2">{displayCaption}</p>
         <div className="pointer-events-none">
           {previewSeries ? (
-            <BalanceSpendChart series={previewSeries} view="balance" color={color} height={64} />
+            <BalanceSpendChart series={previewSeries} view="balance" color={color} height={64} fill={wide} />
           ) : previewPillSeries ? (
             <SavingsPotPillChart series={previewPillSeries} color={color} height={48} />
           ) : null}
@@ -2116,6 +2293,51 @@ function CycleToggle({ value, onChange }: { value: ProjectionHorizon; onChange: 
   )
 }
 
+/** The laptop ledger's columns (lib/laptop.ts): date, description, category, paid from, amount, balance. Shared by the header and every row so the two cannot drift. */
+const LEDGER_COLUMNS = 'w-full grid grid-cols-[60px_minmax(0,1fr)_100px_112px_96px_96px] items-center gap-2.5 px-3.5'
+
+/** Where a row's money moves from or to, for the laptop ledger's "Paid from" column. */
+function paidFromLabel(t: Transaction, data: AppDataV2): string {
+  if (t.creditCardId) return data.creditCards.find((c) => c.id === t.creditCardId)?.name ?? 'Credit card'
+  if (t.location === 'pot') return (data.pots ?? []).find((p) => p.id === t.potId)?.name ?? 'Pot'
+  if (t.location === 'savings') return data.savingsPots.find((p) => p.id === t.savingsPotId)?.name ?? 'Savings'
+  if (t.location === 'joint') return 'Joint account'
+  return 'Current account'
+}
+
+/** The laptop ledger's column headings. */
+function LedgerHeader() {
+  return (
+    <div className={`${LEDGER_COLUMNS} py-2 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]`}>
+      <span>DATE</span>
+      <span>DESCRIPTION</span>
+      <span>CATEGORY</span>
+      <span>PAID FROM</span>
+      <span className="text-right">AMOUNT</span>
+      <span className="text-right">BALANCE</span>
+    </div>
+  )
+}
+
+/** The laptop ledger's marker between what has happened and what is still to come. */
+function TodayLine() {
+  const label = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }).toUpperCase()
+  return (
+    <div className="flex items-center gap-2.5 px-3.5 py-1.5 text-xs font-semibold" style={{ color: 'var(--color-coral)' }}>
+      <span>TODAY · {label}</span>
+      <span className="flex-1 h-px" style={{ background: 'var(--color-coral)' }} />
+    </div>
+  )
+}
+
+/** Where the Today line goes in a date-ordered run of rows: before the first row dated after today, or at the end; -1 when the run's window does not contain today. */
+function todayLineIndex(dates: string[], startIso: string | undefined, endIso: string | undefined): number {
+  const today = toLocalIsoDate(new Date())
+  if ((startIso && today < startIso) || (endIso && today > endIso)) return -1
+  const i = dates.findIndex((d) => d > today)
+  return i === -1 ? dates.length : i
+}
+
 function TransactionRow({
   t,
   data,
@@ -2141,6 +2363,28 @@ function TransactionRow({
     : undefined
   const signed = amountSign ? amountSign(t) : signedAmount(t)
   const isPositive = signed > 0
+  const wide = useWide()
+  if (wide) {
+    // Laptop: the same row as the table's columns (LEDGER_COLUMNS). Every
+    // value is the phone row's own; "Paid from" is where the money moves.
+    const cleared = t.status === 'cleared'
+    return (
+      <div className={`${LEDGER_COLUMNS} min-h-12 py-1.5`} style={{ color: cleared ? 'var(--color-ink-muted)' : 'var(--color-ink)' }}>
+        <span className="text-[13px] text-[var(--color-ink-muted)] tabular-nums">{formatCycleDate(t.date)}</span>
+        <span className="flex items-center gap-2.5 min-w-0">
+          <CategoryIcon category={potIconCategory ?? category} size={14} />
+          <span className="text-sm font-medium break-words min-w-0">{t.note || category?.name || t.type}</span>
+          {cleared && <span className="text-[11px] text-[var(--color-ink-muted)] shrink-0">Cleared</span>}
+        </span>
+        <span className="text-[13px] text-[var(--color-ink-muted)] break-words min-w-0">{category?.name ?? ''}</span>
+        <span className="text-[13px] text-[var(--color-ink-muted)] break-words min-w-0">{paidFromLabel(t, data)}</span>
+        <span className="text-sm font-mono text-right" style={{ color: isPositive ? 'var(--color-positive)' : cleared ? 'var(--color-ink-muted)' : 'var(--color-ink)' }}>
+          {isPositive ? '+' : '-'}£{formatCurrency(Math.abs(signed))}
+        </span>
+        <span className="text-[13px] font-mono text-right text-[var(--color-ink-muted)] tabular-nums">{runningBalance !== undefined ? `£${formatCurrency(runningBalance)}` : ''}</span>
+      </div>
+    )
+  }
   return (
     <div className="flex items-center gap-3 py-2">
       <CategoryIcon category={potIconCategory ?? category} size={14} />
@@ -2334,6 +2578,23 @@ type CycleRowItem = { kind: 'real'; t: Transaction; running: number } | ({ kind:
  */
 function ProjectedSpendRow({ forecastAmount, realSpend, method, runningBalance }: { forecastAmount: number; realSpend: number; method: SpendForecastMethod; runningBalance?: number }) {
   const averagePerCycle = round2(forecastAmount + realSpend)
+  const wide = useWide()
+  if (wide) {
+    return (
+      <div className={`${LEDGER_COLUMNS} min-h-12 py-1.5`}>
+        <span />
+        <span className="flex items-center gap-2.5 min-w-0">
+          <TrendingUp size={14} strokeWidth={2} className="shrink-0" style={{ color: 'var(--color-coral)' }} />
+          <span className="text-sm font-medium italic truncate text-[var(--color-ink)]">Average spend forecast</span>
+          <span className="text-[11px] text-[var(--color-ink-muted)] shrink-0">{method === 'median' ? 'Typical week' : 'Estimate'}</span>
+        </span>
+        <span className="text-[13px] text-[var(--color-ink-muted)] truncate">{realSpend > 0 ? `Reduced from £${formatCurrency(averagePerCycle)}` : 'Forecast'}</span>
+        <span />
+        <span className="text-sm font-mono text-right text-[var(--color-ink)]">-£{formatCurrency(forecastAmount)}</span>
+        <span className="text-[13px] font-mono text-right text-[var(--color-ink-muted)] tabular-nums">{runningBalance !== undefined ? `£${formatCurrency(runningBalance)}` : ''}</span>
+      </div>
+    )
+  }
   return (
     <div className="flex items-center gap-3 py-2 px-2 my-1 rounded-xl" style={{ border: '1px dashed var(--color-ink-faint)' }}>
       <span className="inline-flex items-center justify-center shrink-0 rounded-full" style={{ width: 30, height: 30, background: 'var(--color-coral)' }}>
@@ -2463,6 +2724,7 @@ function CycleGroupedList({
   forecastByCycle?: Map<string, CycleForecast>
 }) {
   const sign = amountSign ?? signedAmount
+  const wide = useWide()
   // Collapse state tracks what's explicitly been TOGGLED away from its
   // default, so the default (every cycle collapsed, or expanded while
   // groupByDirection is on — see below) holds without seeding state per
@@ -2549,6 +2811,42 @@ function CycleGroupedList({
     const visibleRows = rows.filter(({ t }) => showCleared || t.status !== 'cleared')
     return { key: startIso, isCurrent: i === 0, startIso, endIso, rows, visibleRows, closing, forecast }
   })
+
+  // Laptop (lib/laptop.ts): one flat table, never collapsible. A single
+  // cycle is just its rows; several get a heading each with the cycle's
+  // closing balance. The Today line sits in the cycle that holds today.
+  // Group by direction / person keep their own pills, as on the phone.
+  if (wide && !groupByDirection && !groupByPerson) {
+    return (
+      <div>
+        <LedgerHeader />
+        {sections.map((section) => {
+          const todayAt = todayLineIndex(section.visibleRows.map(({ t }) => t.date), section.startIso, section.endIso)
+          return (
+            <div key={section.key}>
+              {sections.length > 1 && (
+                <div className="flex items-center justify-between px-3.5 pt-4 pb-1.5 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">
+                  <span>
+                    {formatCycleDate(section.startIso).toUpperCase()} – {formatCycleDate(section.endIso).toUpperCase()}
+                  </span>
+                  <span className="font-mono tracking-normal">£{formatCurrency(section.closing)}</span>
+                </div>
+              )}
+              {section.visibleRows.map(({ t, running }, i) => (
+                <div key={t.id}>
+                  {i === todayAt && <TodayLine />}
+                  <TransactionRow t={t} data={data} runningBalance={running} amountSign={amountSign} />
+                </div>
+              ))}
+              {todayAt === section.visibleRows.length && <TodayLine />}
+              {section.forecast && <ProjectedSpendRow forecastAmount={section.forecast.forecastAmount} realSpend={section.forecast.realSpend} method={section.forecast.method} runningBalance={section.closing} />}
+              {section.visibleRows.length === 0 && !section.forecast && <p className="text-[13px] text-[var(--color-ink-muted)] px-3.5 py-3">Nothing in this cycle.</p>}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -2691,6 +2989,7 @@ function DateOrderedList({
   // Salary first within its own date (see compareByDateSalaryFirst) — the
   // running balance below is a fold in list order, so a bill sorted above
   // the salary that funds it would show a dip that never really happens.
+  const wide = useWide()
   const ordered = transactions.slice().sort(compareByDateSalaryFirst)
 
   let running = openingRunningBalance
@@ -2701,6 +3000,25 @@ function DateOrderedList({
   const visible = withRunning.filter(({ t }) => (showCleared || t.status !== 'cleared') && (!cycleStartIso || t.date >= cycleStartIso) && (!cycleEndIso || t.date <= cycleEndIso))
   const hasForecast = !!forecast && forecast.forecastAmount > 0
   const finalRunning = visible.length > 0 ? visible[visible.length - 1].running : openingRunningBalance
+
+  // Laptop (lib/laptop.ts): the same rows as a table, with the Today line.
+  if (wide && !groupByDirection) {
+    const todayAt = todayLineIndex(visible.map(({ t }) => t.date), cycleStartIso, cycleEndIso)
+    return (
+      <div>
+        <LedgerHeader />
+        {visible.map(({ t, running }, i) => (
+          <div key={t.id}>
+            {i === todayAt && <TodayLine />}
+            <TransactionRow t={t} data={data} runningBalance={running} amountSign={amountSign} />
+          </div>
+        ))}
+        {todayAt === visible.length && <TodayLine />}
+        {hasForecast && <ProjectedSpendRow forecastAmount={forecast.forecastAmount} realSpend={forecast.realSpend} method={forecast.method} runningBalance={round2(finalRunning - forecast.forecastAmount)} />}
+        {visible.length === 0 && !hasForecast && <p className="text-[13px] text-[var(--color-ink-muted)] px-3.5 py-3">{showCleared ? 'Nothing in this window.' : 'Nothing pending in this window.'}</p>}
+      </div>
+    )
+  }
 
   if (groupByDirection) {
     return (
@@ -2868,6 +3186,28 @@ function CategoryGroupedList({
   )
 }
 
+/** The laptop ledger card's heading: its title, and the view's state as chips. */
+function LaptopLedgerHeading({ title, chips }: { title: string; chips: string[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2.5 px-3.5 pb-3.5">
+      <h2 className="font-display text-xl font-semibold text-[var(--color-ink)] flex-1">{title}</h2>
+      {chips.map((c) => (
+        <span key={c} className="px-3 py-1.5 rounded-full text-xs" style={{ background: 'var(--color-surface-raised)', color: 'var(--color-ink)' }}>
+          {c}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** What the Filters sheet is set to, as the laptop ledger's chips: how rows are grouped and whether cleared rows show, always; anything else only when switched away from its default. */
+function ledgerStateChips(v: { grouping: Grouping; order: Order; showCleared: boolean; cycleTotals: boolean; groupByDirection: boolean; averageSpendForecast: boolean }): string[] {
+  const chips = [v.grouping === 'category' ? 'Grouped by category' : v.grouping === 'person' ? 'Grouped by person' : v.order === 'amount' ? 'Ordered by amount' : 'Grouped by date', v.showCleared ? 'Cleared shown' : 'Cleared hidden']
+  if (v.groupByDirection) chips.push('Grouped by direction')
+  if (v.averageSpendForecast) chips.push('Average spend forecast')
+  return chips
+}
+
 function PersonalDetail({
   data,
   horizon,
@@ -2920,14 +3260,25 @@ function PersonalDetail({
   // folds every cycle's forecast (including the current one) in.
   const forecastTotal = forecastByCycle ? [...forecastByCycle.values()].reduce((sum, f) => sum + f.forecastAmount, 0) : 0
   const displayedProjectedBalance = round2(projection.projectedBalance - forecastTotal)
+  const wide = useWide()
+  const hasLoans = data.loans.some((l) => l.location === 'personal' && l.ownerId === data.primaryPersonId && l.active)
 
   return (
     <div className="flex flex-col gap-4">
-      <HomeSection>
-        <h2 className="font-display text-lg font-semibold text-[var(--color-ink)] mb-1">Personal</h2>
-        <p className="text-xs text-[var(--color-ink-faint)] mb-4">
-          £{formatCurrency(projection.clearedBalance)} now · £{formatCurrency(displayedProjectedBalance)} projected · {HORIZON_LABELS[horizon].toLowerCase()}
-        </p>
+      <HomeSection className={wide ? '!px-2 !pt-5 !pb-2' : ''}>
+        {wide ? (
+          <LaptopLedgerHeading
+            title={`Personal · ${HORIZON_LABELS[horizon].toLowerCase()}`}
+            chips={ledgerStateChips({ grouping, order, showCleared, cycleTotals, groupByDirection: !!groupByDirection, averageSpendForecast: !!averageSpendForecast })}
+          />
+        ) : (
+          <>
+            <h2 className="font-display text-lg font-semibold text-[var(--color-ink)] mb-1">Personal</h2>
+            <p className="text-xs text-[var(--color-ink-faint)] mb-4">
+              £{formatCurrency(projection.clearedBalance)} now · £{formatCurrency(displayedProjectedBalance)} projected · {HORIZON_LABELS[horizon].toLowerCase()}
+            </p>
+          </>
+        )}
 
         {grouping === 'category' ? (
           <CategoryGroupedList transactions={inCycleWindow(ledgerTxns, cycles)} data={data} showCleared={showCleared} />
@@ -2958,6 +3309,7 @@ function PersonalDetail({
         )}
       </HomeSection>
 
+      <div className={wide && hasLoans ? 'grid grid-cols-2 gap-4 items-start' : 'contents'}>
       <HomeSection>
         <TrendPreview
           cardName="Personal"
@@ -2994,6 +3346,7 @@ function PersonalDetail({
           individualRings={false}
         />
       )}
+      </div>
     </div>
   )
 }

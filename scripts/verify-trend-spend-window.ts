@@ -44,7 +44,10 @@ function load(file: string): AppDataV2 {
 }
 const mum = load('finance-ledger-backup-2026-09-17-mum.json')
 const adam = load('finance-ledger-backup-2026-09-15.json')
-const ASOF = new Date()
+// Pinned to the day these backups were read, so the checks never depend on the day they run —
+// with `new Date()` here, every window moved on with the calendar and the 'before 2026-10-14'
+// comparisons failed from 14 October 2026.
+const ASOF = new Date(2026, 8, 18, 12)
 
 console.log('\n── 1. Every Spend window opens at zero ──')
 

@@ -24,11 +24,13 @@
 // data. This file asserts that equivalence directly — it is the property
 // that was broken, not just the figures.
 //
-// NOTE ON DATES: the cycle periods are pinned here via asOf. Row STATUS
+// NOTE ON DATES: the cycle periods are pinned via asOf, and row STATUS
 // (pending vs cleared) is derived inside buildCreditCardCycleSections from
-// the real wall clock, so the status assertions below hold while today is
-// on or before 2026-10-14 and are skipped after it, with the date-stable
-// amount/date/closing-balance assertions still enforced.
+// the wall clock — so the clock itself is pinned below, to the day of this
+// backup. Left on the real clock, every check that reads a status failed
+// from 15 October 2026, when the 14 October charge became cleared: the
+// status checks were skipped, and the flat list (which hides cleared rows)
+// came back empty.
 import { readFileSync } from 'node:fs'
 import { cardBalanceAsOf, creditCardCyclePeriods, buildCreditCardCycleSections } from '../src/lib/creditCards'
 import { toLocalIsoDate as toIso } from '../src/lib/date'
@@ -50,7 +52,21 @@ const cardOf = (id: string): CreditCard => {
 }
 const asOf = new Date(2026, 8, 15)
 const THREE_CYCLES_AHEAD = 3
-const statusAssertable = toIso(new Date()) <= '2026-10-14'
+
+// The wall clock, pinned to noon on the backup's day (see NOTE ON DATES).
+const PINNED_NOW = new Date(2026, 8, 15, 12).getTime()
+const RealDate = Date
+class PinnedDate extends RealDate {
+  constructor(...args: unknown[]) {
+    if (args.length === 0) super(PINNED_NOW)
+    else super(...(args as [string | number | Date]))
+  }
+  static now() {
+    return PINNED_NOW
+  }
+}
+globalThis.Date = PinnedDate as unknown as DateConstructor
+check('(control) the clock really is pinned', toIso(new Date()), '2026-09-15')
 
 // Mirrors Home.tsx CreditCardHero exactly: periods from the CARD's own
 // cycles, sections built for both toggle states, flat list flattened from
@@ -90,7 +106,7 @@ console.log('\n--- Santander: cycle totals ON ---')
 const sThis = heroLedger(cardOf('lhF0fbR8'), 'this_cycle', false)
 check('this cycle balance due is £91.24', sThis.sections[0].closingBalance, 91.24)
 check('this cycle rows: the 14 Oct charge for £91.24', sThis.sections[0].rows.map((r) => `${r.date}/${r.amount}`), ['2026-10-14/91.24'])
-if (statusAssertable) check('that row is pending', sThis.sections[0].rows[0]?.status, 'pending')
+check('that row is pending', sThis.sections[0].rows[0]?.status, 'pending')
 const sThree = heroLedger(cardOf('lhF0fbR8'), 'three_cycles', false)
 // The 100% charge clears the balance outright, so every later cycle is £0.
 check('next 3 cycles closing balances: £91.24 / £0 / £0 / £0', sThree.sections.map((s) => s.closingBalance), [91.24, 0, 0, 0])

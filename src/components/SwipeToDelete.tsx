@@ -1,4 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react'
+import { useWide } from '../lib/useWide'
 import { Trash2 } from 'lucide-react'
 import { ConfirmModal } from './ConfirmModal'
 import { DeleteGuardModal } from './DeleteGuardModal'
@@ -65,6 +66,7 @@ export function SwipeToDelete({ children, onDelete, confirmLabel, confirmDescrip
   const [offset, setOffset] = useState(0)
   const [dragging, setDragging] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const wide = useWide()
 
   function handlePointerDown(e: React.PointerEvent) {
     if (isNativeControlTarget(e.target)) return
@@ -72,17 +74,25 @@ export function SwipeToDelete({ children, onDelete, confirmLabel, confirmDescrip
     startOffset.current = offset
     draggedPastThreshold.current = false
     setDragging(true)
-    // Capture on currentTarget (this wrapper div), not e.target — target
-    // could be any nested descendant, and capturing there is both less
-    // correct and part of what made the select-interaction bug above
-    // possible in the first place.
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
 
   function handlePointerMove(e: React.PointerEvent) {
     if (startX.current === null) return
     const delta = e.clientX - startX.current
-    if (Math.abs(delta) > DRAG_THRESHOLD) draggedPastThreshold.current = true
+    if (Math.abs(delta) > DRAG_THRESHOLD && !draggedPastThreshold.current) {
+      draggedPastThreshold.current = true
+      // Capture only once this is a real drag, and on currentTarget (this
+      // wrapper div), not e.target — target could be any nested descendant,
+      // and capturing there is part of what made the select-interaction bug
+      // above possible.
+      //
+      // 🚨 Never on pointerdown. With a MOUSE, a capture taken on pointerdown
+      // makes the browser deliver the click to this wrapper instead of the
+      // button under the pointer, so a plain click on a row never opened it
+      // (the laptop view). Touch is captured to its target implicitly, which
+      // is why phones never showed it.
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    }
     const next = Math.min(0, Math.max(-REVEAL_WIDTH, startOffset.current + delta))
     setOffset(next)
   }
@@ -141,7 +151,9 @@ export function SwipeToDelete({ children, onDelete, confirmLabel, confirmDescrip
       <button
         onClick={handleDeleteTap}
         className="absolute top-0 right-0 h-full flex items-center justify-center rounded-2xl"
-        style={{ width: REVEAL_WIDTH, background: 'var(--color-negative)' }}
+        // Laptop: hidden until a drag starts, so its red edge never shows at
+        // the corners of a closed row sitting on a same-coloured table card.
+        style={{ width: REVEAL_WIDTH, background: 'var(--color-negative)', visibility: wide && offset === 0 && !dragging ? 'hidden' : undefined }}
       >
         <Trash2 size={18} color="#fff" />
       </button>

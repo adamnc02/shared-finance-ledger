@@ -50,6 +50,8 @@ export interface BalanceSpendChartProps {
   height?: number
   /** Reports the active tap-and-hold point so the caller can render its own tooltip (with category-icon content, via its own dayIcons lookup) in the modal's callout area above the chart, instead of overlaying it on the chart itself — mirrors SavingsPotPillChart's onActivePointChange. */
   onActivePointChange?: (point: { date: string; value: number } | null) => void
+  /** Stretch the plot across the full width of its container (the laptop's inline preview, whose card is far wider than the 320-unit drawing). Lines keep their thickness (`.trend-fill` in index.css); the today dot, which would stretch into an oval, is not drawn. */
+  fill?: boolean
 }
 
 const WIDTH = 320
@@ -101,7 +103,7 @@ function areaPath(points: { x: number; y: number }[], baselineY: number): string
   return `${top} L${last.x.toFixed(1)},${baselineY.toFixed(1)} L${first.x.toFixed(1)},${baselineY.toFixed(1)} Z`
 }
 
-export function BalanceSpendChart({ series, view, color, interactive = false, height = 200, onActivePointChange }: BalanceSpendChartProps) {
+export function BalanceSpendChart({ series, view, color, interactive = false, height = 200, onActivePointChange, fill = false }: BalanceSpendChartProps) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const dragging = useRef(false)
@@ -199,7 +201,9 @@ export function BalanceSpendChart({ series, view, color, interactive = false, he
         ref={svgRef}
         viewBox={`0 0 ${WIDTH + padRight} ${height}`}
         width="100%"
-        height={height}
+        height={fill ? height * 1.75 : height}
+        preserveAspectRatio={fill ? 'none' : undefined}
+        className={fill ? 'trend-fill' : undefined}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endGesture}

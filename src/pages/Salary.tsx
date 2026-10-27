@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { computeJointAccountProjection } from '../lib/jointAccountLedger'
+import { useWide } from '../lib/useWide'
 import { createPortal } from 'react-dom'
 import { formatCurrency } from '../lib/format'
 import { useLedgerData } from '../context/LedgerContext'
@@ -12,7 +14,7 @@ import type { AppDataV2, Category, Loan, PayCycleConfig, PaySchedule, Pension, P
 import { nanoid } from 'nanoid'
 import { DeductionModal } from '../components/DeductionModal'
 import { SwipeToDelete } from '../components/SwipeToDelete'
-import { OpensSheetIcon, RowSheet } from '../components/RowSheet'
+import { OpensSheetIcon, RowSheet, SheetOnLaptop, LaptopPanelLayout } from '../components/RowSheet'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { DeleteGuardModal } from '../components/DeleteGuardModal'
@@ -44,7 +46,7 @@ import { JointAccountSetupModal } from '../components/JointAccountSetupModal'
 import { HeaderAccessory } from '../components/HeaderAccessory'
 import { WalletBackupSlot } from '../components/BackupSection'
 import { RebalanceAccountsModal, type RebalanceTarget } from '../components/RebalanceAccountsModal'
-import { formatFullDate } from '../lib/format'
+import { formatFullDate, formatMonthYear } from '../lib/format'
 import {
   newSavingsPot,
   applyInterestMethodChange,
@@ -52,6 +54,7 @@ import {
   savingsPotBalanceAsOf,
   buildSavingsPotScheduleRows,
   type SavingsPotScheduleRow,
+  amountNeededPerPayPeriod,
 } from '../lib/savingsPotLedger'
 import { buildExampleLedger } from '../lib/savingsInterest'
 import { newPot, potBalanceAsOf, potDepositOccurrencePreviews } from '../lib/potLedger'
@@ -404,9 +407,12 @@ function PensionRow({
   const pauseWindowDates = trimToManageUpcoming(scheduledPensionDates(pension, pauseWindow.start, pauseWindow.end), (d) => d, new Date())
   const currentlyPausedPensionDates = new Set((pension.occurrenceOverrides ?? []).filter((o) => o.deleted && pauseWindowDates.includes(o.originalDate)).map((o) => o.originalDate))
 
+  // Laptop (lib/laptop.ts): a flat row of the Pensions card, not a card of its own.
+  const wide = useWide()
+
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={pension.name}>
-      <div className="relative rounded-2xl p-4" style={{ background: 'var(--color-surface)' }}>
+      <div className={wide ? 'relative rounded-2xl px-2 py-1.5' : 'relative rounded-2xl p-4'} style={{ background: wide ? (isOpen ? 'var(--color-surface-raised)' : 'var(--color-surface)') : 'var(--color-surface)' }}>
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2 min-w-0">
             <span className="font-display text-base font-semibold text-[var(--color-ink)] truncate">{pension.name}</span>
@@ -423,7 +429,7 @@ function PensionRow({
         </button>
 
         {isOpen && (
-          <RowSheet title={pension.name} onClose={onToggle}>
+          <RowSheet title={pension.name} subtitle="Pension" onClose={onToggle}>
             <PensionForm
               people={people}
               defaultPersonId={pension.personId}
@@ -1310,6 +1316,112 @@ function SavingsPotRow({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const wide = useWide()
+  const savingsForm = (
+    <SavingsPotForm
+      people={people}
+      defaultPersonId={pot.personId}
+      initial={{
+        name: pot.name,
+        openingBalance: pot.openingBalance,
+        openingDate: pot.openingDate,
+        interestMethod: pot.interestMethod,
+        targetAmount: pot.targetAmount,
+        targetDate: pot.targetDate,
+        recurringDepositAmount: pot.recurringDepositAmount,
+        recurringDepositDayOfMonth: pot.recurringDepositDayOfMonth,
+        interestDestination: pot.interestDestination,
+      }}
+      locationOptions={locationOptions}
+      onCancel={onToggle}
+      onSave={(personId, fields) => {
+        const methodChanged = JSON.stringify(fields.interestMethod) !== JSON.stringify(pot.interestMethod)
+        const methodPatch = methodChanged ? applyInterestMethodChange(pot, fields.interestMethod, todayIso()) : { interestMethod: fields.interestMethod }
+        onSave({
+          personId,
+          name: fields.name,
+          targetAmount: fields.targetAmount,
+          targetDate: fields.targetDate,
+          recurringDepositAmount: fields.recurringDepositAmount,
+          recurringDepositDayOfMonth: fields.recurringDepositDayOfMonth,
+          recurringDepositStartDate: fields.recurringDepositAmount ? (pot.recurringDepositStartDate ?? todayIso()) : undefined,
+          interestDestination: fields.interestDestination,
+          ...methodPatch,
+        })
+        onToggle()
+        triggerFlash()
+      }}
+    />
+  )
+
+  // Laptop (lib/laptop.ts): one row of the Savings card — the target ring,
+  // the balance against the target, the rate and what to put in each pay
+  // period to reach it. Everything the phone card shows inline (log a
+  // deposit, a recurring transfer, the ledger, the icon) moves into its panel.
+  if (wide) {
+    const target = pot.targetAmount ?? 0
+    const percent = target > 0 ? Math.min(100, (balance / target) * 100) : 0
+    const snapshot = owner ? findApplicableSnapshot(owner, todayIso()) : null
+    const goal = snapshot && pot.targetDate ? amountNeededPerPayPeriod(pot, balance, snapshot.payFrequency) : null
+    const aer = pot.interestMethod?.aer
+    const detail = [aer ? `${aer}% AER` : null, goal ? `£${formatCurrency(goal.amountPerPeriod)} a ${goal.periodLabel} to hit ${formatMonthYear(pot.targetDate!)}` : nextDeposit ? `next deposit ${nextDeposit.date}` : null].filter(Boolean).join(' · ')
+    return (
+      <div className="relative">
+        <button onClick={onToggle} aria-expanded={isOpen} className="w-full flex items-center gap-4 p-2 -mx-2 rounded-2xl text-left transition-colors hover:bg-[var(--color-surface-raised)]" style={{ background: isOpen ? 'var(--color-surface-raised)' : undefined }}>
+          {target > 0 ? (
+            <svg width={72} height={72} viewBox="0 0 72 72" role="img" aria-label={`${Math.round(percent)}% of target`} className="shrink-0">
+              <circle cx={36} cy={36} r={28} fill="none" stroke="var(--color-track)" strokeWidth={9} />
+              <circle cx={36} cy={36} r={28} fill="none" stroke={pot.color ?? 'var(--color-positive)'} strokeWidth={9} strokeLinecap="round" strokeDasharray={`${(percent / 100) * 2 * Math.PI * 28} ${2 * Math.PI * 28}`} transform="rotate(-90 36 36)" />
+            </svg>
+          ) : (
+            <CategoryIcon category={{ icon: pot.categoryIcon ?? DEFAULT_POT_CATEGORY_ICON, iconColor: pot.categoryIconColor ?? DEFAULT_POT_CATEGORY_ICON_COLOR }} />
+          )}
+          <span className="flex flex-col gap-0.5 min-w-0">
+            <span className="font-semibold text-[var(--color-ink)] truncate">
+              {pot.name}
+              {people.length > 1 && <span className="ml-2 text-xs font-normal text-[var(--color-ink-muted)]">{owner?.name ?? 'Unknown'}</span>}
+            </span>
+            <span className="font-mono text-sm text-[var(--color-ink)]">
+              £{formatCurrency(balance)}
+              {target > 0 && ` of £${formatCurrency(target)}`}
+            </span>
+            {detail && <span className="text-xs text-[var(--color-ink-muted)]">{detail}</span>}
+          </span>
+        </button>
+        {isOpen && (
+          <RowSheet title={pot.name} subtitle={`Savings · £${formatCurrency(balance)}`} onClose={onToggle}>
+            <div className="flex flex-col gap-3 pb-4 mb-4 border-b" style={{ borderColor: 'var(--color-track)' }}>
+              <LogTransferButton fixedLocation={{ type: 'savings', savingsPotId: pot.id }} locationOptions={locationOptions} onLogDeposit={onLogDeposit} onLogWithdrawal={onLogWithdrawal} onLogged={triggerFlash} />
+              <RecurringTransferEditor location={{ type: 'savings', savingsPotId: pot.id }} defaultName={pot.name} locationOptions={locationOptions} onAdd={onAddRecurringTransfer} onUpdate={onUpdateRecurringTemplate} onRemove={onRemoveRecurringTemplate} onSaved={triggerFlash} />
+              <div className="flex gap-2">
+                <button onClick={() => setLedgerOpen(true)} className="h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
+                  View ledger
+                </button>
+                <button onClick={() => setPickingIcon(true)} className="h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
+                  Change icon
+                </button>
+              </div>
+            </div>
+            {savingsForm}
+          </RowSheet>
+        )}
+        {pickingIcon && (
+          <CategoryIconPickerModal
+            name={pot.name}
+            categories={categories}
+            onCancel={() => setPickingIcon(false)}
+            onConfirm={(icon, iconColor) => {
+              onSave({ categoryIcon: icon, categoryIconColor: iconColor })
+              setPickingIcon(false)
+            }}
+          />
+        )}
+        {ledgerOpen && <SavingsPotLedgerModal pot={pot} transactions={transactions} onOverrideInterest={onOverrideInterest} onClose={() => setLedgerOpen(false)} />}
+        <SavedFlashOverlay active={flashActive} />
+      </div>
+    )
+  }
 
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={pot.name} deleteGuard={{ type: 'savingsPot', id: pot.id }}>
@@ -2315,6 +2427,72 @@ function PotRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const wide = useWide()
+  // Laptop (lib/laptop.ts): one row of the Pots card — the pot, what it
+  // pays, and its balance. Logging, the recurring transfer, the icon and the
+  // edit form move into its panel.
+  if (wide) {
+    return (
+      <div className="relative">
+        <button onClick={onToggle} aria-expanded={isOpen} className="w-full min-h-[52px] flex items-center gap-3 p-2 -mx-2 rounded-2xl text-left transition-colors hover:bg-[var(--color-surface-raised)]" style={{ background: isOpen ? 'var(--color-surface-raised)' : undefined }}>
+          <CategoryIcon category={{ icon: pot.categoryIcon ?? DEFAULT_POT_CATEGORY_ICON, iconColor: pot.categoryIconColor ?? DEFAULT_POT_CATEGORY_ICON_COLOR }} size={14} />
+          <span className="flex-1 min-w-0">
+            <span className="block font-medium text-[var(--color-ink)] truncate">
+              {pot.name}
+              {people.length > 1 && <span className="ml-2 text-xs font-normal text-[var(--color-ink-muted)]">{owner?.name ?? 'Unknown'}</span>}
+            </span>
+            <span className="block text-xs text-[var(--color-ink-muted)]">
+              {payingCount > 0 ? `Pays ${payingCount} bill${payingCount === 1 ? '' : 's'}/loan${payingCount === 1 ? '' : 's'}` : 'Not paying anything yet'}
+            </span>
+          </span>
+          <span className="font-mono text-sm text-[var(--color-ink)]">£{formatCurrency(balance)}</span>
+        </button>
+        {isOpen && (
+          <RowSheet title={pot.name} subtitle={`Pot · £${formatCurrency(balance)}`} onClose={onToggle}>
+            <p className="text-xs text-[var(--color-ink-muted)] mb-3">
+              £{formatCurrency(pot.openingBalance)} opening ({formatFullDate(pot.openingDate)})
+              {netActivity !== 0 ? ` · ${netActivity > 0 ? '+' : '-'}£${formatCurrency(Math.abs(netActivity))} since` : ''}
+              {nextDeposit ? ` · next deposit ${nextDeposit.date}` : ''}
+            </p>
+            <div className="flex flex-col gap-3 pb-4 mb-4 border-b" style={{ borderColor: 'var(--color-track)' }}>
+              <LogTransferButton fixedLocation={{ type: 'pot', potId: pot.id }} locationOptions={locationOptions} onLogDeposit={onLogDeposit} onLogWithdrawal={onLogWithdrawal} onLogged={triggerFlash} />
+              <RecurringTransferEditor location={{ type: 'pot', potId: pot.id }} defaultName={pot.name} locationOptions={locationOptions} onAdd={onAddRecurringTransfer} onUpdate={onUpdateRecurringTemplate} onRemove={onRemoveRecurringTemplate} onSaved={triggerFlash} />
+              <button onClick={() => setPickingIcon(true)} className="self-start h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
+                Change icon
+              </button>
+            </div>
+            <PotEditForm
+              pot={pot}
+              templates={templates}
+              loans={loans}
+              onCancel={onToggle}
+              onSave={(updates) => {
+                onSave(updates)
+                onToggle()
+                triggerFlash()
+              }}
+              onAssignTemplateLocation={onAssignTemplateLocation}
+              onAssignLoanLocation={onAssignLoanLocation}
+              roundUp={roundUp}
+            />
+          </RowSheet>
+        )}
+        {pickingIcon && (
+          <CategoryIconPickerModal
+            name={pot.name}
+            categories={categories}
+            onCancel={() => setPickingIcon(false)}
+            onConfirm={(icon, iconColor) => {
+              onSave({ categoryIcon: icon, categoryIconColor: iconColor })
+              setPickingIcon(false)
+            }}
+          />
+        )}
+        <SavedFlashOverlay active={flashActive} />
+      </div>
+    )
+  }
+
   return (
     <SwipeToDelete onDelete={onRemove} confirmLabel={pot.name} deleteGuard={{ type: 'pot', id: pot.id }}>
       <div className="relative rounded-2xl p-4" style={{ background: 'var(--color-surface)' }}>
@@ -2656,6 +2834,10 @@ function SalaryEndDateField({ person, onChange }: { person: Person; onChange: (s
 }
 
 export function Salary() {
+  const wide = useWide()
+  const [jointPanelOpen, setJointPanelOpen] = useState(false)
+  // Laptop: whose pay history is showing (the History button on the salary card).
+  const [historyOpenFor, setHistoryOpenFor] = useState<string | null>(null)
   const {
     data,
     setData,
@@ -2883,10 +3065,35 @@ export function Salary() {
   const anyoneHasSalary = data.people.some(hasSalaryConfigured)
 
   return (
-    <div className="max-w-md mx-auto px-4 pt-6">
-      <header className="mb-6 flex items-center justify-between">
-        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Wallet</h1>
-        <div className="flex items-center gap-2">
+    <div className={wide ? 'px-10 pt-8 pb-4' : 'max-w-md mx-auto px-4 pt-6'}>
+      <LaptopPanelLayout>
+      <header className="mb-6 flex items-center justify-between gap-3">
+        <h1 className={`font-display font-semibold text-[var(--color-ink)] ${wide ? 'text-3xl flex-1' : 'text-2xl'}`}>Wallet</h1>
+        {wide && (
+          <>
+            <button
+              onClick={() => setPeopleModalOpen(true)}
+              className="h-11 px-4 rounded-full border text-[13px] font-semibold text-[var(--color-ink)] transition-colors duration-300"
+              style={{ background: flashPeopleButton ? 'var(--color-coral)' : 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}
+            >
+              Manage people
+            </button>
+            {data.payCycles.some((pc) => pc.personId === data.primaryPersonId) && (
+              <button
+                onClick={() => setSettingsOpenFor(data.primaryPersonId)}
+                className="h-11 px-4 rounded-full border text-[13px] font-semibold text-[var(--color-ink)]"
+                style={{ background: 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}
+              >
+                Pay cycle settings
+              </button>
+            )}
+            <button onClick={() => setRebalancing(true)} className="h-11 px-[18px] rounded-full text-[13px] font-semibold text-white" style={{ background: 'var(--color-coral)' }}>
+              Rebalance all accounts
+            </button>
+            <HeaderAccessory />
+          </>
+        )}
+        <div className={wide ? 'hidden' : 'flex items-center gap-2'}>
           <button
             onClick={() => setPeopleModalOpen(true)}
             className="w-9 h-9 rounded-full flex items-center justify-center transition-colors duration-300"
@@ -2896,13 +3103,21 @@ export function Salary() {
             <Users size={18} className={flashPeopleButton ? 'text-white' : 'text-[var(--color-ink)]'} />
           </button>
           {/* Empty offline; the sync app's Account button (HeaderAccessory.tsx). */}
-          <HeaderAccessory />
+          {!wide && <HeaderAccessory />}
         </div>
       </header>
 
+      {/* Laptop (lib/laptop.ts): Salary across the top, then Savings, Pots,
+          the Joint Account, Pensions and Backup as a grid of cards, in that
+          order (CSS order; the markup keeps the phone's order). On the phone every wrapper is
+          display: contents, so the page keeps its order and layout. */}
+      <div className={wide ? 'grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-x-6 gap-y-8 items-stretch' : 'contents'}>
       {/* Renders here unless an app claims Backup & Restore for somewhere else (BackupSection.tsx). */}
-      <WalletBackupSlot data={data} onRestore={setData} />
+        <div className={wide ? 'order-last flex flex-col' : 'contents'}>
+        <WalletBackupSlot data={data} onRestore={setData} />
+        </div>
 
+      <div className={wide ? 'order-first col-span-full [&>section]:mb-0' : 'contents'}>
       <CollapsibleSection
         title="Salary"
         className="mb-8"
@@ -2961,10 +3176,14 @@ export function Salary() {
               sort local to this list, not a change to data.people's own
               order (which stays whatever it was created in everywhere
               else in the app). */}
-          {[...data.people].sort((a, b) => (a.id === data.primaryPersonId ? -1 : b.id === data.primaryPersonId ? 1 : 0)).map((person) => {
+          {/* Laptop (lib/laptop.ts): only this device's own person's salary. */}
+          {[...data.people].filter((p) => !wide || p.id === data.primaryPersonId).sort((a, b) => (a.id === data.primaryPersonId ? -1 : b.id === data.primaryPersonId ? 1 : 0)).map((person) => {
             const payCycle = data.payCycles.find((pc) => pc.personId === person.id)
             const hasSalary = hasSalaryConfigured(person)
-            const isOpen = expandedPersonId === person.id
+            // Laptop (lib/laptop.ts): a set-up salary card is always open — no
+            // next-payday summary row, no chevron, no divider; just its tiles.
+            const alwaysOpen = wide && hasSalary
+            const isOpen = expandedPersonId === person.id || alwaysOpen
             const isFollowed = payCycle?.followsIncomeSource === undefined || payCycle.followsIncomeSource.type === 'salary'
             const showFollowingTag = hasSalary && isFollowed && activeIncomeSourceCount(person, data.pensions) >= 2
 
@@ -2976,13 +3195,27 @@ export function Salary() {
                     {person.id === data.primaryPersonId && <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-coral)] shrink-0">Me</span>}
                     {showFollowingTag && <FollowingTag />}
                   </div>
-                  {hasSalary && (
-                    <button onClick={() => setSettingsOpenFor(person.id)} className="text-[var(--color-ink-muted)] shrink-0" aria-label="Pay cycle settings">
-                      <Settings size={16} />
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Laptop: History is a button at the top of the card, not a toggle under the pay periods. */}
+                    {wide && hasSalary && isOpen && (
+                      <button
+                        onClick={() => setHistoryOpenFor(historyOpenFor === person.id ? null : person.id)}
+                        aria-pressed={historyOpenFor === person.id}
+                        className="h-8 px-3 rounded-full text-xs font-semibold"
+                        style={{ background: historyOpenFor === person.id ? 'var(--color-coral)' : 'var(--color-surface-raised)', color: historyOpenFor === person.id ? '#fff' : 'var(--color-ink)' }}
+                      >
+                        History
+                      </button>
+                    )}
+                    {hasSalary && (
+                      <button onClick={() => setSettingsOpenFor(person.id)} className="text-[var(--color-ink-muted)] shrink-0" aria-label="Pay cycle settings">
+                        <Settings size={16} />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
+                {!alwaysOpen && (
                 <button
                   onClick={() => {
                     setExpandedPersonId(isOpen ? null : person.id)
@@ -2998,9 +3231,10 @@ export function Salary() {
                   <SalaryRowSummary person={person} payCycle={payCycle} hasSalary={hasSalary} />
                   <span className="text-[var(--color-ink-muted)] shrink-0 pl-2">{isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</span>
                 </button>
+                )}
 
                 {isOpen && (
-                  <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
+                  <div className={alwaysOpen ? 'mt-3' : 'mt-3 pt-3 border-t'} style={{ borderColor: 'var(--color-track)' }}>
                     {!hasSalary ? (
                       <SalarySetupForm
                         payCycle={payCycle}
@@ -3047,11 +3281,15 @@ export function Salary() {
                           }}
                           editingDeduction={editingDeduction}
                           setEditingDeduction={setEditingDeduction}
+                          historyOpen={historyOpenFor === person.id}
                         />
-                        <SalaryEndDateField
-                          person={person}
-                          onChange={(snapshotId, endDate) => updateSalarySnapshot(person.id, snapshotId, { endDate })}
-                        />
+                        {/* Laptop: the end date is in the salary settings (the cog). */}
+                        {!wide && (
+                          <SalaryEndDateField
+                            person={person}
+                            onChange={(snapshotId, endDate) => updateSalarySnapshot(person.id, snapshotId, { endDate })}
+                          />
+                        )}
                         {/* Only reachable once this person's current
                             salary has an end date set — see
                             peopleEligibleForNewSalary's own comment for
@@ -3114,10 +3352,13 @@ export function Salary() {
           })}
         </div>
       </CollapsibleSection>
+      </div>
 
+      <div className="contents">
       <CollapsibleSection
         title="Pensions"
-        className="mb-8"
+        className={wide ? 'order-4' : 'mb-8'}
+        card={wide}
         defaultOpen={myPensions.length > 0}
         open={pensionsSectionOpen}
         onOpenChange={setPensionsSectionOpen}
@@ -3153,27 +3394,29 @@ export function Salary() {
           />
         )}
         {addingPension && (
-          <PensionForm
-            people={data.people}
-            defaultPersonId={pensionDefaultPersonId}
-            onCancel={() => {
-              setAddingPension(false)
-              if (myPensions.length === 0) setPensionsSectionOpen(false)
-            }}
-            onSave={(personId, fields) => {
-              // UAT 2026-09-08 (9-wallet-pension): used to force this row
-              // open (setExpandedPensionId) so the flash had something to
-              // show against — but that left it expanded after saving,
-              // unlike every other "new X" flash (Bills/Loans/Credit
-              // Cards), which flash their still-collapsed row on mount via
-              // shouldFlashOnMount instead. Matched that pattern here too.
-              const id = addPension(personId, newPension({ personId, ...fields }))
-              setAddingPension(false)
-              setJustCreatedPensionId(id)
-            }}
-          />
+          <SheetOnLaptop title="Add a pension" onClose={() => setAddingPension(false)}>
+            <PensionForm
+              people={data.people}
+              defaultPersonId={pensionDefaultPersonId}
+              onCancel={() => {
+                setAddingPension(false)
+                if (myPensions.length === 0) setPensionsSectionOpen(false)
+              }}
+              onSave={(personId, fields) => {
+                // UAT 2026-09-08 (9-wallet-pension): used to force this row
+                // open (setExpandedPensionId) so the flash had something to
+                // show against — but that left it expanded after saving,
+                // unlike every other "new X" flash (Bills/Loans/Credit
+                // Cards), which flash their still-collapsed row on mount via
+                // shouldFlashOnMount instead. Matched that pattern here too.
+                const id = addPension(personId, newPension({ personId, ...fields }))
+                setAddingPension(false)
+                setJustCreatedPensionId(id)
+              }}
+            />
+          </SheetOnLaptop>
         )}
-        <div className="flex flex-col gap-3">
+        <div className={wide ? 'flex flex-col gap-1' : 'flex flex-col gap-3'}>
           {myPensions.map((pension) => {
             const person = data.people.find((p) => p.id === pension.personId)
             const payCycle = data.payCycles.find((pc) => pc.personId === pension.personId)
@@ -3200,7 +3443,8 @@ export function Salary() {
 
       <CollapsibleSection
         title="Savings"
-        className="mb-8"
+        className={wide ? 'order-1' : 'mb-8'}
+        card={wide}
         defaultOpen={mySavingsPots.length > 0}
         open={savingsSectionOpen}
         onOpenChange={setSavingsSectionOpen}
@@ -3228,64 +3472,66 @@ export function Salary() {
           />
         )}
         {addingSavingsFor && (
-          <SavingsPotForm
-            people={data.people}
-            defaultPersonId={addingSavingsFor}
-            locationOptions={transferLocationOptions}
-            onCancel={() => {
-              setAddingSavingsFor(null)
-              if (mySavingsPots.length === 0) setSavingsSectionOpen(false)
-            }}
-            onSave={(personId, fields) => {
-              const id = addSavingsPot(
-                personId,
-                newSavingsPot({
+          <SheetOnLaptop title="Add a savings pot" onClose={() => setAddingSavingsFor(null)}>
+            <SavingsPotForm
+              people={data.people}
+              defaultPersonId={addingSavingsFor}
+              locationOptions={transferLocationOptions}
+              onCancel={() => {
+                setAddingSavingsFor(null)
+                if (mySavingsPots.length === 0) setSavingsSectionOpen(false)
+              }}
+              onSave={(personId, fields) => {
+                const id = addSavingsPot(
                   personId,
-                  name: fields.name,
-                  openingBalance: fields.openingBalance,
-                  openingDate: fields.openingDate,
-                  interestMethod: fields.interestMethod,
-                  targetAmount: fields.targetAmount,
-                  targetDate: fields.targetDate,
-                  color: pickNextSharedCardColor(data),
-                  interestDestination: fields.interestDestination,
-                }),
-              )
-              if (fields.recurringDepositAmount) {
-                updateSavingsPot(id, {
-                  recurringDepositAmount: fields.recurringDepositAmount,
-                  recurringDepositDayOfMonth: fields.recurringDepositDayOfMonth,
-                  recurringDepositStartDate: fields.openingDate,
-                })
-              }
-              setAddingSavingsFor(null)
-              setJustCreatedSavingsPotId(id)
-              // BUGFIX (Adam-reported, 2026-09 session — "I have to click
-              // Looks good twice before the modal disappears and
-              // collapses the card"). Traced this thoroughly: there's
-              // only ever one SavingsPotForm instance mounted in each
-              // mode, and React 19's automatic batching means every
-              // state update in this one click (addSavingsPot,
-              // optionally updateSavingsPot, setAddingSavingsFor,
-              // and InterestExplanationModal's own setConfirming(false))
-              // commits together — I couldn't find a genuine double-
-              // render in the code. The one real difference from Pot's
-              // own (unreported) auto-expand-on-create is that Pot has no
-              // confirm-modal step to collide with — Savings Pot's
-              // InterestExplanationModal was closing on the exact same
-              // click that also immediately expanded the new pot's row
-              // into a second, freshly-mounted SavingsPotForm (in edit
-              // mode). Removing the auto-expand removes that collision
-              // entirely regardless of the precise mechanism — the new
-              // pot's row now opens the way every other newly-created
-              // item in this list already does (collapsed, one tap away),
-              // rather than reopening it mid-creation. Flagged as a
-              // best-diagnosed fix rather than a confirmed one — let me
-              // know if it doesn't fully resolve the flash.
-            }}
-          />
+                  newSavingsPot({
+                    personId,
+                    name: fields.name,
+                    openingBalance: fields.openingBalance,
+                    openingDate: fields.openingDate,
+                    interestMethod: fields.interestMethod,
+                    targetAmount: fields.targetAmount,
+                    targetDate: fields.targetDate,
+                    color: pickNextSharedCardColor(data),
+                    interestDestination: fields.interestDestination,
+                  }),
+                )
+                if (fields.recurringDepositAmount) {
+                  updateSavingsPot(id, {
+                    recurringDepositAmount: fields.recurringDepositAmount,
+                    recurringDepositDayOfMonth: fields.recurringDepositDayOfMonth,
+                    recurringDepositStartDate: fields.openingDate,
+                  })
+                }
+                setAddingSavingsFor(null)
+                setJustCreatedSavingsPotId(id)
+                // BUGFIX (Adam-reported, 2026-09 session — "I have to click
+                // Looks good twice before the modal disappears and
+                // collapses the card"). Traced this thoroughly: there's
+                // only ever one SavingsPotForm instance mounted in each
+                // mode, and React 19's automatic batching means every
+                // state update in this one click (addSavingsPot,
+                // optionally updateSavingsPot, setAddingSavingsFor,
+                // and InterestExplanationModal's own setConfirming(false))
+                // commits together — I couldn't find a genuine double-
+                // render in the code. The one real difference from Pot's
+                // own (unreported) auto-expand-on-create is that Pot has no
+                // confirm-modal step to collide with — Savings Pot's
+                // InterestExplanationModal was closing on the exact same
+                // click that also immediately expanded the new pot's row
+                // into a second, freshly-mounted SavingsPotForm (in edit
+                // mode). Removing the auto-expand removes that collision
+                // entirely regardless of the precise mechanism — the new
+                // pot's row now opens the way every other newly-created
+                // item in this list already does (collapsed, one tap away),
+                // rather than reopening it mid-creation. Flagged as a
+                // best-diagnosed fix rather than a confirmed one — let me
+                // know if it doesn't fully resolve the flash.
+              }}
+            />
+          </SheetOnLaptop>
         )}
-        <div className="flex flex-col gap-3">
+        <div className={wide ? 'flex flex-col gap-1' : 'flex flex-col gap-3'}>
           {mySavingsPots.map((pot) => (
             <SavingsPotRow
               key={pot.id}
@@ -3325,7 +3571,8 @@ export function Salary() {
           to block on. */}
       <CollapsibleSection
         title="Pots"
-        className="mb-8"
+        className={wide ? 'order-2' : 'mb-8'}
+        card={wide}
         defaultOpen={myPots.length > 0}
         open={potsSectionOpen}
         onOpenChange={setPotsSectionOpen}
@@ -3353,29 +3600,31 @@ export function Salary() {
           />
         )}
         {addingBillsPotFor && (
-          <PotForm
-            onCancel={() => {
-              setAddingBillsPotFor(null)
-              if (myPots.length === 0) setPotsSectionOpen(false)
-            }}
-            onSave={({ name, openingBalance, openingDate }) => {
-              const personId = addingBillsPotFor
-              const id = addPot(personId, newPot({ personId, name, openingBalance, openingDate, color: pickNextSharedCardColor(data) }))
-              setAddingBillsPotFor(null)
-              // 2026-09-13: creation no longer has its own bill/loan
-              // checklist (it duplicated — and, for transfers, wrongly
-              // included items that — PotEditForm's already-correct
-              // potEligibleItems-driven checklist already handles). The
-              // new pot now opens straight into that same expanded edit
-              // form instead, so tagging bills/loans in uses the exact
-              // same effective-dated-change flow as editing an existing
-              // pot (and as Bills.tsx's own location changes).
-              setExpandedBillsPotId(id)
-              setJustCreatedPotId(id)
-            }}
-          />
+          <SheetOnLaptop title="Add a pot" onClose={() => setAddingBillsPotFor(null)}>
+            <PotForm
+              onCancel={() => {
+                setAddingBillsPotFor(null)
+                if (myPots.length === 0) setPotsSectionOpen(false)
+              }}
+              onSave={({ name, openingBalance, openingDate }) => {
+                const personId = addingBillsPotFor
+                const id = addPot(personId, newPot({ personId, name, openingBalance, openingDate, color: pickNextSharedCardColor(data) }))
+                setAddingBillsPotFor(null)
+                // 2026-09-13: creation no longer has its own bill/loan
+                // checklist (it duplicated — and, for transfers, wrongly
+                // included items that — PotEditForm's already-correct
+                // potEligibleItems-driven checklist already handles). The
+                // new pot now opens straight into that same expanded edit
+                // form instead, so tagging bills/loans in uses the exact
+                // same effective-dated-change flow as editing an existing
+                // pot (and as Bills.tsx's own location changes).
+                setExpandedBillsPotId(id)
+                setJustCreatedPotId(id)
+              }}
+            />
+          </SheetOnLaptop>
         )}
-        <div className="flex flex-col gap-3">
+        <div className={wide ? 'flex flex-col gap-1' : 'flex flex-col gap-3'}>
           {myPots.map((pot) => (
             <PotRow
               key={pot.id}
@@ -3414,6 +3663,52 @@ export function Salary() {
           section that appears once a joint account is detected — that's
           exactly what this is. */}
       {data.jointAccount && (
+        wide ? (
+          // Laptop (lib/laptop.ts): the joint account as its own white card —
+          // today's balance (the joint ledger's cleared balance, as Home
+          // shows it), who shares it, and when it opened. Logging, the
+          // recurring transfer and the opening balance are in its panel.
+          <div className="order-3 flex flex-col">
+            <button
+              onClick={() => setJointPanelOpen(true)}
+              aria-expanded={jointPanelOpen}
+              className="flex-1 w-full rounded-[20px] p-5 flex flex-col gap-2 text-left border-2"
+              style={{ background: 'var(--color-joint)', color: '#1a1a1a', borderColor: jointPanelOpen ? 'var(--color-coral)' : 'transparent' }}
+            >
+              <span className="text-[13px] font-semibold uppercase tracking-[0.08em]" style={{ color: '#4a5068' }}>Joint Account</span>
+              <span className="font-mono text-[22px] font-semibold">£{formatCurrency(computeJointAccountProjection(data, 'current_cycle')?.clearedBalance ?? data.jointAccount.openingBalance)}</span>
+              <span className="text-[13px]" style={{ color: '#4a5068' }}>
+                {data.people.map((p) => p.name).join(' and ')} · opened {formatFullDate(data.jointAccount.openingBalanceDate)} at £{formatCurrency(data.jointAccount.openingBalance)}
+              </span>
+            </button>
+            {jointPanelOpen && (
+              <RowSheet title="Joint Account" subtitle={data.people.map((p) => p.name).join(' and ')} onClose={() => setJointPanelOpen(false)}>
+                <div className="flex flex-col gap-3">
+                  <LogTransferButton
+                    fixedLocation={{ type: 'joint' }}
+                    locationOptions={transferLocationOptions}
+                    onLogDeposit={(amount, date, from, note) => logTransfer(from, { type: 'joint' }, amount, date, note)}
+                    onLogWithdrawal={(amount, date, to, note) => logTransfer({ type: 'joint' }, to, amount, date, note)}
+                    onLogged={triggerJointFlash}
+                  />
+                  <RecurringTransferEditor
+                    location={{ type: 'joint' }}
+                    defaultName="Joint Account"
+                    locationOptions={transferLocationOptions}
+                    onAdd={addRecurringTransfer}
+                    onUpdate={updateRecurringTemplate}
+                    onRemove={removeRecurringTemplate}
+                    onSaved={triggerJointFlash}
+                  />
+                  <button onClick={() => setEditingJointAccount(true)} className="self-start h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
+                    Opening balance: £{formatCurrency(data.jointAccount.openingBalance)} on {formatFullDate(data.jointAccount.openingBalanceDate)}
+                  </button>
+                </div>
+              </RowSheet>
+            )}
+            <SavedFlashOverlay active={jointFlashActive} />
+          </div>
+        ) : (
         <CollapsibleSection title="Joint Account" className="mb-8">
           <div className="relative rounded-2xl p-4 flex flex-col gap-3" style={{ background: 'var(--color-surface)' }}>
             {/* BUGFIX (Adam-reported, 2026-09 session) — used to be a plain
@@ -3455,7 +3750,10 @@ export function Salary() {
             <SavedFlashOverlay active={jointFlashActive} />
           </div>
         </CollapsibleSection>
+        )
       )}
+      </div>
+      </div>
       {editingJointAccount && data.jointAccount && (
         <JointAccountSetupModal
           initial={data.jointAccount}
@@ -3522,6 +3820,7 @@ export function Salary() {
                 setExpandedPersonId(null)
               }}
               onClose={() => setSettingsOpenFor(null)}
+              salaryEndDate={wide && hasSalaryConfigured(person) ? <SalaryEndDateField person={person} onChange={(snapshotId, endDate) => updateSalarySnapshot(person.id, snapshotId, { endDate })} /> : undefined}
             />
           )
         })()}
@@ -3536,6 +3835,7 @@ export function Salary() {
           savingsPotLedger.ts/jointAccountLedger.ts/projection.ts), so
           writing the new anchor here is already the "hide prior history"
           reset — locked to each account's own new date, no shared cutoff. */}
+      {!wide && (
       <button
         onClick={() => setRebalancing(true)}
         className="w-full py-3 rounded-full text-sm font-semibold text-white mt-6"
@@ -3543,6 +3843,7 @@ export function Salary() {
       >
         Rebalance all accounts
       </button>
+      )}
 
       {rebalancing &&
         (() => {
@@ -3587,6 +3888,7 @@ export function Salary() {
         reclaimed via Self Assessment.
       </p>
       <BuildStamp />
+      </LaptopPanelLayout>
     </div>
   )
 }
@@ -4049,6 +4351,7 @@ export function PayCycleSettingsModal({
   onSave,
   onDeleteSalary,
   onClose,
+  salaryEndDate,
   paydayOccurrences,
   onChangePayday,
   paySchedule,
@@ -4103,6 +4406,8 @@ export function PayCycleSettingsModal({
   paydayOccurrences: { date: string; isPast: boolean }[]
   /** A payday change, from a chosen payday — re-dates stored salary rather than duplicating it (lib/scheduleChange.ts). */
   onChangePayday: (next: PaydayChange, pickedDate: string) => void
+  /** Laptop: the salary's end date, which lives here rather than on the salary card. Saves as soon as it changes, like on the card. */
+  salaryEndDate?: React.ReactNode
 }) {
   // 2026-09-16 — set while a payday change waits for "which payday should
   // this start from". Saving it straight onto the pay cycle re-created
@@ -4412,6 +4717,12 @@ export function PayCycleSettingsModal({
 
         <FormButtonRow onCancel={onClose} onSave={handleSave} saveDisabled={!dirty || (draftNextPayDate !== (nextPayday ?? '') && nextPayDateError !== null)} />
 
+        {salaryEndDate && (
+          <div className="mt-6 pt-4 border-t" style={{ borderColor: 'var(--color-track)' }}>
+            {salaryEndDate}
+          </div>
+        )}
+
         <div className="mt-6 pt-4 border-t" style={{ borderColor: 'var(--color-track)' }}>
           <button onClick={() => setConfirmingDelete(true)} className="w-full text-center py-2 text-xs font-medium text-[var(--color-ink-faint)]">
             Delete {personName}'s salary
@@ -4449,6 +4760,7 @@ function PayPeriodsSection({
   onSaveAllFuture,
   editingDeduction,
   setEditingDeduction,
+  historyOpen,
 }: {
   person: Person
   payCycle: PayCycleConfig
@@ -4460,6 +4772,9 @@ function PayPeriodsSection({
   onSaveAllFuture: (dateIso: string, fields: ReturnType<typeof emptySalaryFields>) => void
   editingDeduction: { personId: string; deductionId: string } | null
   setEditingDeduction: (v: { personId: string; deductionId: string } | null) => void
+
+  /** Laptop: whether the History button on the salary card is on. */
+  historyOpen?: boolean
 }) {
   const [expandedDate, setExpandedDate] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
@@ -4484,6 +4799,7 @@ function PayPeriodsSection({
   // Transaction ledger, so removing a date here never touches an
   // already-materialized/cleared transaction elsewhere in the app.
   // Nothing upcoming until a 4-weekly salary's pay date is set: the card above asks for it (PROMPT-08c).
+  const wide = useWide()
   const upcoming = (salaryNeedsPayDate(person, payCycle) ? [] : upcomingPaydays(payCycle, today, 1 + THREE_CYCLES_AHEAD))
     .map(toLocalIsoDate)
     .filter((d) => computeNetPayForPeriod(person, d, payCycle) !== null)
@@ -4513,6 +4829,52 @@ function PayPeriodsSection({
     onSaveAllFuture(dateIso, fields)
     setExpandedDate(null)
     setFlashDates(upcoming.filter((d) => d >= dateIso))
+  }
+
+  // Laptop (lib/laptop.ts): the pay periods as a row of tiles — the most
+  // recent one, then each upcoming one — with the history under its own
+  // toggle. A tile opens the same PeriodEditor, in the docked panel.
+  if (wide) {
+    const tile = (dateIso: string, label: string, isClosed: boolean, canSort: boolean) => (
+      <PayPeriodRow
+        key={dateIso}
+        person={person}
+        dateIso={dateIso}
+        isClosed={isClosed}
+        canSort={canSort}
+        data={data}
+        payCycle={payCycle}
+        saveSalarySort={saveSalarySort}
+        clearSalarySortTarget={clearSalarySortTarget}
+        clearSalarySort={clearSalarySort}
+        isOpen={expandedDate === dateIso}
+        flashing={flashDates.includes(dateIso)}
+        onToggle={() => setExpandedDate(expandedDate === dateIso ? null : dateIso)}
+        onSaveJustThis={(fields) => handleSaveJustThis(dateIso, fields)}
+        onSaveAllFuture={(fields) => handleSaveAllFuture(dateIso, fields)}
+        editingDeduction={editingDeduction}
+        setEditingDeduction={setEditingDeduction}
+        tileLabel={label}
+      />
+    )
+    // One row each, never wrapping: the tiles share the width, so opening
+    // the panel (which narrows the page) narrows the tiles instead of
+    // pushing the last ones onto a row of their own.
+    const row = 'grid grid-flow-col auto-cols-[minmax(0,1fr)] gap-3'
+    return (
+      <div className="mb-1 flex flex-col gap-3">
+        {historyOpen && (
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]">HISTORY</span>
+            {historyOnly.length > 0 ? <div className={row}>{historyOnly.map((d) => tile(d, 'Paid', true, false))}</div> : <p className="text-xs text-[var(--color-ink-faint)]">No earlier pay periods yet.</p>}
+          </div>
+        )}
+        <div className={row}>
+          {mostRecent && tile(mostRecent, 'Last paid', true, data.primaryPersonId === person.id)}
+          {upcoming.map((d, i) => tile(d, i === 0 ? 'Next' : 'Then', false, data.primaryPersonId === person.id))}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -4619,6 +4981,7 @@ function PayPeriodRow({
   onSaveAllFuture,
   editingDeduction,
   setEditingDeduction,
+  tileLabel,
 }: {
   person: Person
   dateIso: string
@@ -4636,6 +4999,8 @@ function PayPeriodRow({
   onSaveAllFuture: (fields: ReturnType<typeof emptySalaryFields>) => void
   editingDeduction: { personId: string; deductionId: string } | null
   setEditingDeduction: (v: { personId: string; deductionId: string } | null) => void
+  /** Laptop: render as a tile with this label ("Last paid", "Next", "Then"). */
+  tileLabel?: string
 }) {
   const personPayCycle = data.payCycles.find((pc) => pc.personId === person.id)
   const netPay = computeNetPayForPeriod(person, dateIso, personPayCycle)
@@ -4655,6 +5020,76 @@ function PayPeriodRow({
   // caller.
   const showSortIcon = canSort && hasSalarySortDestinations(data)
   const existingSort = data.salarySorts.find((s) => s.payDate === dateIso && s.personId === data.primaryPersonId)
+
+  const sortModal = (
+    <SalarySortModal
+      payDate={dateIso}
+      data={data}
+      payCycle={payCycle}
+      onSave={(targets) => {
+        saveSalarySort(dateIso, targets)
+        setSortOpen(false)
+        triggerOwnFlash('Salary sort saved.')
+      }}
+      onClearTarget={(location) => clearSalarySortTarget(dateIso, location)}
+      onClearAll={() => {
+        clearSalarySort(dateIso)
+        setSortOpen(false)
+      }}
+      onClose={() => setSortOpen(false)}
+    />
+  )
+
+  const periodSheet = isOpen && (
+    <RowSheet
+      title={tileLabel ? parseLocalDate(dateIso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : `${person.name} · ${dateIso}`}
+      subtitle={tileLabel ? `Pay period · ${person.name}` : undefined}
+      onClose={onToggle}
+    >
+      <PeriodEditor
+        person={person}
+        dateIso={dateIso}
+        isClosed={isClosed}
+        existingOverride={existingOverride}
+        onSaveJustThis={onSaveJustThis}
+        onSaveAllFuture={onSaveAllFuture}
+        editingDeduction={editingDeduction}
+        setEditingDeduction={setEditingDeduction}
+        onFlash={(message) => {
+          triggerOwnFlash(message)
+          onToggle()
+        }}
+      />
+    </RowSheet>
+  )
+
+  if (tileLabel) {
+    return (
+      <div className="relative rounded-2xl border overflow-hidden" style={{ background: isOpen ? 'var(--color-surface-raised)' : 'var(--color-bg-elevated)', borderColor: isOpen ? 'var(--color-coral)' : 'var(--color-track)' }}>
+        <button onClick={onToggle} aria-expanded={isOpen} className="w-full p-3.5 flex flex-col gap-1 text-left">
+          <span className="text-xs text-[var(--color-ink-muted)]">{tileLabel}</span>
+          <span className="text-[15px] font-semibold text-[var(--color-ink)]">{parseLocalDate(dateIso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
+          <span className="font-mono text-sm" style={{ color: 'var(--color-positive)' }}>£{formatCurrency(netPay ?? 0)}</span>
+          {(existingOverride || isFiveWeekPeriod) && (
+            <span className="text-[11px] text-[var(--color-coral)]">{existingOverride?.bonusGrossAmount ? 'Bonus attached' : existingOverride ? 'Adjusted' : '5-week period'}</span>
+          )}
+        </button>
+        {showSortIcon && (
+          <button
+            onClick={() => setSortOpen(true)}
+            aria-label="Sort this salary"
+            className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full flex items-center justify-center"
+            style={{ background: existingSort ? 'var(--color-coral)' : 'var(--color-surface)' }}
+          >
+            <ArrowUpDown size={13} className={existingSort ? 'text-white' : 'text-[var(--color-ink-muted)]'} />
+          </button>
+        )}
+        {periodSheet}
+        {sortOpen && sortModal}
+        <SavedFlashOverlay active={ownFlashActive || flashing} message={ownFlashMessage} />
+      </div>
+    )
+  }
 
   return (
     <div className="relative rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-elevated)' }}>
@@ -4682,47 +5117,8 @@ function PayPeriodRow({
           </span>
         </button>
       </div>
-      {isOpen && (
-        <RowSheet title={`${person.name} · ${dateIso}`} onClose={onToggle}>
-          <PeriodEditor
-            person={person}
-            dateIso={dateIso}
-            isClosed={isClosed}
-            existingOverride={existingOverride}
-            onSaveJustThis={onSaveJustThis}
-            onSaveAllFuture={onSaveAllFuture}
-            editingDeduction={editingDeduction}
-            setEditingDeduction={setEditingDeduction}
-            onFlash={(message) => {
-              // UAT 2026-09-08 (9-wallet-bonus/9-wallet-netpay): these two
-              // inline actions used to flash but leave the row expanded,
-              // unlike every other save action on this page (Salary Sort's
-              // own modal closing counts as its own "collapse"). Collapse
-              // the row here too, matching that pattern.
-              triggerOwnFlash(message)
-              onToggle()
-            }}
-          />
-        </RowSheet>
-      )}
-      {sortOpen && (
-        <SalarySortModal
-          payDate={dateIso}
-          data={data}
-          payCycle={payCycle}
-          onSave={(targets) => {
-            saveSalarySort(dateIso, targets)
-            setSortOpen(false)
-            triggerOwnFlash('Salary sort saved.')
-          }}
-          onClearTarget={(location) => clearSalarySortTarget(dateIso, location)}
-          onClearAll={() => {
-            clearSalarySort(dateIso)
-            setSortOpen(false)
-          }}
-          onClose={() => setSortOpen(false)}
-        />
-      )}
+      {periodSheet}
+      {sortOpen && sortModal}
       <SavedFlashOverlay active={flashing || ownFlashActive} message={ownFlashActive ? ownFlashMessage : 'Saved'} />
     </div>
   )
@@ -4982,6 +5378,9 @@ function PeriodEditor({
   )
   const [confirming, setConfirming] = useState(false)
   const [confirmingDeductionId, setConfirmingDeductionId] = useState<string | null>(null)
+  // Laptop: the standing-salary fields sit behind a disclosure (see the render below).
+  const wide = useWide()
+  const [detailsOpen, setDetailsOpen] = useState(false)
 
   if (!applicableSnapshot) {
     return (
@@ -5080,9 +5479,22 @@ function PeriodEditor({
     updateDeductions(next)
   }
 
+  // Laptop (lib/laptop.ts): the panel reads breakdown first — what this
+  // period pays, its net, a one-off net pay and a bonus — and the standing
+  // salary behind "Salary details". CSS order only: the phone keeps this
+  // markup's own order, and every field, check and save is the same.
+  const showDetails = !wide || detailsOpen
+
   return (
-    <div className="px-3 pb-3 pt-1 flex flex-col gap-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
-      <div className="grid grid-cols-2 gap-3">
+    <div className={wide ? 'flex flex-col gap-3' : 'px-3 pb-3 pt-1 flex flex-col gap-3 border-t'} style={{ borderColor: 'var(--color-track)' }}>
+      {wide && (
+        <button onClick={() => setDetailsOpen(!detailsOpen)} aria-expanded={detailsOpen} className="order-3 w-full flex items-center justify-between py-2 border-t text-sm font-semibold text-[var(--color-ink)]" style={{ borderColor: 'var(--color-track)' }}>
+          Salary details
+          {detailsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+      )}
+      {showDetails && (
+      <div className={`grid grid-cols-2 gap-3 ${wide ? 'order-3' : ''}`}>
         <Field label="Gross annual salary (£)">
           <input
             type="number"
@@ -5137,8 +5549,10 @@ function PeriodEditor({
           />
         </Field>
       </div>
+      )}
 
-      <div>
+      {showDetails && (
+      <div className={wide ? 'order-3' : ''}>
         <div className="flex items-center justify-between mb-2">
           <h4 className="text-xs font-semibold text-[var(--color-ink)]">Deductions</h4>
           <button onClick={addDeduction} className="text-xs font-medium" style={{ color: 'var(--color-coral)' }}>
@@ -5204,8 +5618,9 @@ function PeriodEditor({
             )
           })()}
       </div>
+      )}
 
-      <div className="rounded-xl p-4" style={{ background: 'var(--color-surface)' }}>
+      <div className={wide ? 'order-1' : 'rounded-xl p-4'} style={wide ? undefined : { background: 'var(--color-surface)' }}>
         <BreakdownRow label="Gross salary" value={breakdown.grossPerPeriod} bold />
         {breakdown.preTaxDeductions.map((d) => (
           <BreakdownRow key={d.id} label={`${d.name || 'Deduction'} (${DEDUCTION_TYPE_SHORT[d.type]})`} value={-d.amountPerPeriod} />
@@ -5247,6 +5662,7 @@ function PeriodEditor({
         )}
       </div>
 
+      <div className={wide ? 'order-2 flex flex-col gap-3' : 'contents'}>
       <NetPayOverrideControl
         personId={person.id}
         dateIso={dateIso}
@@ -5255,8 +5671,9 @@ function PeriodEditor({
         onSaved={() => onFlash('Net pay updated.')}
       />
 
-      <div className="flex justify-end">
+      <div className={wide ? '' : 'flex justify-end'}>
         <AttachBonusButton personId={person.id} fixedDate={dateIso} existingOverride={existingOverride} onSaved={() => onFlash('Bonus saved.')} />
+      </div>
       </div>
 
       <button
@@ -5268,7 +5685,7 @@ function PeriodEditor({
             setConfirming(true)
           }
         }}
-        className="w-full py-2.5 rounded-full text-sm font-semibold text-white disabled:opacity-40"
+        className={`w-full py-2.5 rounded-full text-sm font-semibold text-white disabled:opacity-40 ${wide ? 'order-4' : ''}`}
         style={{ background: 'var(--color-coral)' }}
       >
         Save

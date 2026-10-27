@@ -24,6 +24,7 @@
 // not which app compiles a file. No `if (sync)`, no `import.meta.env`, no
 // VITE_SYNC_ENABLED (that is test-app-only; TEST-APP-DIVERGENCE.md).
 
+import { useWide } from '../lib/useWide'
 import { createContext, useContext, useRef, useState } from 'react'
 import { Download, Upload } from 'lucide-react'
 import type { AppDataV2 } from '../types/ledger'
@@ -76,11 +77,15 @@ export function BackupSection({ data, onRestore }: { data: AppDataV2; onRestore:
       .catch((err) => setError(err.message))
   }
 
+  // Laptop (lib/laptop.ts): a card of the Wallet grid — heading, the note,
+  // then the two actions as labelled buttons.
+  const wide = useWide()
+
   return (
-    <div className="rounded-2xl p-4 mb-6 flex items-center justify-between" style={{ background: 'var(--color-surface)' }}>
+    <div className={wide ? 'flex-1 rounded-[20px] p-5 flex flex-col gap-3' : 'rounded-2xl p-4 mb-6 flex items-center justify-between'} style={{ background: 'var(--color-surface)' }}>
       <div>
-        <h2 className="font-body text-sm font-semibold text-[var(--color-ink)]">Backup</h2>
-        <p className="text-xs text-[var(--color-ink-faint)] mt-0.5 max-w-[220px]">
+        <h2 className={wide ? 'text-[13px] font-semibold uppercase tracking-[0.08em] text-[var(--color-ink-muted)]' : 'font-body text-sm font-semibold text-[var(--color-ink)]'}>Backup</h2>
+        <p className={wide ? 'text-[13px] text-[var(--color-ink-muted)] mt-2' : 'text-xs text-[var(--color-ink-faint)] mt-0.5 max-w-[220px]'}>
           Everything lives in this browser's storage — save a copy somewhere safe in case it gets cleared.
         </p>
         {error && (
@@ -95,6 +100,17 @@ export function BackupSection({ data, onRestore }: { data: AppDataV2; onRestore:
         )}
       </div>
       <div className="flex gap-2 shrink-0">
+        {wide ? (
+          <>
+            <button onClick={() => downloadLedgerBackup(data)} className="h-11 px-4 rounded-full border text-[13px] font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}>
+              Download
+            </button>
+            <button onClick={() => fileInputRef.current?.click()} className="h-11 px-4 rounded-full border text-[13px] font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}>
+              Restore from a file
+            </button>
+          </>
+        ) : (
+          <>
         <button
           onClick={() => downloadLedgerBackup(data)}
           className="w-9 h-9 rounded-full flex items-center justify-center"
@@ -111,6 +127,8 @@ export function BackupSection({ data, onRestore }: { data: AppDataV2; onRestore:
         >
           <Upload size={16} className="text-[var(--color-ink)]" />
         </button>
+          </>
+        )}
         <input
           ref={fileInputRef}
           type="file"
