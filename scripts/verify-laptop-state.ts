@@ -12,7 +12,9 @@
 //    write keeps any other key in the state object.
 // 3. A store that throws (private mode) reads expanded and the write is a no-op.
 // 4. The breakpoint: a sideways phone stays on the phone layout.
-// 5. Source checks: only Rail's toggle writes; App hides the pill when wide.
+// 5. Source checks: only Rail's toggle writes; App hides the pill when wide;
+//    SwipeToDelete never captures the pointer before a drag (a mouse click
+//    on a row would otherwise land on the swipe wrapper, not the row).
 
 import { readFileSync } from 'node:fs'
 import { LAPTOP_STATE_KEY, WIDE_QUERY, readRailExpanded, writeRailExpanded } from '../src/lib/laptop'
@@ -84,6 +86,14 @@ console.log('\n── 5. Source checks ──')
   check('Rail never imports an icon file (each app shows its own)', /import [^\n]*\.(png|svg)['"]/.test(rail), false)
   check('App hides the pill when wide', app.includes('{!wide && <BottomNav />}'), true)
   check('App shows the rail when wide', app.includes('{wide && <Rail />}'), true)
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8')
+  check('index.css laptop block uses WIDE_QUERY word for word', css.includes(`@media ${WIDE_QUERY} {`), true)
+  const sheet = readFileSync(new URL('../src/components/RowSheet.tsx', import.meta.url), 'utf8')
+  const swipe = readFileSync(new URL('../src/components/SwipeToDelete.tsx', import.meta.url), 'utf8')
+  const down = swipe.slice(swipe.indexOf('function handlePointerDown'), swipe.indexOf('function handlePointerMove'))
+  check('SwipeToDelete takes no pointer capture on pointerdown (a mouse click would never reach the row)', down.includes('setPointerCapture'), false)
+  check('…and takes it once the drag passes the threshold', /Math\.abs\(delta\) > DRAG_THRESHOLD[\s\S]{0,900}setPointerCapture/.test(swipe), true)
+  check('RowSheet keeps one portal per layout, both to document.body', (sheet.match(/document\.body,/g) ?? []).length, 2)
 }
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n✗ ${failures} CHECK(S) FAILED`)

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { OneOpenRowProvider, useOneOpenRow } from '../components/OneOpenRow'
+import { RowSheet } from '../components/RowSheet'
+import { useWide } from '../lib/useWide'
 import { formatCurrency, formatFullDate } from '../lib/format'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Plus, ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -141,6 +143,7 @@ function LocationPickerCard({
 }
 
 export function Bills() {
+  const wide = useWide()
   const { data, importGeneration, addRecurringTemplate, updateRecurringTemplate, removeRecurringTemplate, addCategory, assignRecurringTemplateLocation } = useLedgerData()
   const [adding, setAdding] = useState(false)
   // Picker-First Flows (2026-09 session) — Owner then Location, each
@@ -219,9 +222,9 @@ export function Bills() {
   return (
     /* One expanded bill at a time. */
     <OneOpenRowProvider>
-    <div className="max-w-md mx-auto px-4 pt-6">
+    <div className={wide ? 'max-w-[1240px] mx-auto px-10 pt-8' : 'max-w-md mx-auto px-4 pt-6'}>
       <header className="mb-6 flex items-center justify-between">
-        <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">Bills</h1>
+        <h1 className={`font-display font-semibold text-[var(--color-ink)] ${wide ? 'text-3xl' : 'text-2xl'}`}>Bills</h1>
         <div className="flex items-center gap-2">
           <CategoryManagerButton />
           <button
@@ -316,6 +319,17 @@ export function Bills() {
         </div>
       )}
 
+      {wide && visibleBills.length > 0 && (
+        <div className={`${BILL_COLUMNS} px-4 pb-2 text-xs font-semibold tracking-[0.06em] text-[var(--color-ink-muted)]`}>
+          <span>BILL</span>
+          <span>CATEGORY</span>
+          <span>HOW OFTEN</span>
+          <span>PAID FROM</span>
+          <span>METHOD</span>
+          <span className="text-right">AMOUNT</span>
+          <span />
+        </div>
+      )}
       <div className="flex flex-col gap-2">
         {visibleBills.map((template) => (
           <BillRow
@@ -404,6 +418,9 @@ function PaymentMethodEditor({ value, onChange }: { value: PaymentMethod; onChan
   )
 }
 
+/** The laptop table's columns, shared by its header and every row so the two cannot drift. */
+const BILL_COLUMNS = 'grid grid-cols-[minmax(0,1fr)_130px_120px_150px_130px_100px_16px] items-center gap-4'
+
 function BillRow({
   template,
   people,
@@ -451,6 +468,71 @@ function BillRow({
   // gain a pill/badge with the pot name in the Bills page" (Adam's spec,
   // verbatim).
   const pot = template.location === 'pot' ? pots.find((p) => p.id === template.potId) : undefined
+  const wide = useWide()
+
+  const editPanel = open && (
+    <BillEditPanel
+      template={template}
+      people={people}
+      pots={pots}
+      canBeJoint={canBeJoint}
+      categories={categories}
+      onAddCategory={onAddCategory}
+      onSave={(patch) => {
+        onUpdate(patch)
+        setOpen(false)
+        triggerFlash()
+      }}
+      onAssignLocation={(location, effectiveFrom, potId) => {
+        onAssignLocation(location, effectiveFrom, potId)
+        setOpen(false)
+        triggerFlash()
+      }}
+      onCancel={() => setOpen(false)}
+    />
+  )
+
+  // Laptop (lib/laptop.ts): the same row as columns, and the edit panel in
+  // the right-hand RowSheet instead of opening out in place. One open bill
+  // at a time still holds (useOneOpenRow), so opening another bill swaps
+  // the panel's contents.
+  if (wide) {
+    const muted = { color: template.active ? 'var(--color-ink-muted)' : 'var(--color-ink-faint)' }
+    return (
+      <SwipeToDelete onDelete={onRemove} confirmLabel={template.name} confirmDescription="Already-cleared payments stay in the ledger as historic fact — only future, not-yet-happened ones are removed.">
+        <div className="relative rounded-xl" style={{ background: template.active ? 'var(--color-surface)' : 'var(--color-bg-elevated)', outline: open ? '1px solid var(--color-coral)' : 'none' }}>
+          <button className={`${BILL_COLUMNS} w-full min-h-[52px] px-4 py-2 text-left text-sm`} onClick={() => setOpen(!open)} aria-expanded={open}>
+            <span className="flex items-center gap-2.5 min-w-0">
+              <CategoryIcon category={category} />
+              <span className="truncate" style={{ color: template.active ? 'var(--color-ink)' : 'var(--color-ink-muted)', textDecoration: template.active ? 'none' : 'line-through' }}>
+                {template.name}
+              </span>
+              {!template.active && <span className="text-[10px] shrink-0" style={muted}>Paused</span>}
+              {template.location === 'joint' && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0" style={{ background: 'var(--color-surface-raised)', border: '1px solid var(--color-track)', color: 'var(--color-ink-muted)' }}>
+                  Joint
+                </span>
+              )}
+            </span>
+            <span className="truncate" style={muted}>{category?.name ?? ''}</span>
+            <span className="truncate" style={muted}>{FREQUENCY_LABELS[template.frequency]}</span>
+            <span className="truncate" style={muted}>{billLocationLabel(template.location, template.potId, pots)}</span>
+            <span className="truncate" style={muted}>{PAYMENT_METHOD_LABELS[template.paymentMethod]}</span>
+            <span className="font-mono text-right whitespace-nowrap" style={{ color: template.active ? 'var(--color-ink)' : 'var(--color-ink-muted)', textDecoration: template.active ? 'none' : 'line-through' }}>
+              £{formatCurrency(template.amount)}
+            </span>
+            <ChevronDown size={14} className="text-[var(--color-ink-faint)] -rotate-90 justify-self-end" />
+          </button>
+          {open && (
+            <RowSheet title={template.name} onClose={() => setOpen(false)}>
+              {editPanel}
+            </RowSheet>
+          )}
+          <SavedFlashOverlay active={flashActive} message={flashMessage} />
+        </div>
+      </SwipeToDelete>
+    )
+  }
 
   return (
     <SwipeToDelete
@@ -512,27 +594,7 @@ function BillRow({
           </div>
         </button>
 
-        {open && (
-          <BillEditPanel
-            template={template}
-            people={people}
-            pots={pots}
-            canBeJoint={canBeJoint}
-            categories={categories}
-            onAddCategory={onAddCategory}
-            onSave={(patch) => {
-              onUpdate(patch)
-              setOpen(false)
-              triggerFlash()
-            }}
-            onAssignLocation={(location, effectiveFrom, potId) => {
-              onAssignLocation(location, effectiveFrom, potId)
-              setOpen(false)
-              triggerFlash()
-            }}
-            onCancel={() => setOpen(false)}
-          />
-        )}
+        {editPanel}
 
         <SavedFlashOverlay active={flashActive} message={flashMessage} />
       </div>

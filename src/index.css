@@ -139,3 +139,22 @@ textarea {
   pointer-events: none;
   z-index: 200;
 }
+
+/* The laptop view (lib/laptop.ts). 🚨 This media query must stay WIDE_QUERY
+   word for word — scripts/verify-laptop-state.ts compares them.
+   - There is no bottom pill, so nothing reserves room for it.
+   - Every bottom sheet (`fixed inset-0 … items-end`, a `rounded-t-3xl`
+     panel) opens as a centred dialog instead of rising from the foot of a
+     wide screen. RowSheet, the cards' edit surface, is the exception: it
+     slides in from the right (components/RowSheet.tsx). */
+@media (min-width: 1024px) and (min-height: 500px) {
+  :root {
+    --nav-h: 0px;
+  }
+  .fixed.inset-0.items-end {
+    align-items: center;
+  }
+  .fixed.inset-0.items-end .rounded-t-3xl {
+    border-radius: 1.5rem;
+  }
+}

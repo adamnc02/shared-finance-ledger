@@ -72,17 +72,25 @@ export function SwipeToDelete({ children, onDelete, confirmLabel, confirmDescrip
     startOffset.current = offset
     draggedPastThreshold.current = false
     setDragging(true)
-    // Capture on currentTarget (this wrapper div), not e.target — target
-    // could be any nested descendant, and capturing there is both less
-    // correct and part of what made the select-interaction bug above
-    // possible in the first place.
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
 
   function handlePointerMove(e: React.PointerEvent) {
     if (startX.current === null) return
     const delta = e.clientX - startX.current
-    if (Math.abs(delta) > DRAG_THRESHOLD) draggedPastThreshold.current = true
+    if (Math.abs(delta) > DRAG_THRESHOLD && !draggedPastThreshold.current) {
+      draggedPastThreshold.current = true
+      // Capture only once this is a real drag, and on currentTarget (this
+      // wrapper div), not e.target — target could be any nested descendant,
+      // and capturing there is part of what made the select-interaction bug
+      // above possible.
+      //
+      // 🚨 Never on pointerdown. With a MOUSE, a capture taken on pointerdown
+      // makes the browser deliver the click to this wrapper instead of the
+      // button under the pointer, so a plain click on a row never opened it
+      // (the laptop view). Touch is captured to its target implicitly, which
+      // is why phones never showed it.
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    }
     const next = Math.min(0, Math.max(-REVEAL_WIDTH, startOffset.current + delta))
     setOffset(next)
   }
