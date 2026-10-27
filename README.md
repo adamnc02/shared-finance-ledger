@@ -113,6 +113,14 @@ What follows is only what this app adds.
 
 ---
 
+### On a laptop
+
+Everything above, laid out for a laptop at 1024px wide and up: a side rail with the app's logo and the
+pay cycle (collapsible, remembered per device), tables for the ledger, bills and transactions, a panel
+on the right for whatever row is open, and Wallet and What-if as grids of cards. A phone, or a narrow
+window, keeps the phone layout. The Account button stays in the Wallet header. Every figure is the
+phone's own.
+
 ## What this app adds
 
 ### Sign-in is required, and there is no guest mode

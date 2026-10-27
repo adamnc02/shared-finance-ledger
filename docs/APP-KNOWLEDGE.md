@@ -1466,6 +1466,16 @@ it**: the fold (`isSettled`), *Manage upcoming payments* (`trimToManageUpcoming`
   with a 6-days-old control and an unpause; the weekly list; the boundary; the overpayment delete),
   `verify-pending-sweep-on-delete.ts`, `verify-transfer-groups.ts`.
 
+### 1.38 The laptop view is layout only (2026-10-27)
+
+At 1024×500 and up (`lib/laptop.ts`) every page is laid out for a laptop, and nothing else changes:
+every figure is the phone's function. The three figures it adds (Bills' and Recurring's cycle totals and
+next dates, Overpayments' interest saved) come from the engines' own occurrences and schedules, never a
+headline amount — `verify-bill-summary.ts`, `verify-recurring-summary.ts`, `verify-overpayment-summary.ts`.
+The phone keeps its markup order: laptop ordering is CSS `order` and `display: contents`, so a "tidy-up"
+that reorders JSX moves the phone too. 🚨 `SwipeToDelete` must not take pointer capture on `pointerdown`
+— with a mouse the click then lands on the swipe wrapper and no row opens. Full detail: `TECHNICAL.md` §48 here, §38 in `personal-ledger`.
+
 ## 2. The credit-card engine is the single most fragile area
 
 **One reported symptom — "balance never reaches zero" — took five separate fixes**, each a
