@@ -13,7 +13,7 @@ import type { AppDataV2, Category, Loan, PayCycleConfig, PaySchedule, Pension, P
 import { nanoid } from 'nanoid'
 import { DeductionModal } from '../components/DeductionModal'
 import { SwipeToDelete } from '../components/SwipeToDelete'
-import { OpensSheetIcon, RowSheet } from '../components/RowSheet'
+import { OpensSheetIcon, RowSheet, LaptopPanelLayout } from '../components/RowSheet'
 import { PausedOccurrencesControl } from '../components/PausedOccurrencesControl'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { DeleteGuardModal } from '../components/DeleteGuardModal'
@@ -2885,10 +2885,35 @@ export function Salary() {
   const anyoneHasSalary = data.people.some(hasSalaryConfigured)
 
   return (
-    <div className={wide ? 'max-w-[1240px] mx-auto px-10 pt-8' : 'max-w-md mx-auto px-4 pt-6'}>
-      <header className="mb-6 flex items-center justify-between">
-        <h1 className={`font-display font-semibold text-[var(--color-ink)] ${wide ? 'text-3xl' : 'text-2xl'}`}>Wallet</h1>
-        <div className="flex items-center gap-2">
+    <div className={wide ? 'px-10 pt-8 pb-4' : 'max-w-md mx-auto px-4 pt-6'}>
+      <LaptopPanelLayout>
+      <header className="mb-6 flex items-center justify-between gap-3">
+        <h1 className={`font-display font-semibold text-[var(--color-ink)] ${wide ? 'text-3xl flex-1' : 'text-2xl'}`}>Wallet</h1>
+        {wide && (
+          <>
+            <button
+              onClick={() => setPeopleModalOpen(true)}
+              className="h-11 px-4 rounded-full border text-[13px] font-semibold text-[var(--color-ink)] transition-colors duration-300"
+              style={{ background: flashPeopleButton ? 'var(--color-coral)' : 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}
+            >
+              Manage people
+            </button>
+            {data.payCycles.some((pc) => pc.personId === data.primaryPersonId) && (
+              <button
+                onClick={() => setSettingsOpenFor(data.primaryPersonId)}
+                className="h-11 px-4 rounded-full border text-[13px] font-semibold text-[var(--color-ink)]"
+                style={{ background: 'var(--color-bg-elevated)', borderColor: 'var(--color-track)' }}
+              >
+                Pay cycle settings
+              </button>
+            )}
+            <button onClick={() => setRebalancing(true)} className="h-11 px-[18px] rounded-full text-[13px] font-semibold text-white" style={{ background: 'var(--color-coral)' }}>
+              Rebalance all accounts
+            </button>
+            <HeaderAccessory />
+          </>
+        )}
+        <div className={wide ? 'hidden' : 'flex items-center gap-2'}>
           <button
             onClick={() => setPeopleModalOpen(true)}
             className="w-9 h-9 rounded-full flex items-center justify-center transition-colors duration-300"
@@ -2898,20 +2923,21 @@ export function Salary() {
             <Users size={18} className={flashPeopleButton ? 'text-white' : 'text-[var(--color-ink)]'} />
           </button>
           {/* Empty offline; the sync app's Account button (HeaderAccessory.tsx). */}
-          <HeaderAccessory />
+          {!wide && <HeaderAccessory />}
         </div>
       </header>
 
-      {/* Laptop (lib/laptop.ts): Salary in the wide left column, the other
-          sections stacked on the right. On the phone every wrapper is
+      {/* Laptop (lib/laptop.ts): Salary across the top, then Pensions,
+          Savings, Pots, the Joint Account and Backup as a grid of cards
+          (CSS order puts Backup last). On the phone every wrapper is
           display: contents, so the page keeps its order and layout. */}
-      <div className={wide ? 'grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-x-8 items-start' : 'contents'}>
+      <div className={wide ? 'grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-x-6 items-start' : 'contents'}>
       {/* Renders here unless an app claims Backup & Restore for somewhere else (BackupSection.tsx). */}
-        <div className={wide ? 'col-start-2 row-start-1' : 'contents'}>
+        <div className={wide ? 'order-last' : 'contents'}>
         <WalletBackupSlot data={data} onRestore={setData} />
         </div>
 
-      <div className={wide ? 'col-start-1 row-start-1 row-span-2' : 'contents'}>
+      <div className={wide ? 'order-first col-span-full' : 'contents'}>
       <CollapsibleSection
         title="Salary"
         className="mb-8"
@@ -3125,7 +3151,7 @@ export function Salary() {
       </CollapsibleSection>
       </div>
 
-      <div className={wide ? 'col-start-2 row-start-2' : 'contents'}>
+      <div className="contents">
       <CollapsibleSection
         title="Pensions"
         className="mb-8"
@@ -3549,6 +3575,7 @@ export function Salary() {
           savingsPotLedger.ts/jointAccountLedger.ts/projection.ts), so
           writing the new anchor here is already the "hide prior history"
           reset — locked to each account's own new date, no shared cutoff. */}
+      {!wide && (
       <button
         onClick={() => setRebalancing(true)}
         className="w-full py-3 rounded-full text-sm font-semibold text-white mt-6"
@@ -3556,6 +3583,7 @@ export function Salary() {
       >
         Rebalance all accounts
       </button>
+      )}
 
       {rebalancing &&
         (() => {
@@ -3600,6 +3628,7 @@ export function Salary() {
         reclaimed via Self Assessment.
       </p>
       <BuildStamp />
+      </LaptopPanelLayout>
     </div>
   )
 }
@@ -4497,6 +4526,7 @@ function PayPeriodsSection({
   // Transaction ledger, so removing a date here never touches an
   // already-materialized/cleared transaction elsewhere in the app.
   // Nothing upcoming until a 4-weekly salary's pay date is set: the card above asks for it (PROMPT-08c).
+  const wide = useWide()
   const upcoming = (salaryNeedsPayDate(person, payCycle) ? [] : upcomingPaydays(payCycle, today, 1 + THREE_CYCLES_AHEAD))
     .map(toLocalIsoDate)
     .filter((d) => computeNetPayForPeriod(person, d, payCycle) !== null)
@@ -4526,6 +4556,52 @@ function PayPeriodsSection({
     onSaveAllFuture(dateIso, fields)
     setExpandedDate(null)
     setFlashDates(upcoming.filter((d) => d >= dateIso))
+  }
+
+  // Laptop (lib/laptop.ts): the pay periods as a row of tiles — the most
+  // recent one, then each upcoming one — with the history under its own
+  // toggle. A tile opens the same PeriodEditor, in the docked panel.
+  if (wide) {
+    const tile = (dateIso: string, label: string, isClosed: boolean, canSort: boolean) => (
+      <PayPeriodRow
+        key={dateIso}
+        person={person}
+        dateIso={dateIso}
+        isClosed={isClosed}
+        canSort={canSort}
+        data={data}
+        payCycle={payCycle}
+        saveSalarySort={saveSalarySort}
+        clearSalarySortTarget={clearSalarySortTarget}
+        clearSalarySort={clearSalarySort}
+        isOpen={expandedDate === dateIso}
+        flashing={flashDates.includes(dateIso)}
+        onToggle={() => setExpandedDate(expandedDate === dateIso ? null : dateIso)}
+        onSaveJustThis={(fields) => handleSaveJustThis(dateIso, fields)}
+        onSaveAllFuture={(fields) => handleSaveAllFuture(dateIso, fields)}
+        editingDeduction={editingDeduction}
+        setEditingDeduction={setEditingDeduction}
+        tileLabel={label}
+      />
+    )
+    return (
+      <div className="mb-4 flex flex-col gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+          {mostRecent && tile(mostRecent, 'Last paid', true, data.primaryPersonId === person.id)}
+          {upcoming.map((d, i) => tile(d, i === 0 ? 'Next' : 'Then', false, data.primaryPersonId === person.id))}
+        </div>
+        <button onClick={() => setShowHistory(!showHistory)} className="flex items-center justify-between w-full py-1 text-xs font-medium text-[var(--color-ink-muted)]">
+          <span>History ({historyOnly.length})</span>
+          {showHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+        {showHistory && (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+            {historyOnly.map((d) => tile(d, 'Paid', true, false))}
+            {historyOnly.length === 0 && <p className="text-xs text-[var(--color-ink-faint)] px-1">No earlier pay periods yet.</p>}
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -4632,6 +4708,7 @@ function PayPeriodRow({
   onSaveAllFuture,
   editingDeduction,
   setEditingDeduction,
+  tileLabel,
 }: {
   person: Person
   dateIso: string
@@ -4649,6 +4726,8 @@ function PayPeriodRow({
   onSaveAllFuture: (fields: ReturnType<typeof emptySalaryFields>) => void
   editingDeduction: { personId: string; deductionId: string } | null
   setEditingDeduction: (v: { personId: string; deductionId: string } | null) => void
+  /** Laptop: render as a tile with this label ("Last paid", "Next", "Then"). */
+  tileLabel?: string
 }) {
   const personPayCycle = data.payCycles.find((pc) => pc.personId === person.id)
   const netPay = computeNetPayForPeriod(person, dateIso, personPayCycle)
@@ -4668,6 +4747,76 @@ function PayPeriodRow({
   // caller.
   const showSortIcon = canSort && hasSalarySortDestinations(data)
   const existingSort = data.salarySorts.find((s) => s.payDate === dateIso && s.personId === data.primaryPersonId)
+
+  const sortModal = (
+    <SalarySortModal
+      payDate={dateIso}
+      data={data}
+      payCycle={payCycle}
+      onSave={(targets) => {
+        saveSalarySort(dateIso, targets)
+        setSortOpen(false)
+        triggerOwnFlash('Salary sort saved.')
+      }}
+      onClearTarget={(location) => clearSalarySortTarget(dateIso, location)}
+      onClearAll={() => {
+        clearSalarySort(dateIso)
+        setSortOpen(false)
+      }}
+      onClose={() => setSortOpen(false)}
+    />
+  )
+
+  const periodSheet = isOpen && (
+    <RowSheet
+      title={tileLabel ? parseLocalDate(dateIso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : `${person.name} · ${dateIso}`}
+      subtitle={tileLabel ? `Pay period · ${person.name}` : undefined}
+      onClose={onToggle}
+    >
+      <PeriodEditor
+        person={person}
+        dateIso={dateIso}
+        isClosed={isClosed}
+        existingOverride={existingOverride}
+        onSaveJustThis={onSaveJustThis}
+        onSaveAllFuture={onSaveAllFuture}
+        editingDeduction={editingDeduction}
+        setEditingDeduction={setEditingDeduction}
+        onFlash={(message) => {
+          triggerOwnFlash(message)
+          onToggle()
+        }}
+      />
+    </RowSheet>
+  )
+
+  if (tileLabel) {
+    return (
+      <div className="relative rounded-2xl border overflow-hidden" style={{ background: isOpen ? 'var(--color-surface-raised)' : 'var(--color-bg-elevated)', borderColor: isOpen ? 'var(--color-coral)' : 'var(--color-track)' }}>
+        <button onClick={onToggle} aria-expanded={isOpen} className="w-full p-3.5 flex flex-col gap-1 text-left">
+          <span className="text-xs text-[var(--color-ink-muted)]">{tileLabel}</span>
+          <span className="text-[15px] font-semibold text-[var(--color-ink)]">{parseLocalDate(dateIso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>
+          <span className="font-mono text-sm" style={{ color: 'var(--color-positive)' }}>£{formatCurrency(netPay ?? 0)}</span>
+          {(existingOverride || isFiveWeekPeriod) && (
+            <span className="text-[11px] text-[var(--color-coral)]">{existingOverride?.bonusGrossAmount ? 'Bonus attached' : existingOverride ? 'Adjusted' : '5-week period'}</span>
+          )}
+        </button>
+        {showSortIcon && (
+          <button
+            onClick={() => setSortOpen(true)}
+            aria-label="Sort this salary"
+            className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full flex items-center justify-center"
+            style={{ background: existingSort ? 'var(--color-coral)' : 'var(--color-surface)' }}
+          >
+            <ArrowUpDown size={13} className={existingSort ? 'text-white' : 'text-[var(--color-ink-muted)]'} />
+          </button>
+        )}
+        {periodSheet}
+        {sortOpen && sortModal}
+        <SavedFlashOverlay active={ownFlashActive || flashing} message={ownFlashMessage} />
+      </div>
+    )
+  }
 
   return (
     <div className="relative rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-elevated)' }}>
@@ -4695,47 +4844,8 @@ function PayPeriodRow({
           </span>
         </button>
       </div>
-      {isOpen && (
-        <RowSheet title={`${person.name} · ${dateIso}`} onClose={onToggle}>
-          <PeriodEditor
-            person={person}
-            dateIso={dateIso}
-            isClosed={isClosed}
-            existingOverride={existingOverride}
-            onSaveJustThis={onSaveJustThis}
-            onSaveAllFuture={onSaveAllFuture}
-            editingDeduction={editingDeduction}
-            setEditingDeduction={setEditingDeduction}
-            onFlash={(message) => {
-              // UAT 2026-09-08 (9-wallet-bonus/9-wallet-netpay): these two
-              // inline actions used to flash but leave the row expanded,
-              // unlike every other save action on this page (Salary Sort's
-              // own modal closing counts as its own "collapse"). Collapse
-              // the row here too, matching that pattern.
-              triggerOwnFlash(message)
-              onToggle()
-            }}
-          />
-        </RowSheet>
-      )}
-      {sortOpen && (
-        <SalarySortModal
-          payDate={dateIso}
-          data={data}
-          payCycle={payCycle}
-          onSave={(targets) => {
-            saveSalarySort(dateIso, targets)
-            setSortOpen(false)
-            triggerOwnFlash('Salary sort saved.')
-          }}
-          onClearTarget={(location) => clearSalarySortTarget(dateIso, location)}
-          onClearAll={() => {
-            clearSalarySort(dateIso)
-            setSortOpen(false)
-          }}
-          onClose={() => setSortOpen(false)}
-        />
-      )}
+      {periodSheet}
+      {sortOpen && sortModal}
       <SavedFlashOverlay active={flashing || ownFlashActive} message={ownFlashActive ? ownFlashMessage : 'Saved'} />
     </div>
   )
