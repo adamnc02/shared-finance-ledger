@@ -873,9 +873,12 @@ It is re-preferred on every read (MIGRATION-LESSONS §23). Writing `linked_user_
 - `VITE_POWERSYNC_DB_FILENAME` has no default, so a build without it fails loudly.
 - If a different account signed in last, `SyncRoot` clears the local copy first.
 
-**7. Rejected writes are never silent.** The connector still discards `22xxx`/`23xxx`/`42501` (they would block the
-queue forever), but logs each one loudly and keeps it in `ledger:sync:rejected-writes`. The Account modal shows
-either the list or "No changes rejected by the server ✓".
+**7. Rejected writes are never silent.** The connector still discards `22xxx`/`23xxx` and an RLS `42501` (they would
+block the queue forever), but logs each one loudly and keeps it in `ledger:sync:rejected-writes`. The Account modal
+shows either the list or "No changes rejected by the server ✓".
+- **A write is never sent without the user's JWT.** No session → `uploadData()` throws and the write stays queued; a
+  42501 *privilege* refusal (`permission denied for …` — the request ran as `anon`) is retried, never discarded.
+  Without this, a lapsed sign-in discards every queued write (TECHNICAL §39, MIGRATION-LESSONS §77).
 
 **8. The household can change under an open device** (deleted on another device; PROMPT-10's redeem). Every read checks the
 synced `household_members`. Once the user has been seen in the session's household, losing it suspends the store (no writes, no
