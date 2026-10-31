@@ -14,22 +14,21 @@
 //   app can show (recordRejectedWrite), never silently dropped. The
 //   discard itself stays: a write Postgres permanently rejects would
 //   otherwise block every later write behind it forever.
+// - 🚨 No upload without the user's JWT, set on every request
+//   (uploadAuth.ts). supabase-js otherwise sends the publishable key, the
+//   request runs as `anon`, and a lapsed sign-in turns every queued write
+//   into a discarded 42501 (MIGRATION-LESSONS §77).
 
 import type { AbstractPowerSyncDatabase, CrudEntry, PowerSyncBackendConnector } from '@powersync/web'
 import { UpdateType } from '@powersync/web'
 import { supabase } from '../supabaseClient'
 import { remoteName, toServerRecord } from './tables'
+import { isPermanentRejection, uploadAuthorization } from './uploadAuth'
 
 const POWERSYNC_URL: string = import.meta.env.VITE_POWERSYNC_URL ?? ''
 if (!POWERSYNC_URL) {
   throw new Error('Missing VITE_POWERSYNC_URL. Put the Development instance URL in .env.local.')
 }
-
-// Not retried: bad data (22xxx), a constraint (23xxx: FK, CHECK, unique),
-// or an RLS/privilege refusal (42501). Same list as personal-f and
-// PowerSync's reference Supabase connector. Everything else (network, 5xx,
-// PGRST002) is thrown and retried.
-export const FATAL_RESPONSE_CODES = [/^22...$/, /^23...$/, /^42501$/]
 
 export const REJECTED_WRITES_KEY = 'ledger:sync:rejected-writes'
 
@@ -78,25 +77,27 @@ export class SupabaseConnector implements PowerSyncBackendConnector {
 
     let lastOp: CrudEntry | null = null
     try {
+      // Throws with no session, so the whole transaction stays queued.
+      const authorization = await uploadAuthorization(() => supabase.auth.getSession())
       for (const op of transaction.crud) {
         lastOp = op
         const table = supabase.from(remoteName(op.table))
         let result
         switch (op.op) {
           case UpdateType.PUT:
-            result = await table.upsert({ ...toServerRecord(op.table, op.opData ?? {}, { dropNulls: true }), id: op.id })
+            result = await table.upsert({ ...toServerRecord(op.table, op.opData ?? {}, { dropNulls: true }), id: op.id }).setHeader('Authorization', authorization)
             break
           case UpdateType.PATCH:
-            result = await table.update(toServerRecord(op.table, op.opData ?? {}, { dropNulls: false })).eq('id', op.id)
+            result = await table.update(toServerRecord(op.table, op.opData ?? {}, { dropNulls: false })).eq('id', op.id).setHeader('Authorization', authorization)
             break
           case UpdateType.DELETE:
-            result = await table.delete().eq('id', op.id)
+            result = await table.delete().eq('id', op.id).setHeader('Authorization', authorization)
             break
         }
 
         if (result?.error) {
           const code = result.error.code ?? ''
-          if (FATAL_RESPONSE_CODES.some((pattern) => pattern.test(code))) {
+          if (isPermanentRejection(result.error)) {
             console.error(
               `[powersync] 🚨 DISCARDED a write the server rejected (${code}) — ${op.op} ${op.table} ${op.id}. ` +
                 'This change is NOT on the server. See MIGRATION-LESSONS §27.',

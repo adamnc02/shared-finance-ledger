@@ -532,6 +532,7 @@ in that table is silent — neither Postgres nor PowerSync will warn you.
 | Risk | Reference |
 |---|---|
 | Empty-string FKs silently discarded as fatal writes | DMR §11.1 |
+| A lapsed sign-in sends uploads as `anon`; a discarded 42501 loses every queued write | ML §77 · TECHNICAL §39 |
 | Dropping a published table kills replication for **every** table, `personal-f` included | ML §19 |
 | `language sql` RLS helper reintroduces infinite recursion while looking correct | ML §21 |
 | Exposed-schemas gate is invisible to PowerSync; fails only on a real client RPC | ML §20 |

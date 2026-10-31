@@ -2179,6 +2179,18 @@ row writes and applies them to the local database, which queues them for upload.
   dropped. The discard itself stays: a write Postgres permanently rejects would otherwise block
   every later write behind it forever.
 
+> 🚨 **No upload without a session** (`uploadAuth.ts`, MIGRATION-LESSONS §77). supabase-js sends the
+> **publishable key** as the bearer whenever `getSession()` has no session — an access token that
+> expired with no signal, then a refresh that failed. PostgREST runs that request as `anon`, which
+> has no grant on any table in this schema, so every queued write came back `42501 permission
+> denied for table` and was discarded; the device kept showing it until the next sync replaced the
+> local copy. So `uploadData()` reads the session **before its first request** and throws without
+> one (PowerSync keeps the transaction; sign-out never clears the local database, so it uploads on
+> the next sign-in), and sets that JWT on **every** request. `isPermanentRejection()` splits 42501:
+> an **RLS** refusal (`new row violates row-level security policy`) is discarded, a **privilege**
+> refusal (`permission denied for …`) is retried. No signal at all is a network error and was always
+> retried. `verify-upload-auth.ts` proves all three, with the old code-only rule as the control.
+
 `src/lib/powersync/database.ts` is the database singleton. It uses **`OPFSCoopSyncVFS`**, not the
 default VFS, which PowerSync's own docs flag as unreliable for multi-tab Safari/iOS — and this is a
 PWA.
