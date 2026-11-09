@@ -25,7 +25,7 @@ import { useSavedFlash, SavedFlashOverlay } from '../components/SavedFlash'
 import { EffectiveDatedChangeFlow, type RecurringChangeField, type ChangeScope } from '../components/EffectiveDatedChangeFlow'
 import { peopleWithIncomeCount } from '../lib/household'
 import { visibleToMe } from '../lib/householdView'
-import { isBillTemplate } from '../lib/bills'
+import { isBillTemplate, billLocation } from '../lib/bills'
 import { shouldOfferLocationPicker } from '../lib/pickerFirst'
 import {
   recentAndUpcomingOccurrences,
@@ -596,7 +596,7 @@ function BillRow({
             </span>
             <span className="break-words min-w-0" style={muted}>{category?.name ?? ''}</span>
             <span className="break-words min-w-0" style={muted}>{FREQUENCY_LABELS[template.frequency]}</span>
-            <span className="break-words min-w-0" style={muted}>{billLocationLabel(template.location, template.potId, pots)}</span>
+            <span className="break-words min-w-0" style={muted}>{billLocationLabel(billLocation(template.location), template.potId, pots)}</span>
             <span className="break-words min-w-0" style={muted}>{next ? formatNextDate(next) : '—'}</span>
             <span className="font-mono text-right whitespace-nowrap" style={{ color: template.active ? 'var(--color-ink)' : 'var(--color-ink-muted)', textDecoration: template.active ? 'none' : 'line-through' }}>
               £{formatCurrency(template.amount)}
@@ -841,7 +841,7 @@ function BillEditPanel({
     // a location change can apply immediately via the normal save path,
     // same as it always could before this field existed.
     if (locationChanged) {
-      onAssignLocation(draft.location, todayIso(), draft.location === 'pot' ? draft.potId : undefined)
+      onAssignLocation(billLocation(draft.location), todayIso(), draft.location === 'pot' ? draft.potId : undefined)
       return
     }
     onSave(draft)
@@ -910,8 +910,8 @@ function BillEditPanel({
           if (locationChanged) {
             changes.push({
               label: 'Location',
-              from: billLocationLabel(template.location, template.potId, pots),
-              to: billLocationLabel(draft.location, draft.potId, pots),
+              from: billLocationLabel(billLocation(template.location), template.potId, pots),
+              to: billLocationLabel(billLocation(draft.location), draft.potId, pots),
               // Location has no single-occurrence write of its own — make
               // that explicit whenever "just a single payment" was chosen
               // for the amount, so this row isn't misread as scoped the
@@ -960,7 +960,7 @@ function BillEditPanel({
             // this date forward regardless of Amount/Date's single/
             // all-future choice — it has no single-occurrence mechanism
             // of its own.
-            onAssignLocation(draft.location, effectiveFrom, draft.location === 'pot' ? draft.potId : undefined)
+            onAssignLocation(billLocation(draft.location), effectiveFrom, draft.location === 'pot' ? draft.potId : undefined)
           }
           setChangeKind(null)
         }}
@@ -987,7 +987,7 @@ function BillEditPanel({
       {wide && (
         <div className="order-1 grid grid-cols-2 gap-3">
           {fact('How often', FREQUENCY_LABELS[draft.frequency])}
-          {fact('Paid from', billLocationLabel(draft.location, draft.potId, pots))}
+          {fact('Paid from', billLocationLabel(billLocation(draft.location), draft.potId, pots))}
           {fact('Method', PAYMENT_METHOD_LABELS[draft.paymentMethod])}
           {fact('First due', formatFullDate(draft.anchorDate))}
         </div>
@@ -1008,7 +1008,7 @@ function BillEditPanel({
         people={people}
         pots={pots}
         canBeJoint={canBeJoint}
-        location={draft.location}
+        location={billLocation(draft.location)}
         ownerId={draft.ownerId}
         potId={draft.potId}
         payee={draft.payee}
@@ -1087,7 +1087,7 @@ export function BillForm({
   const [frequency, setFrequency] = useState<RecurrenceFrequency>(initial?.frequency ?? 'monthly')
   const [intervalWeeks, setIntervalWeeks] = useState(initial?.intervalWeeks ?? 2)
   const [anchorDate, setAnchorDate] = useState(initial?.anchorDate ?? todayIso())
-  const [location, setLocation] = useState<BillLocation>(initial?.location ?? defaultLocation)
+  const [location, setLocation] = useState<BillLocation>(initial?.location ? billLocation(initial.location) : defaultLocation)
   const [payee, setPayee] = useState(initial?.payee || people[0]?.id || '')
   const [payeeSharePercent, setPayeeSharePercent] = useState(initial?.payeeSharePercent ?? 50)
   // '' on a joint item means "nobody", not "unset" — lib/formOwner.ts.

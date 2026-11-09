@@ -37,6 +37,8 @@ import { toLocalIsoDate, parseLocalDate } from './date'
 import { coinJarForOwner, roundRecurringOccurrences, roundUpBroken, roundUpFields, unroundedAmount } from './roundUp'
 import { isInEditWindow } from './editWindow'
 import type { AppDataV2, Transaction } from '../types/ledger'
+import { countsFromDate, accountOpening, potOpening } from './openingBalance'
+import { isOutsideIncomeTemplate } from './outsideIncome'
 
 /**
  * PROMPT-09 (2026-09-19): an auto-cleared payment's id comes from the
@@ -522,7 +524,7 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
     const payCycle = result.payCycles.find((pc) => pc.personId === person.id)
     if (!payCycle) continue
 
-    const rangeStart = parseLocalDate(payCycle.openingBalanceDate)
+    const rangeStart = countsFromDate(accountOpening(payCycle))
     if (rangeStart > asOf) continue // nothing before the visibility floor is ever due
 
     const candidates: Omit<Transaction, 'id'>[] = []
@@ -647,7 +649,7 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
   const nonPersonalTransferTemplates = result.recurringTemplates.filter((t) => t.kind === 'transfer' && t.active && t.location !== 'personal')
   if (nonPersonalTransferTemplates.length > 0) {
     const primaryPayCycle = result.payCycles.find((pc) => pc.personId === result.primaryPersonId)
-    const transferRangeStart = primaryPayCycle ? parseLocalDate(primaryPayCycle.openingBalanceDate) : new Date(0)
+    const transferRangeStart = primaryPayCycle ? countsFromDate(accountOpening(primaryPayCycle)) : new Date(0)
     if (transferRangeStart <= asOf) {
       for (const template of nonPersonalTransferTemplates) {
         // 🚨 THE OWNER'S PAY CYCLE, NOT THE PRIMARY'S (2026-09-23) — the same defect as
@@ -667,6 +669,33 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
           changed = true
         }
       }
+    }
+  }
+
+  // Step 4b — materialize recurring income paid in from OUTSIDE straight onto
+  // a savings pot or a credit card (lib/outsideIncome.ts). Like Step 4, these
+  // are never `location: 'personal'`, so the per-person loop never sees them.
+  // Each starts at its own account's floor: the savings pot's opening
+  // (countsFrom), the card's balance anchor — before either, the engines ignore
+  // a row anyway.
+  for (const template of result.recurringTemplates.filter(isOutsideIncomeTemplate)) {
+    let floor: Date | null = null
+    if (template.location === 'savings') {
+      const pot = result.savingsPots.find((p) => p.id === template.savingsPotId)
+      floor = pot ? countsFromDate(potOpening(pot)) : null
+    } else {
+      const card = result.creditCards.find((c) => c.id === template.creditCardId)
+      floor = card ? parseLocalDate(card.balanceAsOfDate) : null
+    }
+    if (!floor || floor > asOf) continue
+    for (const candidate of generateTransactionsForTemplate(template, floor, asOf)) {
+      if (candidate.date > asOfIso) continue
+      const key = dedupeKey(candidate)
+      if (key && globalExistingKeys.has(key)) continue
+      const real: Transaction = { ...candidate, id: autoClearedTransactionId(key), status: 'cleared' }
+      result = { ...result, transactions: [...result.transactions, real] }
+      if (key) globalExistingKeys.add(key)
+      changed = true
     }
   }
 
@@ -693,7 +722,7 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
     const jointBillTemplates = result.recurringTemplates.filter((t) => t.location === 'joint')
     const jointLoans = result.loans.filter((l) => l.location === 'joint' && l.active)
     if (jointBillTemplates.length > 0 || jointLoans.length > 0) {
-      const jointRangeStart = parseLocalDate(result.jointAccount.openingBalanceDate)
+      const jointRangeStart = countsFromDate(accountOpening(result.jointAccount))
       if (jointRangeStart <= asOf) {
         const jointCandidates: Omit<Transaction, 'id'>[] = []
         for (const template of jointBillTemplates) {

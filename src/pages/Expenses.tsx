@@ -104,6 +104,8 @@ import { todayIso, parseLocalDate } from '../lib/date'
 import { fundablePots, unroundedAmount, roundUpAvailable, roundUpTarget, roundUpUplift, coinJarForOwner } from '../lib/roundUp'
 import { visibleToMe, touchesJointAccount, isSomeoneElses } from '../lib/householdView'
 import { OwnerBadge } from '../components/OwnerBadge'
+import { cardActivity } from '../lib/outsideIncome'
+import { transferRecipientId, personTransferOptions } from '../lib/personTransfer'
 
 type PageMode = 'transactions' | 'recurring' | 'transfer' | 'overpayments'
 
@@ -268,7 +270,8 @@ function EditSimpleTransactionForm({
   // are editable too — a plain amount/date/note pot/savings picker doesn't
   // apply here (either side can be any location), so this is its own
   // opt-in prop rather than folding into `extraFields`.
-  locations?: { options: TransferLocationOption[]; savingsPots: SavingsPot[]; pots: Pot[] }
+  /** `toExtra`: the other person's current account (lib/personTransfer.ts) — offered as a TO only, and only while FROM is the owner's own Current Account. `people` names it. */
+  locations?: { options: TransferLocationOption[]; savingsPots: SavingsPot[]; pots: Pot[]; toExtra?: TransferLocationOption[]; people?: { id: string; name: string }[] }
   onSave: (updates: Partial<Pick<Transaction, 'amount' | 'date' | 'note' | 'fromLocation' | 'toLocation'>>) => void
   onCancel: () => void
 }) {
@@ -302,10 +305,14 @@ function EditSimpleTransactionForm({
       <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
         <LocationStep
           title={pickingSide === 'from' ? 'From' : 'To'}
-          options={locations.options}
+          options={pickingSide === 'to' && fromLocation?.type === 'personal' && !fromLocation.personId ? [...locations.options, ...(locations.toExtra ?? [])] : locations.options}
           excludeKey={otherKey}
           onPick={(o) => {
-            if (pickingSide === 'from') setFromLocation(o.location)
+            if (pickingSide === 'from') {
+              setFromLocation(o.location)
+              // A person's account is only a destination from your own Current Account.
+              if (o.location.type !== 'personal' && toLocation?.personId) setToLocation(undefined)
+            }
             else setToLocation(o.location)
             setPickingSide(null)
           }}
@@ -322,7 +329,7 @@ function EditSimpleTransactionForm({
       {locations && fromLocation && toLocation && (
         <div className="flex items-center gap-2">
           <button onClick={() => setPickingSide('from')} className="flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm truncate" style={{ background: 'var(--color-bg-elevated)', color: 'var(--color-ink)' }}>
-            {transferLocationLabel(fromLocation, locations.savingsPots, locations.pots)}
+            {transferLocationLabel(fromLocation, locations.savingsPots, locations.pots, locations.people)}
           </button>
           <button
             onClick={() => {
@@ -336,7 +343,7 @@ function EditSimpleTransactionForm({
             <ArrowLeftRight size={16} className="text-[var(--color-ink-muted)]" />
           </button>
           <button onClick={() => setPickingSide('to')} className="flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm truncate" style={{ background: 'var(--color-bg-elevated)', color: 'var(--color-ink)' }}>
-            {transferLocationLabel(toLocation, locations.savingsPots, locations.pots)}
+            {transferLocationLabel(toLocation, locations.savingsPots, locations.pots, locations.people)}
           </button>
         </div>
       )}
@@ -468,7 +475,8 @@ export function Expenses() {
   // instead of typed in here. Excluding them left TransferRowItem's own
   // sourceType === 'salary_sort' coral-arrow special-casing below
   // permanently unreachable.
-  const transferTransactions = visibleToMe(data, data.transactions, (t) => t.ownerId, touchesJointAccount)
+  // A person-to-person transfer is both people's: shown to the recipient too.
+  const transferTransactions = visibleToMe(data, data.transactions, (t) => t.ownerId, (t) => touchesJointAccount(t) || transferRecipientId(t) === data.primaryPersonId)
     .filter((t) => t.type === 'transfer' && (!t.sourceType || t.sourceType === 'salary_sort'))
     .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1))
 
@@ -477,7 +485,7 @@ export function Expenses() {
   // from an entity's own Wallet-page card ("single clean consistent
   // method to create them throughout", Adam-specified 2026-09-04) —
   // both write the exact same RecurringTemplate.
-  const recurringTransfers = visibleToMe(data, data.recurringTemplates, (t) => t.ownerId, (t) => t.location === 'joint')
+  const recurringTransfers = visibleToMe(data, data.recurringTemplates, (t) => t.ownerId, (t) => t.location === 'joint' || (t.kind === 'transfer' && t.transferTo?.type === 'personal' && t.transferTo.personId === data.primaryPersonId))
     .filter((t) => t.kind === 'transfer')
     .sort((a, b) => a.name.localeCompare(b.name))
 
@@ -617,6 +625,8 @@ export function Expenses() {
                           note: entry.note || undefined,
                           location: entry.location,
                           potId: entry.potId,
+                          savingsPotId: entry.savingsPotId,
+                          creditCardId: entry.type === 'income' ? entry.creditCardId : undefined,
                           roundUpSkipped: entry.roundUpSkipped,
                         })
                   setJustCreatedTransactionId(id)
@@ -1007,7 +1017,7 @@ export function Expenses() {
                     </button>
                   </div>
                   <p className="px-3.5 pt-1 pb-2.5 text-[13px] text-[var(--color-ink-muted)]">
-                    Lump payments on top of the minimum. £{formatCurrency(withLiveBalance(card, data.transactions).currentBalance)} owed today.
+                    Lump payments on top of the minimum. £{formatCurrency(withLiveBalance(card, cardActivity(data)).currentBalance)} owed today.
                   </p>
                   <div className={`${OVER_COLUMNS} px-3.5 py-2 text-xs font-semibold tracking-[0.06em] whitespace-nowrap text-[var(--color-ink-muted)]`}>
                     <span>PAYMENT</span>
@@ -1326,12 +1336,18 @@ function EditEntryForm({
   // The TRANSFER wizard's own options (transferLocationOptions, above)
   // are deliberately NOT filtered: transfers in and out are the
   // sanctioned way to move money to and from a jar.
+  // Income may also have been paid in from outside straight to a savings pot
+  // or a card (lib/outsideIncome.ts).
+  const isIncome = transaction.type === 'income'
   const pickableLocationOptions = buildTransferLocationOptions(data.savingsPots, fundablePots(data.pots), !!data.jointAccount, data.primaryPersonId).filter(
-    (o) => o.location.type !== 'savings',
+    (o) => o.location.type !== 'savings' || isIncome,
   )
   const nonPersonalLocationOptions = pickableLocationOptions.filter((o) => o.location.type !== 'personal')
+  const initialOutsideCardId = isIncome && transaction.location === 'credit_card' ? transaction.creditCardId : undefined
+  const [outsideCardId, setOutsideCardId] = useState<string | undefined>(initialOutsideCardId)
+  const outsideCards = isIncome ? data.creditCards.filter((c) => c.active || c.id === initialOutsideCardId) : []
   const initialLocationOption =
-    pickableLocationOptions.find((o) => transferLocationKey(o.location) === transferLocationKey(transaction.location === 'pot' ? { type: 'pot', potId: transaction.potId } : { type: transaction.location as 'personal' | 'joint' })) ??
+    pickableLocationOptions.find((o) => transferLocationKey(o.location) === transferLocationKey(transaction.location === 'pot' ? { type: 'pot', potId: transaction.potId } : transaction.location === 'savings' ? { type: 'savings', savingsPotId: transaction.savingsPotId } : { type: transaction.location as 'personal' | 'joint' })) ??
     PERSONAL_LOCATION_OPTION
   const [locationOption, setLocationOption] = useState<TransferLocationOption>(initialLocationOption)
 
@@ -1371,6 +1387,7 @@ function EditEntryForm({
     isCreditCardLocation !== initialIsCreditCardLocation ||
     (isCreditCardLocation && creditCardId !== transaction.creditCardId) ||
     (canEditLocation && locationOption.key !== initialLocationOption.key) ||
+    outsideCardId !== initialOutsideCardId ||
     roundUpSkipped !== (transaction.roundUpSkipped ?? false)
 
   // Offered only on the rows that would otherwise round, and only once a
@@ -1409,17 +1426,23 @@ function EditEntryForm({
           dropdown here, same as every other field on this form, not the
           picker-first LocationStep overlay ExpenseForm's creation wizard
           uses. Ordered above Payment method per Adam's own follow-up. */}
-      {canEditLocation && (nonPersonalLocationOptions.length > 0 || creditCardLocationOffered) && (
+      {canEditLocation && (nonPersonalLocationOptions.length > 0 || creditCardLocationOffered || outsideCards.length > 0) && (
         <label className="flex flex-col gap-1">
           <span className="text-xs text-[var(--color-ink-muted)]">Location</span>
           <select
-            value={isCreditCardLocation ? 'credit_card' : locationOption.key}
+            value={isCreditCardLocation ? 'credit_card' : outsideCardId ? `outside-card:${outsideCardId}` : locationOption.key}
             onChange={(e) => {
               if (e.target.value === 'credit_card') {
                 setIsCreditCardLocation(true)
                 return
               }
               setIsCreditCardLocation(false)
+              if (e.target.value.startsWith('outside-card:')) {
+                setOutsideCardId(e.target.value.slice('outside-card:'.length))
+                setLocationOption(PERSONAL_LOCATION_OPTION)
+                return
+              }
+              setOutsideCardId(undefined)
               const next = [PERSONAL_LOCATION_OPTION, ...nonPersonalLocationOptions].find((o) => o.key === e.target.value)
               if (next) setLocationOption(next)
             }}
@@ -1428,6 +1451,11 @@ function EditEntryForm({
             {[PERSONAL_LOCATION_OPTION, ...nonPersonalLocationOptions].map((o) => (
               <option key={o.key} value={o.key} style={{ color: '#000' }}>
                 {o.label}
+              </option>
+            ))}
+            {outsideCards.map((c) => (
+              <option key={`outside-card:${c.id}`} value={`outside-card:${c.id}`} style={{ color: '#000' }}>
+                Credit Card: {c.name}
               </option>
             ))}
             {creditCardLocationOffered && (
@@ -1505,13 +1533,18 @@ function EditEntryForm({
             date,
             categoryId,
             paymentMethod: isCreditCardLocation ? 'card' : paymentMethodEditable ? paymentMethod : transaction.paymentMethod,
-            creditCardId: isCreditCardLocation ? creditCardId : undefined,
+            creditCardId: isCreditCardLocation ? creditCardId : outsideCardId,
             note: name.trim(),
             ...(canEditLocation
-              ? {
-                  location: (!isCreditCardLocation && (locationOption.location.type === 'joint' || locationOption.location.type === 'pot') ? locationOption.location.type : 'personal') as BillLocation,
-                  potId: !isCreditCardLocation && locationOption.location.type === 'pot' ? locationOption.location.potId : undefined,
-                }
+              ? outsideCardId
+                ? { location: 'credit_card' as const, potId: undefined, savingsPotId: undefined, paymentMethod: 'bank_transfer' as const }
+                : isIncome && locationOption.location.type === 'savings'
+                  ? { location: 'savings' as const, potId: undefined, savingsPotId: locationOption.location.savingsPotId, paymentMethod: 'bank_transfer' as const }
+                  : {
+                      location: (!isCreditCardLocation && (locationOption.location.type === 'joint' || locationOption.location.type === 'pot') ? locationOption.location.type : 'personal') as BillLocation,
+                      potId: !isCreditCardLocation && locationOption.location.type === 'pot' ? locationOption.location.potId : undefined,
+                      savingsPotId: undefined,
+                    }
               : {}),
           })
         }
@@ -1531,8 +1564,10 @@ interface ExpenseFormEntry {
   personId: string
   note: string
   /** 2026-09-13 (dev.md item 5) — Personal (omit), Joint, or a regular Pot — never a Savings Pot. See ExpenseForm's own Location block comment. */
-  location?: 'joint' | 'pot'
+  location?: 'joint' | 'pot' | 'savings' | 'credit_card'
   potId?: string
+  /** Income paid in from outside onto a savings pot (location 'savings'). A card uses creditCardId with location 'credit_card'. */
+  savingsPotId?: string
   /** PROMPT-13 B1a — this one entry opts out of rounding. */
   roundUpSkipped?: boolean
 }
@@ -1609,11 +1644,16 @@ function ExpenseForm({
   // The TRANSFER wizard's own options (transferLocationOptions, above)
   // are deliberately NOT filtered: transfers in and out are the
   // sanctioned way to move money to and from a jar.
+  // INCOME may also land straight on a savings pot or a credit card — money
+  // paid in from outside (lib/outsideIncome.ts). An expense never can.
   const pickableLocationOptions = buildTransferLocationOptions(data.savingsPots, fundablePots(data.pots), !!data.jointAccount, data.primaryPersonId).filter(
-    (o) => o.location.type !== 'savings',
+    (o) => o.location.type !== 'savings' || type === 'income',
   )
   const nonPersonalLocationOptions = pickableLocationOptions.filter((o) => o.location.type !== 'personal')
   const [locationOption, setLocationOption] = useState<TransferLocationOption>(PERSONAL_LOCATION_OPTION)
+  /** Income paid onto this card from outside (an overpayment by someone else). */
+  const [outsideCardId, setOutsideCardId] = useState<string | undefined>(undefined)
+  const outsideCards = type === 'income' ? data.creditCards.filter((c) => c.active && c.ownerId === data.primaryPersonId) : []
 
   // 2026-09-16 (Adam-reported — "location" bug): Credit Card is a genuine
   // fourth location choice ("where did this money come from") alongside
@@ -1654,7 +1694,28 @@ function ExpenseForm({
   // "Which card") — passing the chosen values straight through as
   // arguments rather than reading paymentMethod/creditCardId state avoids
   // acting on a stale value from before the same click's setState apply.
+  /** Where an income paid in from outside lands, or null for the household's own accounts. */
+  function outsideDestination(): Pick<ExpenseFormEntry, 'location' | 'savingsPotId' | 'creditCardId'> | null {
+    if (outsideCardId) return { location: 'credit_card', creditCardId: outsideCardId }
+    if (locationOption.location.type === 'savings') return { location: 'savings', savingsPotId: locationOption.location.savingsPotId }
+    return null
+  }
+
   function commitSave(finalType: EntryType, finalPaymentMethod: PaymentMethod, finalCreditCardId?: string, roundUpSkipped?: boolean) {
+    const outside = finalType === 'income' ? outsideDestination() : null
+    if (outside) {
+      onSave({
+        type: finalType,
+        amount: amountNumber,
+        date,
+        categoryId,
+        paymentMethod: 'bank_transfer',
+        personId: data.primaryPersonId,
+        note: name.trim(),
+        ...outside,
+      })
+      return
+    }
     const location = locationOption.location.type === 'joint' || locationOption.location.type === 'pot' ? locationOption.location.type : undefined
 
     // PROMPT-13 B1a — one more question, but only when there is genuinely
@@ -1767,16 +1828,24 @@ function ExpenseForm({
           </div>
           {card && <span className="text-[11px] text-[var(--color-ink-muted)]">This adds to the card's balance — it won't reduce your cash balance until you pay the card down.</span>}
         </div>
-        {!card && nonPersonalLocationOptions.length > 0 && (
+        {!card && (nonPersonalLocationOptions.length > 0 || outsideCards.length > 0) && (
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs text-[var(--color-ink-muted)]">From</span>
+            <span className="text-xs text-[var(--color-ink-muted)]">{type === 'income' ? 'Into' : 'From'}</span>
             <div className="flex flex-wrap gap-2">
               {[PERSONAL_LOCATION_OPTION, ...nonPersonalLocationOptions].map((o) => (
-                <button key={o.key} onClick={() => setLocationOption(o)} aria-pressed={locationOption.key === o.key} className="h-9 px-3.5 rounded-full text-[13px] font-semibold" style={chip(locationOption.key === o.key)}>
+                <button key={o.key} onClick={() => { setLocationOption(o); setOutsideCardId(undefined) }} aria-pressed={!outsideCardId && locationOption.key === o.key} className="h-9 px-3.5 rounded-full text-[13px] font-semibold" style={chip(!outsideCardId && locationOption.key === o.key)}>
                   {o.label}
                 </button>
               ))}
+              {outsideCards.map((c) => (
+                <button key={`outside-card:${c.id}`} onClick={() => { setLocationOption(PERSONAL_LOCATION_OPTION); setOutsideCardId(c.id) }} aria-pressed={outsideCardId === c.id} className="h-9 px-3.5 rounded-full text-[13px] font-semibold" style={chip(outsideCardId === c.id)}>
+                  Credit Card: {c.name}
+                </button>
+              ))}
             </div>
+            {type === 'income' && (outsideCardId || locationOption.location.type === 'savings') && (
+              <span className="text-[11px] text-[var(--color-ink-muted)]">Paid in from outside — nothing leaves your current account.{outsideCardId ? ' It reduces the card balance like an overpayment.' : ''}</span>
+            )}
           </div>
         )}
         {canRoundUp && (
@@ -1830,7 +1899,7 @@ function ExpenseForm({
         <EditField key="expense-amount" label="Amount (£)" type="number" value={amount} onChange={setAmount} />
         <FormButtonRow
           onCancel={onCancel}
-          onSave={() => setStep(nonPersonalLocationOptions.length > 0 || creditCardLocationOffered ? 'location' : 'date')}
+          onSave={() => setStep(nonPersonalLocationOptions.length > 0 || creditCardLocationOffered || outsideCards.length > 0 ? 'location' : 'date')}
           saveLabel="Continue"
           saveDisabled={!(amountNumber > 0)}
         />
@@ -1858,12 +1927,27 @@ function ExpenseForm({
               key={o.key}
               onClick={() => {
                 setLocationOption(o)
+                setOutsideCardId(undefined)
                 setStep('date')
               }}
               className="w-full text-left px-3 py-2 rounded-xl text-sm text-[var(--color-ink)]"
               style={{ background: 'var(--color-surface)' }}
             >
               {o.label}
+            </button>
+          ))}
+          {outsideCards.map((c) => (
+            <button
+              key={`outside-card:${c.id}`}
+              onClick={() => {
+                setLocationOption(PERSONAL_LOCATION_OPTION)
+                setOutsideCardId(c.id)
+                setStep('date')
+              }}
+              className="w-full text-left px-3 py-2 rounded-xl text-sm text-[var(--color-ink)]"
+              style={{ background: 'var(--color-surface)' }}
+            >
+              Credit Card: {c.name}
             </button>
           ))}
           {creditCardLocationOffered && (
@@ -1938,7 +2022,8 @@ function ExpenseForm({
         )}
         <FormButtonRow
           onCancel={onCancel}
-          onSave={() => (skipPaymentMethodStep ? commitSave(type, 'card', creditCardId) : setStep('payment_method'))}
+          // Money paid in from outside onto a card or savings pot was never paid BY anything here: no payment-method question.
+          onSave={() => (skipPaymentMethodStep ? commitSave(type, 'card', creditCardId) : type === 'income' && outsideDestination() ? commitSave(type, 'bank_transfer') : setStep('payment_method'))}
           saveLabel="Continue"
           saveDisabled={!categoryId}
         />
@@ -2291,7 +2376,9 @@ function TransferForm({
     return (
       <LocationStep
         title="To"
-        options={options}
+        // From your own Current Account, the other person's current account is
+        // a destination too (joint household only — lib/personTransfer.ts).
+        options={fromOption?.location.type === 'personal' && !fromOption.location.personId ? [...options, ...personTransferOptions(data.people, primaryPersonId)] : options}
         excludeKey={fromOption?.key}
         onPick={(o) => {
           setToOption(o)
@@ -2786,6 +2873,9 @@ function TransferRowItem({
   shouldFlashOnMount?: boolean
   onFlashedOnMount?: () => void
 }) {
+  const { data: ledger } = useLedgerData()
+  // Person-to-person (lib/personTransfer.ts): the sender sees it go out, the recipient sees it arrive.
+  const recipientId = transferRecipientId(t)
   const [isEditing, setIsEditing] = useOneOpenRow(`transfer:${t.id}`)
   const wide = useWide()
   const { active: flashActive, message: flashMessage, trigger: triggerFlash } = useSavedFlash('Transfer updated.')
@@ -2797,14 +2887,15 @@ function TransferRowItem({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const touchesPersonal = t.fromLocation?.type === 'personal' || t.toLocation?.type === 'personal'
-  const isWithdrawal = t.toLocation?.type === 'personal'
+  const isWithdrawal = recipientId ? recipientId === ledger.primaryPersonId : t.toLocation?.type === 'personal'
   // A direct transfer with no personal leg at all (Pot ↔ Pot, etc., 2026-09
   // UAT session) doesn't fit "Deposit"/"Withdrawal" — neither side is MY
   // personal balance — so it shows both endpoints instead, and its amount
   // is shown plain (not +/- green/red) since it doesn't affect personal
   // cash either way.
-  const fromLabel = transferLocationLabel(t.fromLocation, savingsPots, pots)
-  const toLabel = transferLocationLabel(t.toLocation, savingsPots, pots)
+  const fromLabel = recipientId ? transferLocationLabel({ type: 'personal', personId: t.ownerId }, savingsPots, pots, ledger.people) : transferLocationLabel(t.fromLocation, savingsPots, pots)
+  const toLabel = transferLocationLabel(t.toLocation, savingsPots, pots, ledger.people)
+  const personalTag = recipientId ? (isWithdrawal ? 'Received' : 'Sent') : isWithdrawal ? 'Withdrawal' : 'Deposit'
   const isSalarySort = t.sourceType === 'salary_sort'
 
   return (
@@ -2819,7 +2910,7 @@ function TransferRowItem({
             onClick={() => setIsEditing((e) => !e)}
             color={destinationColor}
             label={isSalarySort ? `Salary Sort · ${isWithdrawal ? fromLabel : toLabel}` : destinationColor ? toLabel : `${fromLabel} → ${toLabel}`}
-            tag={t.note || (touchesPersonal && !isSalarySort ? (isWithdrawal ? 'Withdrawal' : 'Deposit') : undefined)}
+            tag={t.note || (touchesPersonal && !isSalarySort ? personalTag : undefined)}
             owner={owner?.name}
             howOften={t.status === 'pending' ? 'One-off · pending' : 'One-off'}
             when={t.date}
@@ -2848,7 +2939,7 @@ function TransferRowItem({
                         color: isWithdrawal ? 'var(--color-positive)' : 'var(--color-negative)',
                       }}
                     >
-                      {isWithdrawal ? 'Withdrawal' : 'Deposit'}
+                      {personalTag}
                     </span>
                   )}
                 </>
@@ -2874,7 +2965,7 @@ function TransferRowItem({
           <SheetOnLaptop title={isSalarySort ? 'Salary Sort' : toLabel} subtitle={`Transfer · ${fromLabel} → ${toLabel}`} onClose={() => setIsEditing(false)}>
           <EditSimpleTransactionForm
             transaction={t}
-            locations={isSalarySort ? undefined : { options: locationOptions, savingsPots, pots }}
+            locations={isSalarySort ? undefined : { options: locationOptions, savingsPots, pots, toExtra: personTransferOptions(ledger.people, t.ownerId), people: ledger.people }}
             onCancel={() => setIsEditing(false)}
             onSave={(updates) => {
               onUpdate(updates)
@@ -3489,6 +3580,8 @@ function TransferRecurringRow({
   shouldFlashOnMount?: boolean
   onFlashedOnMount?: () => void
 }) {
+  const { data: ledger } = useLedgerData()
+  const recipientId = template.kind === 'transfer' && template.transferTo?.type === 'personal' && template.transferTo.personId && template.transferTo.personId !== template.ownerId ? template.transferTo.personId : null
   const [open, setOpen] = useOneOpenRow(`recurring-transfer:${template.id}`)
   const wide = useWide()
   // Laptop panel: the transfer's other fields behind "Edit details", and its own Delete.
@@ -3559,9 +3652,10 @@ function TransferRecurringRow({
   }
 
   const touchesPersonal = template.transferFrom?.type === 'personal' || template.transferTo?.type === 'personal'
-  const isWithdrawal = template.transferTo?.type === 'personal'
-  const fromLabel = transferLocationLabel(template.transferFrom, savingsPots, pots)
-  const toLabel = transferLocationLabel(template.transferTo, savingsPots, pots)
+  const isWithdrawal = recipientId ? recipientId === ledger.primaryPersonId : template.transferTo?.type === 'personal'
+  const fromLabel = recipientId ? transferLocationLabel({ type: 'personal', personId: template.ownerId }, savingsPots, pots, ledger.people) : transferLocationLabel(template.transferFrom, savingsPots, pots)
+  const toLabel = transferLocationLabel(template.transferTo, savingsPots, pots, ledger.people)
+  const personalTag = recipientId ? (isWithdrawal ? 'Received' : 'Sent') : isWithdrawal ? 'Withdrawal' : 'Deposit'
   const locationsDirty = !locationsEqual(transferFrom, template.transferFrom) || !locationsEqual(transferTo, template.transferTo)
   const amountDirty = Number(amount) > 0 && Number(amount) !== template.amount
   // Bug C (UAT 2026-09-10) — a recurring transfer's own Name, same
@@ -3646,8 +3740,8 @@ function TransferRecurringRow({
 
   function locationChangeFields(): RecurringChangeField[] {
     const fields: RecurringChangeField[] = []
-    if (!locationsEqual(transferFrom, template.transferFrom)) fields.push({ label: 'From', from: fromLabel, to: transferFrom ? transferLocationLabel(transferFrom, savingsPots, pots) : '—' })
-    if (!locationsEqual(transferTo, template.transferTo)) fields.push({ label: 'To', from: toLabel, to: transferTo ? transferLocationLabel(transferTo, savingsPots, pots) : '—' })
+    if (!locationsEqual(transferFrom, template.transferFrom)) fields.push({ label: 'From', from: fromLabel, to: transferFrom ? transferLocationLabel(transferFrom, savingsPots, pots, ledger.people) : '—' })
+    if (!locationsEqual(transferTo, template.transferTo)) fields.push({ label: 'To', from: toLabel, to: transferTo ? transferLocationLabel(transferTo, savingsPots, pots, ledger.people) : '—' })
     if (nameDirty) fields.push({ label: 'Name', from: template.name, to: name.trim() })
     if (freqDirty && !scheduleMoves) fields.push({ label: 'Frequency', from: TRANSFER_FREQUENCY_LABELS[transferFrequencyChoiceFor(template)], to: TRANSFER_FREQUENCY_LABELS[freqChoice] })
     return fields
@@ -3808,7 +3902,7 @@ function TransferRecurringRow({
             onClick={() => setOpen(!open)}
             color={destinationColor}
             label={destinationColor ? toLabel : `${fromLabel} → ${toLabel}`}
-            tag={touchesPersonal ? (isWithdrawal ? 'Withdrawal' : 'Deposit') : undefined}
+            tag={touchesPersonal ? personalTag : undefined}
             owner={owner?.name}
             howOften={transferHowOften}
             when={nextOccurrence?.date}
@@ -3830,7 +3924,7 @@ function TransferRecurringRow({
                     color: isWithdrawal ? 'var(--color-positive)' : 'var(--color-negative)',
                   }}
                 >
-                  {isWithdrawal ? 'Withdrawal' : 'Deposit'}
+                  {personalTag}
                 </span>
               )}
             </p>
@@ -3856,11 +3950,13 @@ function TransferRecurringRow({
           <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--color-track)' }}>
             <LocationStep
               title={pickingSide === 'from' ? 'From' : 'To'}
-              options={locationOptions}
+              options={pickingSide === 'to' && transferFrom?.type === 'personal' && !transferFrom.personId ? [...locationOptions, ...personTransferOptions(ledger.people, template.ownerId)] : locationOptions}
               excludeKey={pickingSide === 'from' ? (transferTo ? transferLocationKey(transferTo) : undefined) : transferFrom ? transferLocationKey(transferFrom) : undefined}
               onPick={(o) => {
-                if (pickingSide === 'from') setTransferFrom(o.location)
-                else setTransferTo(o.location)
+                if (pickingSide === 'from') {
+                  setTransferFrom(o.location)
+                  if (o.location.type !== 'personal' && transferTo?.personId) setTransferTo(undefined)
+                } else setTransferTo(o.location)
                 setPickingSide(null)
               }}
               onCancel={() => setPickingSide(null)}
@@ -3874,8 +3970,8 @@ function TransferRecurringRow({
               <>
                 <div className="order-2 grid grid-cols-2 gap-3">
                   {[
-                    ['From', transferFrom ? transferLocationLabel(transferFrom, savingsPots, pots) : '—'],
-                    ['To', transferTo ? transferLocationLabel(transferTo, savingsPots, pots) : '—'],
+                    ['From', transferFrom ? transferLocationLabel(transferFrom, savingsPots, pots, ledger.people) : '—'],
+                    ['To', transferTo ? transferLocationLabel(transferTo, savingsPots, pots, ledger.people) : '—'],
                     ['How often', transferHowOften],
                     ['Next', nextOccurrence ? formatFullDate(nextOccurrence.date) : '—'],
                   ].map(([label, value]) => (
@@ -3894,7 +3990,7 @@ function TransferRecurringRow({
             {transferFrom && transferTo && (!wide || detailsOpen) && (
               <div className={`flex items-center gap-2 ${wide ? 'order-4' : ''}`}>
                 <button onClick={() => setPickingSide('from')} className="flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm truncate" style={{ background: 'var(--color-bg-elevated)', color: 'var(--color-ink)' }}>
-                  {transferLocationLabel(transferFrom, savingsPots, pots)}
+                  {transferLocationLabel(transferFrom, savingsPots, pots, ledger.people)}
                 </button>
                 <button
                   onClick={() => {
@@ -3908,7 +4004,7 @@ function TransferRecurringRow({
                   <ArrowLeftRight size={16} className="text-[var(--color-ink-muted)]" />
                 </button>
                 <button onClick={() => setPickingSide('to')} className="flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm truncate" style={{ background: 'var(--color-bg-elevated)', color: 'var(--color-ink)' }}>
-                  {transferLocationLabel(transferTo, savingsPots, pots)}
+                  {transferLocationLabel(transferTo, savingsPots, pots, ledger.people)}
                 </button>
               </div>
             )}
@@ -4080,6 +4176,9 @@ type RecurringTransactionFormStep = 'direction' | 'amount' | 'location' | 'frequ
  * always final). `data` is now needed (for Location's option-building),
  * where previously this form only needed `categories`.
  */
+/** A location-option key for a card that money is paid onto from outside (not a TransferLocation, so kept local to these forms). */
+const OUTSIDE_CARD_KEY = 'outside-card:'
+
 function RecurringTransactionForm({
   data,
   categories,
@@ -4114,11 +4213,20 @@ function RecurringTransactionForm({
   // The TRANSFER wizard's own options (transferLocationOptions, above)
   // are deliberately NOT filtered: transfers in and out are the
   // sanctioned way to move money to and from a jar.
+  // A recurring INCOME may also be paid in from outside straight to a savings
+  // pot or a credit card (lib/outsideIncome.ts) — e.g. someone paying a card
+  // down every month. On a card it works as an overpayment.
   const pickableLocationOptions = buildTransferLocationOptions(data.savingsPots, fundablePots(data.pots), !!data.jointAccount, data.primaryPersonId).filter(
-    (o) => o.location.type !== 'savings',
+    (o) => o.location.type !== 'savings' || type === 'income',
   )
-  const nonPersonalLocationOptions = pickableLocationOptions.filter((o) => o.location.type !== 'personal')
+  const outsideCardOptions: TransferLocationOption[] =
+    type === 'income'
+      ? data.creditCards.filter((c) => c.active && c.ownerId === defaultPersonId).map((c) => ({ key: `${OUTSIDE_CARD_KEY}${c.id}`, label: `Credit Card: ${c.name}`, location: { type: 'personal' } }))
+      : []
+  const nonPersonalLocationOptions = [...pickableLocationOptions.filter((o) => o.location.type !== 'personal'), ...outsideCardOptions]
   const [locationOption, setLocationOption] = useState<TransferLocationOption>(PERSONAL_LOCATION_OPTION)
+  const outsideCardId = type === 'income' && locationOption.key.startsWith(OUTSIDE_CARD_KEY) ? locationOption.key.slice(OUTSIDE_CARD_KEY.length) : undefined
+  const outsideSavingsPotId = type === 'income' && locationOption.location.type === 'savings' ? locationOption.location.savingsPotId : undefined
 
   // The round-up step, exactly as ExpenseForm asks it: last, and only when the
   // answers add up to a card, personal expense with a real uplift and a Coin Jar
@@ -4147,8 +4255,10 @@ function RecurringTransactionForm({
       frequency,
       intervalWeeks: frequency === 'every_n_weeks' ? intervalWeeks : undefined,
       anchorDate,
-      location: locationOption.location.type === 'joint' || locationOption.location.type === 'pot' ? locationOption.location.type : 'personal',
+      location: outsideCardId ? 'credit_card' : outsideSavingsPotId ? 'savings' : locationOption.location.type === 'joint' || locationOption.location.type === 'pot' ? locationOption.location.type : 'personal',
       potId: locationOption.location.type === 'pot' ? locationOption.location.potId : undefined,
+      creditCardId: outsideCardId,
+      savingsPotId: outsideSavingsPotId,
       payee: '',
       payeeSharePercent: 100,
       ownerId: defaultPersonId,
@@ -4307,7 +4417,8 @@ function RecurringTransactionForm({
           </button>
         </div>
         <CategoryPicker categories={categories} value={categoryId} onChange={setCategoryId} onAddCategory={onAddCategory} />
-        <FormButtonRow onCancel={onCancel} onSave={() => setStep('payment_method')} saveLabel="Continue" saveDisabled={!categoryId} />
+        {/* Money paid in from outside onto a card or savings pot: no payment-method question. */}
+        <FormButtonRow onCancel={onCancel} onSave={() => (outsideCardId || outsideSavingsPotId ? commitSave('bank_transfer') : setStep('payment_method'))} saveLabel="Continue" saveDisabled={!categoryId} />
       </div>
     )
   }
@@ -4679,7 +4790,12 @@ function RecurringTransactionRow({
   // recurring transaction in the docked panel — its edit form in the
   // laptop order with its upcoming payments inside it, then Delete.
   if (wide) {
-    const from = template.location === 'pot' ? (data.pots.find((p) => p.id === template.potId)?.name ?? 'Pot') : template.location === 'joint' ? 'Joint account' : 'Current account'
+    const from =
+      template.location === 'pot' ? (data.pots.find((p) => p.id === template.potId)?.name ?? 'Pot')
+      : template.location === 'joint' ? 'Joint account'
+      : template.location === 'savings' ? (data.savingsPots.find((p) => p.id === template.savingsPotId)?.name ?? 'Savings pot')
+      : template.location === 'credit_card' ? `Credit Card: ${data.creditCards.find((c) => c.id === template.creditCardId)?.name ?? 'card'}`
+      : 'Current account'
     const dayOf = parseLocalDate(template.anchorDate).getDate()
     const rounds = !isIncome && !template.roundUpSkipped && roundUpAvailable({ type: 'expense', paymentMethod: template.paymentMethod, location: template.location, date: todayIso() }, ownerPayCycle, ownerCoinJar?.id)
     return (

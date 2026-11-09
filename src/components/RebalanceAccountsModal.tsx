@@ -17,6 +17,11 @@ import { todayIso } from '../lib/date'
  * per-account, the "wipe prior history out of the running balance" reset
  * Adam asked for. Nothing here computes a balance; it only writes the two
  * anchor fields the rest of the app already respects.
+ *
+ * The figure is the bank's balance at the END of the chosen date, so the save
+ * also sets `openingExcludesDate`: nothing dated that day counts against it,
+ * or the day's spending already inside the bank figure is taken off twice
+ * (lib/openingBalance.ts).
  */
 export interface RebalanceTarget {
   key: string
@@ -137,8 +142,9 @@ export function RebalanceAccountsModal({
         <h2 className="font-display text-lg font-semibold text-[var(--color-ink)] mb-4">{target.label}</h2>
 
         <div className="flex flex-col gap-3">
-          <EditField label="New opening balance (£)" type="number" value={current.amount} onChange={(v) => setCurrent({ amount: v })} />
-          <EditField label="New opening date" type="date" value={current.date} onChange={(v) => setCurrent({ date: v })} />
+          {/* allowNegative: an overdrawn current account, joint account or pot is a real balance; the field's + / − toggle gives it its sign. */}
+          <EditField label="New opening balance (£)" type="number" allowNegative value={current.amount} onChange={(v) => setCurrent({ amount: v })} />
+          <EditField label="Balance at the end of" type="date" value={current.date} onChange={(v) => setCurrent({ date: v })} />
         </div>
 
         <div className="flex gap-2 mt-4">

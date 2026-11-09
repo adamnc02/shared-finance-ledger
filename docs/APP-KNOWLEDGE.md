@@ -1479,6 +1479,25 @@ The phone keeps its markup order: laptop ordering is CSS `order` and `display: c
 that reorders JSX moves the phone too. 🚨 `SwipeToDelete` must not take pointer capture on `pointerdown`
 — with a mouse the click then lands on the swipe wrapper and no row opens. Full detail: `TECHNICAL.md` §48 here, §38 in `personal-ledger`.
 
+### 1.39 Rebalance's opening is the END of its day; outside money is an external overpayment; a person transfer is ONE row (2026-11-09)
+
+- **`openingExcludesDate`** — a Rebalance opening is the bank's balance at the end of its date, so
+  every ledger counts from the day after (`lib/openingBalance.ts`). Only Rebalance sets it; setup and
+  settings edits count their own day, and `applyOpeningEdit()` clears the flag on any other balance
+  or date edit. Never turn `>=` into `>` across the board: an account's opening-day deposit must count.
+- **Income onto a card or savings pot** (`location 'credit_card' | 'savings'`) is money from outside
+  the household. On a card it is an overpayment with an external source — balance, windows, later
+  minimums, total paid — never the minimum payment (§1.15) and never a debit on a current account.
+  Every card caller passes `cardActivity(data)` so future recurring occurrences reach the minimum
+  simulation. It is a new location, not a flag on `'personal'`, so `location === 'personal'` filters
+  exclude it by default.
+- **Person-to-person transfer** — one row owned by the sender, `toLocation.personId` = recipient.
+  The recipient derives the incoming side (`asIncoming`); there is no mirrored row to drift. Either
+  person can edit or delete it; nobody can pull from the other's account.
+- Sync (shared app only): plain-text id columns, never FKs (a 23503 on delete is discarded silently),
+  and the location CHECKs widened in migration `20261109120000`, which ships before the app.
+  `TECHNICAL.md` §49 here, §39 in `personal-ledger`.
+
 ## 2. The credit-card engine is the single most fragile area
 
 **One reported symptom — "balance never reaches zero" — took five separate fixes**, each a

@@ -48,6 +48,7 @@ import { buildDeck, deckEntryKey, heroLabel, type DeckEntry } from '../lib/deck'
 import { StatementRangeSheet } from '../components/StatementRangeSheet'
 import { StatementViewer } from '../components/StatementViewer'
 import { buildCycleStatement, shareCycleStatement, shareCycleStatementWorkbook } from '../lib/statementFile'
+import { cardActivity } from '../lib/outsideIncome'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -1197,13 +1198,13 @@ function DeckHero({ entry, data, horizon, averageSpendForecast }: { entry: DeckE
       // The minimum due has to be computed against the live figure too,
       // or a percent-of-balance card would quote a minimum for a debt
       // that's already been partly paid off.
-      const card = withLiveBalance(stored, data.transactions, cardAsOf)
+      const card = withLiveBalance(stored, cardActivity(data), cardAsOf)
       // Same shared generator the Summary page uses, so an overridden
       // charge shows the overridden figure here too rather than the
       // un-overridden computed one. See nextMinimumChargeAmount.
-      const minPayment = nextMinimumChargeAmount(stored, data.transactions) ?? 0
+      const minPayment = nextMinimumChargeAmount(stored, cardActivity(data)) ?? 0
       // The strip shows what is owed TODAY, whatever the horizon — the "current" figure.
-      const owedToday = withLiveBalance(stored, data.transactions, new Date()).currentBalance
+      const owedToday = withLiveBalance(stored, cardActivity(data), new Date()).currentBalance
       return (
         <BankCard variant="custom" customColor={card.color} bankLabel={card.name} accountLabel="Credit Card" icon={<CreditCardIcon size={18} strokeWidth={1.5} color="#fff" />} sliverValue={owedToday}>
           <div className="mt-6 space-y-1.5">
@@ -4608,14 +4609,14 @@ function CreditCardDetail({
   // hero card above — a purchase dated later in the horizon never showed
   // up in this pie chart either.
   const asOf = horizon === 'three_cycles' ? horizonRangeEnd(data, data.primaryPersonId, horizon, new Date()) : new Date()
-  const card = withLiveBalance(storedCard, data.transactions, asOf)
+  const card = withLiveBalance(storedCard, cardActivity(data), asOf)
   // Header caption (Adam-specified, 2026-09-12 — "match the bills card"):
   // a credit card has no "projected balance" the way a cash account
   // does — it's money owed, not saved — so "now"/"projected" here means
   // owed-today vs owed-as-of-`asOf` (the SAME horizon-aware balance
   // `card.currentBalance` above already is), not a genuine forward
   // projection the way Personal/Joint/Household/Pot/Savings Pot mean it.
-  const nowOwed = withLiveBalance(storedCard, data.transactions, new Date()).currentBalance
+  const nowOwed = withLiveBalance(storedCard, cardActivity(data), new Date()).currentBalance
   const paid = totalPaidForCard(card.id, data.transactions)
   const percentPaid = paid + card.currentBalance > 0 ? (paid / (paid + card.currentBalance)) * 100 : 0
   // The card's own colour overrides the category's colour for display
@@ -4638,7 +4639,7 @@ function CreditCardDetail({
   // states cannot disagree about the same card on the same data, which is
   // exactly what they did before: cycleTotals ON showed the upcoming
   // pending minimum charge, OFF showed only materialised rows.
-  const cardCycleSections = buildCreditCardCycleSections(storedCard, data.transactions, cardCycles)
+  const cardCycleSections = buildCreditCardCycleSections(storedCard, cardActivity(data), cardCycles)
   // PROMPT-01 Part B — the flat (cycle-totals OFF) ledger, now derived by
   // flattening the sections above rather than filtering data.transactions
   // directly. This fixes two defects at once:

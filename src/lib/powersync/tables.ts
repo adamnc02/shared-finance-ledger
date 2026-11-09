@@ -52,7 +52,7 @@ export const SYNCED_TABLES: SyncedTable[] = [
   t('people', { ...H, name: 'text', color: 'text', linked_user_id: 'text', ...P }),
   t('categories', { ...H, name: 'text', icon: 'text', icon_color: 'text', is_built_in: 'bool', ...P }),
   t('pots', {
-    ...H, person_id: 'text', name: 'text', opening_balance: 'real', opening_date: 'text', active: 'bool', color: 'text',
+    ...H, person_id: 'text', name: 'text', opening_balance: 'real', opening_date: 'text', opening_excludes_date: 'bool', active: 'bool', color: 'text',
     category_icon: 'text', category_icon_color: 'text',
     // PROMPT-13 B5 — the one restricted pot per person.
     is_coin_jar: 'bool',
@@ -61,7 +61,7 @@ export const SYNCED_TABLES: SyncedTable[] = [
     ...P,
   }),
   t('savings_pots', {
-    ...H, person_id: 'text', name: 'text', opening_balance: 'real', opening_date: 'text', active: 'bool', color: 'text',
+    ...H, person_id: 'text', name: 'text', opening_balance: 'real', opening_date: 'text', opening_excludes_date: 'bool', active: 'bool', color: 'text',
     interest_type: 'text', interest_aer: 'real', interest_crediting_frequency: 'text', interest_effective_from: 'text',
     interest_history: 'json', interest_destination_type: 'text', interest_destination_savings_pot_id: 'text',
     interest_destination_pot_id: 'text', recurring_deposit_amount: 'real', recurring_deposit_day_of_month: 'integer',
@@ -77,7 +77,7 @@ export const SYNCED_TABLES: SyncedTable[] = [
   }),
   t('pension_occurrence_overrides', { ...H, pension_id: 'text', ...OVERRIDE, ...P }),
   t('pay_cycles', {
-    ...H, person_id: 'text', opening_balance: 'real', opening_balance_date: 'text', payday_day_of_month: 'integer',
+    ...H, person_id: 'text', opening_balance: 'real', opening_balance_date: 'text', opening_excludes_date: 'bool', payday_day_of_month: 'integer',
     payday_adjust_for_non_working_day: 'bool', cycle_start_day_of_month: 'integer', cycle_start_follows_payday: 'bool',
     follows_income_source_type: 'text', follows_pension_id: 'text', payday_history: 'json', pay_schedule_kind: 'text',
     pay_schedule_anchor: 'text', salary_sort_basis: 'text',
@@ -112,6 +112,10 @@ export const SYNCED_TABLES: SyncedTable[] = [
     // like amount/amount_effective_from/amount_history. 'json' reaches the server
     // as a jsonb VALUE (MIGRATION-LESSONS §33).
     round_up_skipped: 'bool', round_up_skipped_effective_from: 'text', round_up_skipped_history: 'json',
+    // A recurring income paid in from outside onto a savings pot / a card
+    // (location 'savings' / 'credit_card'), and a person-to-person transfer's
+    // recipient. Plain ids, never foreign keys: see the 2026-11-09 migration.
+    savings_pot_id: 'text', credit_card_id: 'text', transfer_to_person_id: 'text',
     ...P,
   }),
   // `round_up_skipped` is this table's alone: one payment's own round-up choice.
@@ -136,7 +140,7 @@ export const SYNCED_TABLES: SyncedTable[] = [
   }),
   t('credit_card_lump_payments', { ...H, credit_card_id: 'text', date: 'text', amount: 'real', note: 'text', ...P }),
   t('credit_card_minimum_payment_overrides', { ...H, credit_card_id: 'text', date: 'text', amount: 'real', ...P }),
-  t('joint_account', { ...H, opening_balance: 'real', opening_balance_date: 'text', overdraft_amount: 'real' }),
+  t('joint_account', { ...H, opening_balance: 'real', opening_balance_date: 'text', opening_excludes_date: 'bool', overdraft_amount: 'real' }),
   t('transactions', {
     ...H, date: 'text', amount: 'real', direction: 'text', category_id: 'text', payment_method: 'text', status: 'text',
     type: 'text', note: 'text', location: 'text', owner_id: 'text', payee: 'text', payee_share_percent: 'real',
@@ -151,6 +155,8 @@ export const SYNCED_TABLES: SyncedTable[] = [
     // PROMPT-13 B1a — this one row opted out. Stored, not inferred: on a
     // saved row "not rounded" and "deliberately not rounded" look identical.
     round_up_skipped: 'bool',
+    // A person-to-person transfer's recipient (lib/personTransfer.ts).
+    to_person_id: 'text',
     ...P,
   }),
   t('salary_sorts', { ...H, pay_date: 'text', ...P }),

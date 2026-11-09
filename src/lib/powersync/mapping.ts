@@ -146,17 +146,23 @@ const B = (v: Value | undefined): boolean => b(v) ?? false
 // A flattened TransferLocation. The type column is `<prefix>_type` on
 // recurring_templates (transfer_from_type) but `<prefix>_location_type` on
 // transactions (from_location_type): pass it explicitly.
-function transferUp(prefix: string, typeColumn: string, loc: TransferLocation | undefined): Record<string, Value> {
+//
+// `withPerson` (TO ends only): a person-to-person transfer's recipient,
+// `<prefix>_person_id`. 🚨 Without it a `personId` is dropped on upload and
+// the row comes back as the sender's own Current Account — money out of one
+// account, into nobody's.
+function transferUp(prefix: string, typeColumn: string, loc: TransferLocation | undefined, withPerson = false): Record<string, Value> {
   return {
     [typeColumn]: loc?.type ?? null,
     [`${prefix}_savings_pot_id`]: idUp(loc?.savingsPotId),
     [`${prefix}_pot_id`]: idUp(loc?.potId),
+    ...(withPerson ? { [`${prefix}_person_id`]: idUp(loc?.personId) } : {}),
   }
 }
-function transferDown(row: Row, prefix: string, typeColumn: string): TransferLocation | undefined {
+function transferDown(row: Row, prefix: string, typeColumn: string, withPerson = false): TransferLocation | undefined {
   const type = s(row[typeColumn])
   if (!type) return undefined
-  return obj<TransferLocation>({ type, savingsPotId: s(row[`${prefix}_savings_pot_id`]), potId: s(row[`${prefix}_pot_id`]) })
+  return obj<TransferLocation>({ type, savingsPotId: s(row[`${prefix}_savings_pot_id`]), potId: s(row[`${prefix}_pot_id`]), personId: withPerson ? s(row[`${prefix}_person_id`]) : undefined })
 }
 
 function overrideRows(parentCol: string, parentId: string, list: RecurringOccurrenceOverride[] | undefined, ctx: MappingContext): Row[] {
@@ -228,7 +234,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
 
   data.pots.forEach((p, i) =>
     push('pots', {
-      id: p.id, ...h, person_id: p.personId, name: p.name, opening_balance: p.openingBalance, opening_date: p.openingDate, active: p.active,
+      id: p.id, ...h, person_id: p.personId, name: p.name, opening_balance: p.openingBalance, opening_date: p.openingDate, opening_excludes_date: up(p.openingExcludesDate), active: p.active,
       color: up(p.color), category_icon: up(p.categoryIcon), category_icon_color: up(p.categoryIconColor),
       is_coin_jar: up(p.isCoinJar), overdraft_amount: p.overdraftAmount, position: i,
     }),
@@ -236,7 +242,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
 
   data.savingsPots.forEach((sp, i) => {
     push('savings_pots', {
-      id: sp.id, ...h, person_id: sp.personId, name: sp.name, opening_balance: sp.openingBalance, opening_date: sp.openingDate,
+      id: sp.id, ...h, person_id: sp.personId, name: sp.name, opening_balance: sp.openingBalance, opening_date: sp.openingDate, opening_excludes_date: up(sp.openingExcludesDate),
       active: sp.active, color: up(sp.color), interest_type: sp.interestMethod.type, interest_aer: sp.interestMethod.aer,
       interest_crediting_frequency: sp.interestMethod.type === 'aer_credited' ? sp.interestMethod.creditingFrequency : null,
       interest_effective_from: up(sp.interestEffectiveFrom), interest_history: jsonUp(sp.interestHistory),
@@ -262,7 +268,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
 
   data.payCycles.forEach((pc, i) =>
     push('pay_cycles', {
-      id: pc.personId, ...h, person_id: pc.personId, opening_balance: pc.openingBalance, opening_balance_date: pc.openingBalanceDate,
+      id: pc.personId, ...h, person_id: pc.personId, opening_balance: pc.openingBalance, opening_balance_date: pc.openingBalanceDate, opening_excludes_date: up(pc.openingExcludesDate),
       payday_day_of_month: pc.paydayDayOfMonth, payday_adjust_for_non_working_day: pc.paydayAdjustForNonWorkingDay,
       cycle_start_day_of_month: pc.cycleStartDayOfMonth, cycle_start_follows_payday: up(pc.cycleStartFollowsPayday),
       overdraft_amount: pc.overdraftAmount,
@@ -286,7 +292,8 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
       location: t.location, owner_id: idUp(t.ownerId), payee: idUp(t.payee), payee_share_percent: up(t.payeeSharePercent), pot_id: idUp(t.potId),
       location_effective_from: up(t.locationEffectiveFrom), location_history: jsonUp(t.locationHistory), active: t.active,
       amount_effective_from: up(t.amountEffectiveFrom), amount_history: jsonUp(t.amountHistory), kind: up(t.kind),
-      ...transferUp('transfer_from', 'transfer_from_type', t.transferFrom), ...transferUp('transfer_to', 'transfer_to_type', t.transferTo),
+      ...transferUp('transfer_from', 'transfer_from_type', t.transferFrom), ...transferUp('transfer_to', 'transfer_to_type', t.transferTo, true),
+      savings_pot_id: idUp(t.savingsPotId), credit_card_id: idUp(t.creditCardId),
       follows_payday: up(t.followsPayday), follows_cycle_start: up(t.followsCycleStart),
       recurring_transaction_type: up(t.recurringTransactionType), person_id: idUp(t.personId),
       round_up_skipped: up(t.roundUpSkipped), round_up_skipped_effective_from: up(t.roundUpSkippedEffectiveFrom),
@@ -337,7 +344,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
   })
 
   if (data.jointAccount) {
-    push('joint_account', { id: ctx.householdId, ...h, opening_balance: data.jointAccount.openingBalance, opening_balance_date: data.jointAccount.openingBalanceDate, overdraft_amount: data.jointAccount.overdraftAmount })
+    push('joint_account', { id: ctx.householdId, ...h, opening_balance: data.jointAccount.openingBalance, opening_balance_date: data.jointAccount.openingBalanceDate, opening_excludes_date: up(data.jointAccount.openingExcludesDate), overdraft_amount: data.jointAccount.overdraftAmount })
   }
 
   data.transactions.forEach((t, i) =>
@@ -346,7 +353,7 @@ export function toRows(data: AppDataV2, ctx: MappingContext): Rows {
       payment_method: t.paymentMethod, status: t.status, type: t.type, note: up(t.note), location: t.location, owner_id: idUp(t.ownerId),
       payee: idUp(t.payee), payee_share_percent: up(t.payeeSharePercent), person_id: idUp(t.personId), source_type: up(t.sourceType),
       source_id: idUp(t.sourceId), occurrence_original_date: up(t.occurrenceOriginalDate), credit_card_id: idUp(t.creditCardId),
-      savings_pot_id: idUp(t.savingsPotId), pot_id: idUp(t.potId), ...transferUp('from', 'from_location_type', t.fromLocation), ...transferUp('to', 'to_location_type', t.toLocation),
+      savings_pot_id: idUp(t.savingsPotId), pot_id: idUp(t.potId), ...transferUp('from', 'from_location_type', t.fromLocation), ...transferUp('to', 'to_location_type', t.toLocation, true),
       follows_payday: up(t.followsPayday), follows_cycle_start: up(t.followsCycleStart),
       // PROMPT-13 B2. `amount` above is already the rounded figure.
       rounded_from: up(t.roundedFrom), rounding_pot_id: idUp(t.roundingPotId), round_up_skipped: up(t.roundUpSkipped), position: i,
@@ -431,7 +438,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
 
   const pots: Pot[] = sorted(rows.pots).map((r) =>
     obj<Pot>({
-      id: r.id, personId: S(r.person_id), name: S(r.name), openingBalance: N(r.opening_balance), openingDate: S(r.opening_date), active: B(r.active),
+      id: r.id, personId: S(r.person_id), name: S(r.name), openingBalance: N(r.opening_balance), openingDate: S(r.opening_date), openingExcludesDate: b(r.opening_excludes_date), active: B(r.active),
       color: S(r.color), categoryIcon: s(r.category_icon), categoryIconColor: s(r.category_icon_color),
       isCoinJar: b(r.is_coin_jar), overdraftAmount: N(r.overdraft_amount),
     }),
@@ -446,7 +453,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
     const interest = spInterest.get(r.id)
     const deposits = spDeposit.get(r.id)
     return obj<SavingsPot>({
-      id: r.id, personId: S(r.person_id), name: S(r.name), openingBalance: N(r.opening_balance), openingDate: S(r.opening_date), active: B(r.active),
+      id: r.id, personId: S(r.person_id), name: S(r.name), openingBalance: N(r.opening_balance), openingDate: S(r.opening_date), openingExcludesDate: b(r.opening_excludes_date), active: B(r.active),
       color: S(r.color), interestMethod, interestEffectiveFrom: s(r.interest_effective_from), interestHistory: j(r.interest_history),
       interestOverrides: interest?.map((o) => ({ date: S(o.date), amount: N(o.amount) })),
       interestDestination: destType
@@ -471,7 +478,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
     const src = s(r.follows_income_source_type)
     const kind = s(r.pay_schedule_kind)
     return obj<PayCycleConfig>({
-      personId: S(r.person_id), openingBalance: N(r.opening_balance), openingBalanceDate: S(r.opening_balance_date),
+      personId: S(r.person_id), openingBalance: N(r.opening_balance), openingBalanceDate: S(r.opening_balance_date), openingExcludesDate: b(r.opening_excludes_date),
       paydayDayOfMonth: N(r.payday_day_of_month), paydayAdjustForNonWorkingDay: B(r.payday_adjust_for_non_working_day),
       cycleStartDayOfMonth: N(r.cycle_start_day_of_month), cycleStartFollowsPayday: b(r.cycle_start_follows_payday),
       overdraftAmount: N(r.overdraft_amount),
@@ -491,7 +498,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
       location: S(r.location), ownerId: S(r.owner_id), payee: S(r.payee), payeeSharePercent: n(r.payee_share_percent), potId: s(r.pot_id),
       locationEffectiveFrom: s(r.location_effective_from), locationHistory: j(r.location_history), active: B(r.active),
       amountEffectiveFrom: s(r.amount_effective_from), amountHistory: j(r.amount_history), kind: s(r.kind),
-      transferFrom: transferDown(r, 'transfer_from', 'transfer_from_type'), transferTo: transferDown(r, 'transfer_to', 'transfer_to_type'), followsPayday: b(r.follows_payday),
+      transferFrom: transferDown(r, 'transfer_from', 'transfer_from_type'), transferTo: transferDown(r, 'transfer_to', 'transfer_to_type', true), savingsPotId: s(r.savings_pot_id), creditCardId: s(r.credit_card_id), followsPayday: b(r.follows_payday),
       followsCycleStart: b(r.follows_cycle_start), recurringTransactionType: s(r.recurring_transaction_type), personId: s(r.person_id),
       roundUpSkipped: b(r.round_up_skipped), roundUpSkippedEffectiveFrom: s(r.round_up_skipped_effective_from), roundUpSkippedHistory: j(r.round_up_skipped_history),
       occurrenceOverrides: rtOverrides.get(r.id)?.map((o) => obj<RecurringOccurrenceOverride>({ ...overrideDown(o), roundUpSkipped: b(o.round_up_skipped) })),
@@ -531,7 +538,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
 
   const joint = rows.joint_account?.[0]
   const jointAccount: JointAccountConfig | null = joint
-    ? { openingBalance: N(joint.opening_balance), openingBalanceDate: S(joint.opening_balance_date), overdraftAmount: N(joint.overdraft_amount) }
+    ? obj<JointAccountConfig>({ openingBalance: N(joint.opening_balance), openingBalanceDate: S(joint.opening_balance_date), openingExcludesDate: b(joint.opening_excludes_date), overdraftAmount: N(joint.overdraft_amount) })
     : null
 
   const transactions: Transaction[] = sorted(rows.transactions).map((r) =>
@@ -540,7 +547,7 @@ export function fromRows(rows: Rows): Omit<AppDataV2, 'primaryPersonId'> {
       paymentMethod: S(r.payment_method), status: S(r.status), type: S(r.type), note: s(r.note), location: S(r.location), ownerId: S(r.owner_id),
       payee: s(r.payee), payeeSharePercent: n(r.payee_share_percent), personId: s(r.person_id), sourceType: s(r.source_type),
       sourceId: s(r.source_id), occurrenceOriginalDate: s(r.occurrence_original_date), creditCardId: s(r.credit_card_id),
-      savingsPotId: s(r.savings_pot_id), potId: s(r.pot_id), fromLocation: transferDown(r, 'from', 'from_location_type'), toLocation: transferDown(r, 'to', 'to_location_type'),
+      savingsPotId: s(r.savings_pot_id), potId: s(r.pot_id), fromLocation: transferDown(r, 'from', 'from_location_type'), toLocation: transferDown(r, 'to', 'to_location_type', true),
       followsPayday: b(r.follows_payday), followsCycleStart: b(r.follows_cycle_start),
       roundedFrom: n(r.rounded_from), roundingPotId: s(r.rounding_pot_id), roundUpSkipped: b(r.round_up_skipped),
     }),

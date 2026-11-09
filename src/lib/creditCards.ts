@@ -25,6 +25,7 @@ import { daysBetweenInclusive, buildDailySpendSeries, type BalanceSpendGranulari
 const round2 = (n: number) => Math.round(n * 100) / 100
 import { planReschedule, recentAndUpcomingFrom, redateStoredPayments } from './scheduleChange'
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
+import { isOutsideIncomeToCard, cardActivity, OUTSIDE_INCOME_SOURCE } from './outsideIncome'
 
 // BUGFIX (Batch 8, 2026-09-07, Bug 9.2, Adam-reported): a percent_of_balance
 // minimum payment is mathematically a fraction of whatever's left, so a
@@ -180,7 +181,9 @@ export function cardBalanceAsOf(card: CreditCard, transactions: Transaction[], a
     .filter(
       (t) =>
         t.creditCardId === card.id &&
-        (t.type === 'credit_card_spend' || t.type === 'credit_card_payment') &&
+        // Money paid in from outside (lib/outsideIncome.ts) is a payment here,
+        // exactly like a lump payment.
+        (t.type === 'credit_card_spend' || t.type === 'credit_card_payment' || isOutsideIncomeToCard(t, card.id)) &&
         t.date >= anchorIso &&
         t.date <= asOfIso,
     )
@@ -277,7 +280,7 @@ export function cardBalanceAsOf(card: CreditCard, transactions: Transaction[], a
       // the delayed purchase's window finally closes and folds it in
       // (see the spend-queue fold below), rather than that purchase
       // resurrecting a bogus "still owed" figure once it arrives.
-      if (hasStatementWindow && t.type === 'credit_card_payment') windowBalance = round2(windowBalance - t.amount)
+      if (hasStatementWindow && t.type !== 'credit_card_spend') windowBalance = round2(windowBalance - t.amount)
     }
     if (hasStatementWindow && closeDates.includes(date)) {
       while (spendQueueIndex < spendQueue.length && spendQueue[spendQueueIndex].date <= date) {
@@ -527,7 +530,7 @@ function simulateMinimumPaymentTransactions(
   const paymentsBetweenCloseAndRangeStart =
     statementOpeningCloseIso != null
       ? transactions
-          .filter((t) => t.creditCardId === card.id && t.type === 'credit_card_payment' && t.date > statementOpeningCloseIso && t.date <= rangeStartIso)
+          .filter((t) => t.creditCardId === card.id && (t.type === 'credit_card_payment' || isOutsideIncomeToCard(t, card.id)) && t.date > statementOpeningCloseIso && t.date <= rangeStartIso)
           .reduce((sum, t) => round2(sum + t.amount), 0)
       : 0
   let statementBalance =
@@ -537,7 +540,14 @@ function simulateMinimumPaymentTransactions(
   // was replayed into it), so folding it in again here would
   // double-count. Only ones landing inside the simulated window get
   // applied by the loop below.
-  const pendingLumpPayments = card.lumpPayments.filter((lp) => lp.date > rangeStartIso).sort((a, b) => a.date.localeCompare(b.date))
+  // Money paid in from outside joins them: an overpayment by someone else,
+  // which the simulation must see before it clears or every projected
+  // minimum ignores it. Read from `transactions`, so a caller wanting future
+  // RECURRING occurrences passes withCardCredits(...) (below).
+  const pendingLumpPayments = [
+    ...card.lumpPayments.filter((lp) => lp.date > rangeStartIso),
+    ...transactions.filter((t) => isOutsideIncomeToCard(t, card.id) && t.date > rangeStartIso).map((t) => ({ date: t.date, amount: t.amount })),
+  ].sort((a, b) => a.date.localeCompare(b.date))
   let lumpIndex = 0
   // item e — real spend dated after rangeStart, needed to know how much
   // of a window's own activity should count toward ITS minimum (spend on
@@ -1047,7 +1057,7 @@ export function buildCreditCardTrendSeries(data: AppDataV2, card: CreditCard, gr
   const days = daysBetweenInclusive(periodStart, periodEnd)
   const todayIso = toIso(asOfDate)
 
-  const generatedMinimums = generateMinimumPaymentTransactions(card, periodStart, periodEnd, data.transactions)
+  const generatedMinimums = generateMinimumPaymentTransactions(card, periodStart, periodEnd, cardActivity(data, periodEnd))
   const existingMinDates = new Set(data.transactions.filter((t) => t.type === 'credit_card_payment' && t.creditCardId === card.id).map((t) => t.date))
   const dedupedGenerated = generatedMinimums.filter((t) => !existingMinDates.has(t.date)).map((t, i) => ({ ...t, id: `generated:cc-trend:${i}` }))
   const activity = [...data.transactions, ...dedupedGenerated]
@@ -1081,7 +1091,7 @@ export function totalPaidForCard(cardId: string, transactions: Transaction[], as
   const todayIso = toIso(asOfDate)
   return round2(
     transactions
-      .filter((t) => t.type === 'credit_card_payment' && t.creditCardId === cardId && t.date <= todayIso)
+      .filter((t) => (t.type === 'credit_card_payment' || isOutsideIncomeToCard(t, cardId)) && t.creditCardId === cardId && t.date <= todayIso)
       .reduce((sum, t) => sum + t.amount, 0),
   )
 }
@@ -1596,6 +1606,12 @@ export function buildCreditCardCycleSections(card: CreditCard, transactions: Tra
   const todayIso = toIso(new Date())
   const allRows = [
     ...cardTransactions.map((t) => ({ date: t.date, type: t.type as 'credit_card_spend' | 'credit_card_payment', amount: t.amount, status: t.status, note: t.note, sourceType: t.sourceType })),
+    // Money paid in from outside, shown as a payment. `sourceType` is always
+    // set on these, so nothing reading `payment && !sourceType` mistakes one
+    // for the minimum charge.
+    ...transactions
+      .filter((t) => isOutsideIncomeToCard(t, card.id))
+      .map((t) => ({ date: t.date, type: 'credit_card_payment' as const, amount: t.amount, status: (t.date <= todayIso ? 'cleared' : 'pending') as 'cleared' | 'pending', note: t.note ?? 'Paid in', sourceType: OUTSIDE_INCOME_SOURCE })),
     ...generatedMinimums.map((t) => ({ date: t.date, type: t.type as 'credit_card_spend' | 'credit_card_payment', amount: t.amount, status: (t.date <= todayIso ? 'cleared' : 'pending') as 'cleared' | 'pending', note: t.note, sourceType: t.sourceType })),
   ]
   // For cardBalanceAsOf, which needs real Transaction-shaped objects with
@@ -1603,6 +1619,7 @@ export function buildCreditCardCycleSections(card: CreditCard, transactions: Tra
   // projections.
   const allAsTransactions: Transaction[] = [
     ...cardTransactions,
+    ...transactions.filter((t) => isOutsideIncomeToCard(t, card.id)),
     ...generatedMinimums.map((t, i) => ({ ...t, id: `projected-${i}` })),
   ]
 

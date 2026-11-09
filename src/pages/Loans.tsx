@@ -43,6 +43,7 @@ import { shouldOfferLocationPicker } from '../lib/pickerFirst'
 import { parseLocalDate, todayIso } from '../lib/date'
 import { fundablePots } from '../lib/roundUp'
 import { visibleToMe } from '../lib/householdView'
+import { cardActivity } from '../lib/outsideIncome'
 
 // The pre-seeded "Loan" category (see categories.ts) — LoanForm defaults
 // new loans onto this rather than falling through to whatever happens to
@@ -320,13 +321,13 @@ export function Loans() {
     // the edit panel deliberately reads the anchor back off
     // `storedCard` for its editable balance field; see
     // CreditCardEditPanel for why those must not be confused.
-    const card = withLiveBalance(storedCard, data.transactions)
+    const card = withLiveBalance(storedCard, cardActivity(data))
     // Routed through the shared generator so this row honours
     // per-date minimumPaymentOverrides exactly as the Summary
     // page and the ledger modal do; computeMinimumPaymentAmount
     // is date-blind and silently ignored them. See
     // nextMinimumChargeAmount.
-    const minPayment = nextMinimumChargeAmount(storedCard, data.transactions) ?? 0
+    const minPayment = nextMinimumChargeAmount(storedCard, cardActivity(data)) ?? 0
     const isOpen = panelAction ? panelAction === 'edit' : expandedCard === card.id
     return (
       <CreditCardRow
@@ -341,7 +342,7 @@ export function Loans() {
         pots={data.pots}
         onAssignLocation={(location, effectiveFrom, potId) => assignCreditCardLocation(card.id, location, effectiveFrom, potId)}
         categories={visibleCategoriesFor(data, card.categoryId)}
-        transactions={data.transactions}
+        transactions={cardActivity(data)}
         onAddCategory={addCategory}
         onSave={(u) => updateCreditCard(card.id, u)}
         onLogLumpPayment={(amount, date, note) => logCreditCardLumpPayment(card.id, amount, date, note)}
@@ -488,8 +489,8 @@ export function Loans() {
               )
             })}
             {myCreditCards.map((storedCard) => {
-              const card = withLiveBalance(storedCard, data.transactions)
-              const minPayment = nextMinimumChargeAmount(storedCard, data.transactions) ?? 0
+              const card = withLiveBalance(storedCard, cardActivity(data))
+              const minPayment = nextMinimumChargeAmount(storedCard, cardActivity(data)) ?? 0
               const on = sel?.kind === 'card' && sel.id === card.id
               return (
                 <button key={card.id} onClick={() => setSelected({ kind: 'card', id: card.id })} aria-pressed={on} className="rounded-[20px] border p-[22px] flex flex-col gap-2.5 text-left" style={tileStyle(on)}>
@@ -552,7 +553,7 @@ export function Loans() {
                 <span className="text-right">MINIMUM</span>
                 <span className="text-right">STATUS</span>
               </div>
-              {buildCreditCardMinimumChargeRows(selCard, data.transactions)
+              {buildCreditCardMinimumChargeRows(selCard, cardActivity(data))
                 .filter((r) => r.date >= today)
                 .slice(0, 12)
                 .map((r) => (

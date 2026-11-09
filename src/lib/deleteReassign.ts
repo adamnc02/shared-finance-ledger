@@ -22,7 +22,7 @@
 // self-healing backstop for imported/old data; this module is what stops
 // the UI creating the dangling state in the first place.
 
-import type { AppDataV2, CreditCard, Loan, RecurringTemplate, SalarySort, Transaction, TransferLocation } from '../types/ledger'
+import type { AppDataV2, CreditCard, Loan, RecurringTemplate, RecurringTemplateLocation, SalarySort, Transaction, TransferLocation } from '../types/ledger'
 import type { BillLocation } from '../types/models'
 import { reconcilePersonReferences } from './household'
 import { priorLocationEntry, reassignCreditCardPaymentsForLocationChange, reassignTransactionsForLocationChange } from './locationChange'
@@ -72,6 +72,9 @@ export function removeCreditCardFromData(prev: AppDataV2, id: string, asOfIso: s
     ...prev,
     creditCards: prev.creditCards.filter((c) => c.id !== id),
     transactions: sweepPendingForCreditCard(prev.transactions, id, asOfIso),
+    // A recurring payment onto this card from outside has nowhere to land now.
+    // Rows it already paid in are history and stay, like every cleared row.
+    recurringTemplates: prev.recurringTemplates.filter((t) => !(t.location === 'credit_card' && t.creditCardId === id)),
   }
 }
 
@@ -149,6 +152,8 @@ export function removeSavingsPotFromData(prev: AppDataV2, id: string, asOfIso: s
     ...prev,
     savingsPots: prev.savingsPots.filter((p) => p.id !== id),
     transactions: sweepPendingForSavingsPot(prev.transactions, id, asOfIso),
+    // Same for a recurring income paid in from outside to this pot.
+    recurringTemplates: prev.recurringTemplates.filter((t) => !(t.location === 'savings' && t.savingsPotId === id)),
   })
 }
 
@@ -298,7 +303,7 @@ function templateGroup(t: RecurringTemplate): BlockerGroup {
  * narrowed to that case with his agreement on 2026-09-22). verify-delete-reassign.ts carries the
  * control: the temporary-third-person case lists no joint bills.
  */
-function jointItemInvolvesPerson(item: { location: BillLocation; payee: string; payeeSharePercent: number }, personId: string): boolean {
+function jointItemInvolvesPerson(item: { location: RecurringTemplateLocation; payee: string; payeeSharePercent: number }, personId: string): boolean {
   return item.location === 'joint' && item.payee === personId
 }
 
@@ -315,7 +320,7 @@ function transactionTouchesPot(t: Transaction, potId: string): boolean {
 
 function transactionName(t: Transaction, data: AppDataV2): string {
   if (t.type === 'transfer') {
-    return `${transferLocationLabel(t.fromLocation, data.savingsPots, data.pots)} → ${transferLocationLabel(t.toLocation, data.savingsPots, data.pots)}`
+    return `${transferLocationLabel(t.fromLocation, data.savingsPots, data.pots, data.people)} → ${transferLocationLabel(t.toLocation, data.savingsPots, data.pots, data.people)}`
   }
   return t.note || 'Transaction'
 }
@@ -412,7 +417,7 @@ function splitDetail(data: AppDataV2, item: { payee: string; payeeSharePercent: 
 }
 
 function transferDetail(data: AppDataV2, t: RecurringTemplate): string {
-  return `${transferLocationLabel(t.transferFrom, data.savingsPots, data.pots)} → ${transferLocationLabel(t.transferTo, data.savingsPots, data.pots)}`
+  return `${transferLocationLabel(t.transferFrom, data.savingsPots, data.pots, data.people)} → ${transferLocationLabel(t.transferTo, data.savingsPots, data.pots, data.people)}`
 }
 
 // ── Target options ─────────────────────────────────────────────────────

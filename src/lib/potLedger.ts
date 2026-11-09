@@ -30,6 +30,8 @@ import { SAVINGS_CATEGORY_ID } from '../types/ledger'
 import { daysBetweenInclusive, buildDailyBalanceSeries, buildDailySpendSeries, type BalanceSpendGranularity, type BalanceSpendTrendSeries } from './runningBalance'
 import { roundRecurringOccurrences, storedUplift } from './roundUp'
 import type { AppDataV2, CreditCard, Loan, PayCycleConfig, Pot, RecurringOccurrenceOverride, RecurringTemplate, Transaction } from '../types/ledger'
+import { countsFromDate, countsFromIso, potOpening, accountOpening } from './openingBalance'
+import { cardActivity } from './outsideIncome'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 const MAX_OCCURRENCES = 2000
@@ -109,7 +111,7 @@ function walkPotDepositOccurrences(pot: Pot, rangeStart: Date, rangeEnd: Date): 
   const results: RawPotDepositOccurrence[] = []
   while (cursor <= walkEnd && iterations < MAX_OCCURRENCES) {
     const originalDate = toIso(cursor)
-    if (originalDate >= pot.openingDate) {
+    if (originalDate >= countsFromIso(potOpening(pot))) {
       const override = pot.recurringDepositOverrides?.find((o) => o.originalDate === originalDate)
       if (!override?.deleted) {
         const date = override?.date ?? originalDate
@@ -206,7 +208,7 @@ export function scheduledPotDepositDates(pot: Pot, rangeStart: Date, rangeEnd: D
   const results: string[] = []
   while (cursor <= rangeEnd && iterations < MAX_OCCURRENCES) {
     const originalDate = toIso(cursor)
-    if (originalDate >= pot.openingDate) results.push(originalDate)
+    if (originalDate >= countsFromIso(potOpening(pot))) results.push(originalDate)
     cursor = clampToAnchorDay(addMonths(cursor, 1), anchorDay)
     iterations++
   }
@@ -328,7 +330,7 @@ export function generatePotOutgoingTransactions(data: AppDataV2, pot: Pot, range
   // transaction list goes in: the card's simulated balance must see every
   // spend and payment against the card, wherever it was paid from.
   for (const card of creditCards) {
-    results.push(...generateMinimumPaymentTransactions(card, rangeStart, rangeEnd, data.transactions).filter((t) => t.location === 'pot' && t.potId === pot.id))
+    results.push(...generateMinimumPaymentTransactions(card, rangeStart, rangeEnd, cardActivity(data, rangeEnd)).filter((t) => t.location === 'pot' && t.potId === pot.id))
   }
   return results
 }
@@ -434,7 +436,7 @@ export function coinJarCreditRows(pot: Pot, allTransactions: Transaction[]): Tra
     if (t.roundingPotId !== pot.id) continue
     const uplift = storedUplift(t)
     if (uplift <= 0) continue
-    if (t.date < pot.openingDate) continue
+    if (t.date < countsFromIso(potOpening(pot))) continue
     rows.push({
       ...t,
       id: `roundup:${t.id}`,
@@ -477,7 +479,7 @@ export function generatedCoinJarCreditRows(data: AppDataV2, pot: Pot, rangeStart
   if (!pot.isCoinJar) return []
   const payCycle = data.payCycles.find((pc) => pc.personId === pot.personId)
   if (!payCycle) return []
-  const floor = parseLocalDate(payCycle.openingBalanceDate)
+  const floor = countsFromDate(accountOpening(payCycle))
   const start = rangeStart > floor ? rangeStart : floor
   const storedKeys = new Set(data.transactions.map(dedupeKey).filter((k): k is string => k !== null))
   const occurrences = data.recurringTemplates
@@ -507,7 +509,7 @@ export function potBalanceAsOf(pot: Pot, activity: Transaction[], asOfDate: Date
   // other pot, so this costs every other pot a single boolean.
   const withCredits = [...activity, ...coinJarCreditRows(pot, activity)]
   const relevant = withCredits
-    .filter((t) => transactionTouchesPot(t, pot.id) && t.date >= pot.openingDate && t.date <= asOfIso)
+    .filter((t) => transactionTouchesPot(t, pot.id) && t.date >= countsFromIso(potOpening(pot)) && t.date <= asOfIso)
     .sort((a, b) => a.date.localeCompare(b.date))
 
   let balance = pot.openingBalance
@@ -565,7 +567,7 @@ export function computePotProjectionToDate(data: AppDataV2, pot: Pot, horizonEnd
 
   // Visibility floor, same rule as a personal ledger's own opening
   // balance date (projection.ts) — nothing before it is shown or counted.
-  const openingDateObj = parseLocalDate(pot.openingDate)
+  const openingDateObj = countsFromDate(potOpening(pot))
   const genStart = currentCycleStart > openingDateObj ? currentCycleStart : openingDateObj
 
   // PROMPT-13 B2 — the derived Coin Jar credits sit alongside the stored
@@ -573,7 +575,7 @@ export function computePotProjectionToDate(data: AppDataV2, pot: Pot, horizonEnd
   // not deduped against anything, because each one already corresponds
   // 1:1 with a real stored expense.
   const stored = [...data.transactions, ...coinJarCreditRows(pot, data.transactions)].filter(
-    (t) => transactionTouchesPot(t, pot.id) && t.date >= pot.openingDate,
+    (t) => transactionTouchesPot(t, pot.id) && t.date >= countsFromIso(potOpening(pot)),
   )
   const existingKeys = new Set(stored.map(dedupeKey).filter((k): k is string => k !== null))
 
