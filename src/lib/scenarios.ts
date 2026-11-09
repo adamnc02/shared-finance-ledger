@@ -1,7 +1,7 @@
 import { addMonths, differenceInCalendarMonths } from 'date-fns'
 import type { AppData, Bill, Loan, Scenario, ScenarioTargetKind } from '../types/models'
 import type { CreditCard, RecurringTemplate } from '../types/ledger'
-import { summarizeLoan, currentLoanMonthlyCost, estimateSettlementFigure, simulateScenarioLoan, scheduleEntryAsOf, baselineLoanSchedule, type ScenarioLoanEvent } from './loans'
+import { summarizeLoan, currentLoanMonthlyCost, estimateSettlementFigure, simulateScenarioLoan, scheduleEntryAsOf, baselineLoanSchedule, loanBalanceOnDay, buildLoanStatementRows, type ScenarioLoanEvent } from './loans'
 import type { LoanScheduleEntry } from './ledgerLoans'
 import { computeMinimumPaymentAmount, simulateCardPayoffMonths } from './creditCards'
 import { costForPerson } from './bills'
@@ -95,6 +95,8 @@ export interface SavingsPotImpact {
   balanceOnTargetDateAfterAll: number | null
   totalOneOffCash: number
   totalMonthlyCashChange: number
+  /** Every change this card applies, so the statement (lib/scenarioStatement.ts) runs the same hypothetical activity and templates as the card. */
+  whatIfPlan: PotPlan
 }
 
 export interface ScenarioImpact {
@@ -710,7 +712,7 @@ interface DatedPotAction {
   value: number
 }
 
-interface PotPlan {
+export interface PotPlan {
   lumps: { date: string; amount: number }[]
   withdrawals: { date: string; amount: number }[]
   recurring: { date: string; monthly: number }[]
@@ -734,59 +736,9 @@ function buildSavingsPotImpact(pot: AppData['savingsPots'][number], actions: Dat
   const payCycle = data.payCycles.find((c) => c.personId === pot.personId)
   const todayStr = toLocalIsoDate(today)
   const balanceNow = round2(savingsPotBalanceAsOf(pot, data.transactions, today))
-  const existingTemplate = data.recurringTemplates.find((t) => t.kind === 'transfer' && t.active && t.transferTo?.type === 'savings' && t.transferTo.savingsPotId === pot.id)
-  // The deposit input is monthly; this scales it to the template's own frequency.
-  const monthlyPerPayment = existingTemplate && existingTemplate.amount > 0 ? monthlyEquivalentCost(existingTemplate) / existingTemplate.amount : 1
-
-  function activityFor(plan: PotPlan): AppData['transactions'] {
-    const base = { categoryId: SAVINGS_CATEGORY_ID, paymentMethod: 'bank_transfer' as const, status: 'pending' as const, location: 'personal' as const, ownerId: pot.personId, savingsPotId: pot.id }
-    return [
-      ...data.transactions,
-      ...plan.lumps.map((l, i) => ({ ...base, id: `what-if:lump:${i}`, date: l.date, amount: l.amount, direction: 'out' as const, type: 'savings_deposit' as const })),
-      ...plan.withdrawals.map((w, i) => ({ ...base, id: `what-if:withdrawal:${i}`, date: w.date, amount: w.amount, direction: 'in' as const, type: 'savings_withdrawal' as const })),
-    ]
-  }
-
-  function templatesFor(plan: PotPlan): RecurringTemplate[] {
-    if (plan.recurring.length === 0) return data.recurringTemplates
-    const added = plan.recurring.map((r) => ({ effectiveFrom: r.date, amount: round2(r.monthly / monthlyPerPayment) }))
-    if (existingTemplate) {
-      // The baseline keeps the template's current amount for any date before
-      // its own history, exactly as resolveTemplateAmount does unmodified.
-      const history = [
-        { effectiveFrom: '0000-01-01', amount: existingTemplate.amount },
-        ...(existingTemplate.amountHistory ?? []),
-        ...(existingTemplate.amountEffectiveFrom ? [{ effectiveFrom: existingTemplate.amountEffectiveFrom, amount: existingTemplate.amount }] : []),
-        ...added,
-      ]
-      const last = history[history.length - 1]
-      const hypothetical: RecurringTemplate = { ...existingTemplate, amount: last.amount, amountEffectiveFrom: last.effectiveFrom, amountHistory: history.slice(0, -1) }
-      return data.recurringTemplates.map((t) => (t.id === existingTemplate.id ? hypothetical : t))
-    }
-    const last = added[added.length - 1]
-    return [
-      ...data.recurringTemplates,
-      {
-        id: `what-if:deposit:${pot.id}`,
-        name: `${pot.name} deposit (what-if)`,
-        amount: last.amount,
-        amountEffectiveFrom: last.effectiveFrom,
-        amountHistory: added.slice(0, -1),
-        categoryId: SAVINGS_CATEGORY_ID,
-        paymentMethod: 'bank_transfer',
-        frequency: 'monthly',
-        anchorDate: added[0].effectiveFrom,
-        location: 'personal',
-        ownerId: pot.personId,
-        payee: '',
-        payeeSharePercent: 100,
-        kind: 'transfer',
-        transferFrom: { type: 'personal' },
-        transferTo: { type: 'savings', savingsPotId: pot.id },
-        active: true,
-      },
-    ]
-  }
+  const activityFor = (plan: PotPlan) => potWhatIfActivity(pot, plan, data)
+  const templatesFor = (plan: PotPlan) => potWhatIfTemplates(pot, plan, data)
+  const { existingTemplate, monthlyPerPayment } = potDepositTemplate(pot, data)
 
   function balanceOn(plan: PotPlan, dateStr: string): number {
     const activity = activityFor(plan)
@@ -880,7 +832,74 @@ function buildSavingsPotImpact(pot: AppData['savingsPots'][number], actions: Dat
     balanceOnTargetDateAfterAll: targetDateAhead ? balanceOn(plan, targetDate!) : null,
     totalOneOffCash: round2(sections.reduce((s, x) => s + x.oneOffCash, 0)),
     totalMonthlyCashChange: round2(sections.reduce((s, x) => s + x.monthlyCashChange, 0)),
+    whatIfPlan: plan,
   }
+}
+
+/** The pot's live recurring deposit, and the factor turning the monthly figure a scenario is entered in into that template's own per-payment amount. */
+function potDepositTemplate(pot: AppData['savingsPots'][number], data: AppData): { existingTemplate: RecurringTemplate | undefined; monthlyPerPayment: number } {
+  const existingTemplate = data.recurringTemplates.find((t) => t.kind === 'transfer' && t.active && t.transferTo?.type === 'savings' && t.transferTo.savingsPotId === pot.id)
+  // The deposit input is monthly; this scales it to the template's own frequency.
+  const monthlyPerPayment = existingTemplate && existingTemplate.amount > 0 ? monthlyEquivalentCost(existingTemplate) / existingTemplate.amount : 1
+  return { existingTemplate, monthlyPerPayment }
+}
+
+/**
+ * The pot's activity with a plan's lump sums and withdrawals added as
+ * synthetic rows on their dates. Shared by the card and its statement, so the
+ * two run the same hypothetical. projectedBalanceAt rebuilds the balance from
+ * activity and ignores `currentBalance` for future dates.
+ */
+export function potWhatIfActivity(pot: AppData['savingsPots'][number], plan: PotPlan, data: AppData): AppData['transactions'] {
+  const base = { categoryId: SAVINGS_CATEGORY_ID, paymentMethod: 'bank_transfer' as const, status: 'pending' as const, location: 'personal' as const, ownerId: pot.personId, savingsPotId: pot.id }
+  return [
+    ...data.transactions,
+    ...plan.lumps.map((l, i) => ({ ...base, id: `what-if:lump:${i}`, date: l.date, amount: l.amount, direction: 'out' as const, type: 'savings_deposit' as const })),
+    ...plan.withdrawals.map((w, i) => ({ ...base, id: `what-if:withdrawal:${i}`, date: w.date, amount: w.amount, direction: 'in' as const, type: 'savings_withdrawal' as const })),
+  ]
+}
+
+/** The recurring templates with a plan's deposit changes applied as amountHistory entries on the pot's transfer template (or a new one), so the real schedule engine applies each from its date. Shared by the card and its statement. */
+export function potWhatIfTemplates(pot: AppData['savingsPots'][number], plan: PotPlan, data: AppData): RecurringTemplate[] {
+  if (plan.recurring.length === 0) return data.recurringTemplates
+  const { existingTemplate, monthlyPerPayment } = potDepositTemplate(pot, data)
+  const added = plan.recurring.map((r) => ({ effectiveFrom: r.date, amount: round2(r.monthly / monthlyPerPayment) }))
+  if (existingTemplate) {
+    // The baseline keeps the template's current amount for any date before
+    // its own history, exactly as resolveTemplateAmount does unmodified.
+    const history = [
+      { effectiveFrom: '0000-01-01', amount: existingTemplate.amount },
+      ...(existingTemplate.amountHistory ?? []),
+      ...(existingTemplate.amountEffectiveFrom ? [{ effectiveFrom: existingTemplate.amountEffectiveFrom, amount: existingTemplate.amount }] : []),
+      ...added,
+    ]
+    const last = history[history.length - 1]
+    const hypothetical: RecurringTemplate = { ...existingTemplate, amount: last.amount, amountEffectiveFrom: last.effectiveFrom, amountHistory: history.slice(0, -1) }
+    return data.recurringTemplates.map((t) => (t.id === existingTemplate.id ? hypothetical : t))
+  }
+  const last = added[added.length - 1]
+  return [
+    ...data.recurringTemplates,
+    {
+      id: `what-if:deposit:${pot.id}`,
+      name: `${pot.name} deposit (what-if)`,
+      amount: last.amount,
+      amountEffectiveFrom: last.effectiveFrom,
+      amountHistory: added.slice(0, -1),
+      categoryId: SAVINGS_CATEGORY_ID,
+      paymentMethod: 'bank_transfer',
+      frequency: 'monthly',
+      anchorDate: added[0].effectiveFrom,
+      location: 'personal',
+      ownerId: pot.personId,
+      payee: '',
+      payeeSharePercent: 100,
+      kind: 'transfer',
+      transferFrom: { type: 'personal' },
+      transferTo: { type: 'savings', savingsPotId: pot.id },
+      active: true,
+    },
+  ]
 }
 
 interface DebtAction {
@@ -940,6 +959,12 @@ export interface DebtImpact {
   totalOneOffCash: number
   totalMonthlyCashChange: number
   fullyPaidOff: boolean
+  /**
+   * Loans only (empty for a credit card): every dated event this card's
+   * figures were simulated from, sorted by date, so the statement
+   * (lib/scenarioStatement.ts) reads the same schedule as the card.
+   */
+  loanEvents: ScenarioLoanEvent[]
 }
 
 /**
@@ -1017,6 +1042,7 @@ function buildDebtImpacts(
         totalOneOffCash: round2(-actions.filter((a) => !a.fromSale).reduce((s, a) => s + (a.lumpSum ?? 0), 0)),
         totalMonthlyCashChange: monthlyCashChange,
         fullyPaidOff,
+        loanEvents: [],
       })
       continue
     }
@@ -1038,24 +1064,26 @@ function buildDebtImpacts(
     // `date`. The payment is read a month AFTER the section's own date: at
     // the date itself a lump sum still sits in overpaymentApplied, which is
     // a one-off, not the ongoing monthly cost.
-    // What is owed ON `date`. scheduleEntryAsOf() finds the next entry
-    // at-or-AFTER the date, which is right once the loan is running (a lump
-    // lands in its payment PERIOD, whose entry may be dated either side of the
-    // lump itself, and that entry is where its effect shows). It is wrong in
-    // exactly one place: a date BEFORE the first instalment, where it returns
-    // the balance after a payment that has not happened. Adam, 2026-09-23: a
-    // £10,050 loan whose first payment was not due until 2026-10-01 read as
-    // £9,906.51 on 23 September. Before the schedule starts, nothing has
-    // fallen due, so the balance is the opening balance less any lump already
-    // paid. Everything from the first instalment on is untouched — narrowing
-    // it to this window is deliberate: a previous attempt replaced the lookup
-    // wholesale and silently missed lumps (verify-scenario-debt-sections).
+    // What is owed at the end of `date`: everything dated on or before it,
+    // nothing after (loanBalanceOnDay). 🚨 Not scheduleEntryAsOf(), the first
+    // entry at-or-AFTER the date: that reads a lump paid on 15 Feb as the
+    // balance after the 14 MARCH payment (£9,195.35 → £5,577.83 instead of
+    // £9,439.62 → £5,839.62 on a £10,404.94 loan), so "Balance on 15 Feb" showed a
+    // month of payments that had not happened yet, and the lump appeared to
+    // remove more than itself. Also not the entry's own balanceAfter alone:
+    // the engine files a lump in its calendar month's payment entry, either
+    // side of the payment day (see absorbingEntryIndex).
+    //
+    // Before the first instalment nothing has fallen due, so the balance is
+    // the opening balance less any lump already paid: a £10,050 loan whose
+    // first payment was not due until 2026-10-01 must read £10,050 on
+    // 23 September, not the balance after a payment that has not happened.
     const balanceOn = (sched: LoanScheduleEntry[], date: string, subset: DebtAction[]) => {
       if (sched.length === 0 || date < sched[0].date) {
         const paid = subset.filter((a) => a.date <= date).reduce((sum, a) => sum + (a.lumpSum ?? 0), 0)
         return round2(Math.max(0, original.remaining - paid))
       }
-      return round2(Math.max(0, scheduleEntryAsOf(sched, date)?.balanceAfter ?? original.remaining))
+      return round2(Math.max(0, loanBalanceOnDay(sched, loan.totalAmount, eventsFor(subset), date)))
     }
 
     const stateAt = (subset: DebtAction[], date: string) => {
@@ -1117,21 +1145,22 @@ function buildDebtImpacts(
       const nextPeriod = scheduleEntryAsOf(outcome.schedule, toLocalIsoDate(addMonths(parseLocalDate(date), 1)))
       const recurringStillRunning = subset.some((a) => a.overpayment && a.date <= date)
       const payment = outcome.fullyPaidOff && (nextPeriod?.balanceAfter ?? 0) <= 0.005 ? 0 : nextPeriod ? round2(nextPeriod.scheduledPayment + (recurringStillRunning ? nextPeriod.overpaymentApplied : 0)) : 0
-      // A loan cleared by a lump finishes on the DAY THE MONEY LEFT, not at
-      // the end of the payment period the engine applied it in. Adam,
-      // 2026-09-23: a lump dated today cleared the loan, and "Finishes" read
-      // 2026-10-01 — the period the lump landed in — when the debt was gone
-      // today. Only a lump moves this; a payoff brought forward by a recurring
-      // overpayment still finishes on a real scheduled payment date.
-      const clearingLump = subset
-        .filter((a) => (a.lumpSum ?? 0) > 0 && a.date <= date)
-        .map((a) => a.date)
-        .sort()
-        .pop()
-      const finishDate =
-        outcome.fullyPaidOff && clearingLump && (outcome.finalPaymentDate == null || clearingLump < outcome.finalPaymentDate)
-          ? clearingLump
-          : outcome.finalPaymentDate
+      // The finish date is the LAST ROW of this card's own statement
+      // (buildLoanStatementRows), so the card and the statement cannot
+      // disagree. A lump that clears the loan finishes on the day the money
+      // left, not at the end of the payment period the engine filed it in: a
+      // lump dated today that cleared the loan used to read "Finishes" on the
+      // next payment date.
+      //
+      // 🚨 Never gate this on outcome.fullyPaidOff: simulateScenarioLoan
+      // anchors it to the chronologically last event, and a recurring
+      // overpayment is 600 materialised events (~50 years out), so with any
+      // recurring overpayment it is always true. Gating on it made every
+      // lump + recurring combination "finish" on the last lump's date: a
+      // £3,600 + £1,000 + £450/month read 14 Apr 2027 while £3,595.56 was
+      // still owed on 14 May, and the last payment is 14 Oct 2027.
+      const statementRows = buildLoanStatementRows(outcome.schedule, loan.totalAmount, eventsFor(subset))
+      const finishDate = statementRows.at(-1)?.date ?? outcome.finalPaymentDate
       return {
         balance: balanceOn(outcome.schedule, date, subset),
         payment,
@@ -1190,6 +1219,8 @@ function buildDebtImpacts(
       totalOneOffCash: round2(sections.reduce((s, x) => s + x.oneOffCash, 0)),
       totalMonthlyCashChange: round2(sections.reduce((s, x) => s + x.monthlyCashChange, 0)),
       fullyPaidOff: (last?.fullyPaidOff ?? false) && (last?.balanceOnDateAfter ?? 1) <= 0.005,
+      // Sorted, so the card is identical whatever order the actions were added in.
+      loanEvents: eventsFor(actions).sort((a, b) => a.date.localeCompare(b.date) || a.amount - b.amount),
     })
   }
 

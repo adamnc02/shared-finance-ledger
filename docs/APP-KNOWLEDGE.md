@@ -1498,6 +1498,21 @@ that reorders JSX moves the phone too. 🚨 `SwipeToDelete` must not take pointe
   and the location CHECKs widened in migration `20261109120000`, which ships before the app.
   `TECHNICAL.md` §49 here, §39 in `personal-ledger`.
 
+### 1.40 A What-if loan finishes on its statement's last row; "balance on" means that day (2026-11-09)
+
+- **A recurring overpayment makes any "last event" anchor meaningless.** It is materialised as 600
+  monthly events (~50 years out), so `ScenarioLoanOutcome.fullyPaidOff`, `remainingAfterEvents` and
+  `effectiveMonthlyPayment` all describe 2077, not the date being asked about. Read the schedule at
+  the date instead.
+- **A loan card's "Finishes" is the last row of `buildLoanStatementRows`**, built from the card's own
+  `loanEvents`, so the card and its Statement cannot disagree.
+- **"Balance on <date>" is `loanBalanceOnDay`**: the engine files a lump in its calendar month's
+  payment entry, either side of the payment day, so neither the next entry nor an entry's own
+  `balanceAfter` is the balance on a day.
+- **What an extra took off is never `overpaymentApplied`**: the final month records the full amount
+  and clamps the balance. Use `appliedExtraAt`.
+- Credit cards have no dated What-if maths, so no Statement. `TECHNICAL.md` §29 in both live apps.
+
 ## 2. The credit-card engine is the single most fragile area
 
 **One reported symptom — "balance never reaches zero" — took five separate fixes**, each a

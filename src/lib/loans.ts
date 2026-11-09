@@ -263,6 +263,128 @@ export function baselineLoanSchedule(loan: Loan): LoanScheduleEntry[] {
   return buildLedgerLoanSchedule(toSyntheticLedgerLoan(loan))
 }
 
+/**
+ * Which schedule entry absorbs an overpayment dated `eventDate` — the same
+ * matching ledgerLoans.buildLoanSchedule uses: the entry in the event's own
+ * calendar month, or, for the first entry, anything dated on or before it.
+ * −1 when the loan has finished before that month.
+ *
+ * 🚨 The engine applies an overpayment AFTER that month's scheduled payment,
+ * whichever side of the payment day it is dated. So an entry's balanceAfter
+ * already includes a lump paid later in the same month, and a lump paid
+ * earlier in the month sits in the payment entry dated after it.
+ */
+export function absorbingEntryIndex(schedule: LoanScheduleEntry[], eventDate: string): number {
+  if (schedule.length === 0) return -1
+  if (eventDate <= schedule[0].date) return 0
+  const month = eventDate.slice(0, 7)
+  return schedule.findIndex((e) => e.date.slice(0, 7) === month)
+}
+
+/**
+ * What the overpayments in entry `index` actually took off the balance.
+ * 🚨 Not `overpaymentApplied`: the engine records the full overpayment there
+ * and then clamps the balance at £0, so in the final month it overstates
+ * what was paid (a £450 extra recorded where £396.69 cleared the loan).
+ */
+export function appliedExtraAt(schedule: LoanScheduleEntry[], index: number, opening: number): number {
+  const entry = schedule[index]
+  const before = index === 0 ? opening : schedule[index - 1].balanceAfter
+  return round2(Math.max(0, before + entry.interestApplied - entry.scheduledPayment - entry.balanceAfter))
+}
+
+/**
+ * The balance owed at the end of `date`: everything dated on or before it,
+ * nothing after. Read off the schedule's last entry on or before the date,
+ * then corrected for the overpayments the engine filed in a different entry
+ * from their own date (see absorbingEntryIndex): a lump later in that
+ * entry's month is put back, and a lump earlier in the next entry's month is
+ * taken off. Extras within one entry are taken in date order, capped at what
+ * that entry actually absorbed. Only for a date on or after the first entry.
+ */
+export function loanBalanceOnDay(schedule: LoanScheduleEntry[], opening: number, events: ScenarioLoanEvent[], date: string): number {
+  let k = -1
+  for (let i = 0; i < schedule.length && schedule[i].date <= date; i++) k = i
+  if (k < 0) return opening
+  const absorbedBy = (index: number) => events.filter((e) => absorbingEntryIndex(schedule, e.date) === index)
+  const applied = appliedExtraAt(schedule, k, opening)
+  const extrasOnOrBefore = round2(absorbedBy(k).filter((e) => e.date <= date).reduce((s, e) => s + e.amount, 0))
+  let balance = round2(schedule[k].balanceAfter + applied - Math.min(applied, extrasOnOrBefore))
+  if (k + 1 < schedule.length) {
+    // Uncapped by what that entry absorbed: the engine books the payment
+    // first and clamps the lump to what is then left, so in the final month a
+    // clearing lump on 3 Mar is recorded as less than was sent, and capping
+    // here left £272.71 "owed" on the day a £100,000 lump went in.
+    const early = round2(absorbedBy(k + 1).filter((e) => e.date <= date).reduce((s, e) => s + e.amount, 0))
+    balance = round2(Math.max(0, balance - early))
+  }
+  return balance
+}
+
+/** One line of a What-if loan statement: a payment day, or an extra paid on a day of its own. */
+export interface LoanStatementRow {
+  date: string
+  kind: 'payment' | 'extra'
+  interest: number
+  payment: number
+  /** What the extra actually took off the balance (see appliedExtraAt), never more than was owed. */
+  extra: number
+  balance: number
+}
+
+/**
+ * The loan's payment-by-payment statement, one row per date money moves,
+ * from the same schedule the card reads. Each payment entry becomes a
+ * payment row carrying the extras dated that same day; an extra dated on
+ * any other day gets a row of its own on its real date, before or after the
+ * payment it was filed with (absorbingEntryIndex). Every row satisfies
+ * previous balance + interest − payment − extra = balance, and an extra
+ * never takes off more than is owed on its day.
+ *
+ * Interest and payments are the engine's own figures, entry by entry. The
+ * one place the rows differ is the loan's last month: the engine books the
+ * payment and then clamps any extra, whichever side of the payment day it
+ * is dated. Here an extra dated BEFORE the payment day comes off first, and
+ * if it clears the balance it is the last row: the loan is gone that day,
+ * so no payment follows it. The card's "Finishes" date is the date of the
+ * last row (scenarios.ts), so the card and its statement cannot disagree.
+ */
+export function buildLoanStatementRows(schedule: LoanScheduleEntry[], opening: number, events: ScenarioLoanEvent[]): LoanStatementRow[] {
+  const rows: LoanStatementRow[] = []
+  let balance = opening
+  const sorted = events.slice().sort((a, b) => a.date.localeCompare(b.date))
+  const extra = (date: string) => {
+    const taken = round2(Math.min(groups.get(date) ?? 0, balance))
+    balance = round2(balance - taken)
+    return taken
+  }
+  let groups = new Map<string, number>()
+  for (let j = 0; j < schedule.length && balance > 0.005; j++) {
+    const entry = schedule[j]
+    groups = new Map<string, number>()
+    for (const e of sorted.filter((ev) => absorbingEntryIndex(schedule, ev.date) === j)) groups.set(e.date, round2((groups.get(e.date) ?? 0) + e.amount))
+    const dates = [...groups.keys()].sort()
+    for (const date of dates.filter((d) => d < entry.date)) {
+      const taken = extra(date)
+      if (taken > 0) rows.push({ date, kind: 'extra', interest: 0, payment: 0, extra: taken, balance })
+      if (balance <= 0.005) return rows
+    }
+    const payment = round2(Math.min(entry.scheduledPayment, balance + entry.interestApplied))
+    balance = round2(balance + entry.interestApplied - payment)
+    rows.push({ date: entry.date, kind: 'payment', interest: entry.interestApplied, payment, extra: extra(entry.date), balance })
+    for (const date of dates.filter((d) => d > entry.date)) {
+      if (balance <= 0.005) break
+      const taken = extra(date)
+      if (taken > 0) rows.push({ date, kind: 'extra', interest: 0, payment: 0, extra: taken, balance })
+    }
+  }
+  return rows
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
 export function scheduleEntryAsOf(schedule: LoanScheduleEntry[], date: string): LoanScheduleEntry | undefined {
   if (schedule.length === 0) return undefined
   const index = schedule.findIndex((e) => e.date >= date)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useWide } from '../lib/useWide'
 import { formatCurrency } from '../lib/format'
 import { toLocalIsoDate, todayIso } from '../lib/date'
@@ -13,13 +13,18 @@ import { personalBillsTotal, jointContributionForPerson } from '../lib/bills'
 import { summarizeLoan, combineBillsWithLoans } from '../lib/loans'
 import { calculateHouseholdFigures, legacyPeopleWithSalaryCount } from '../lib/household'
 import { calculateFinanceAgreement } from '../lib/finance'
-import { Plus, Trash2, ChevronDown, ChevronUp, Layers, Pencil } from 'lucide-react'
-import type { Scenario, ScenarioActionType, ScenarioTargetKind, BillLocation } from '../types/models'
+import { Plus, Trash2, ChevronDown, ChevronUp, Layers, Pencil, ScrollText } from 'lucide-react'
+import type { AppData, Scenario, ScenarioActionType, ScenarioTargetKind, BillLocation } from '../types/models'
 import type { RecurringTemplate, Loan } from '../types/ledger'
 import { BILLS_CATEGORY_ID } from '../types/ledger'
 import { SplitEditor } from '../components/SplitEditor'
 import { ConfirmModal } from '../components/ConfirmModal'
+import { RowSheet } from '../components/RowSheet'
+import { buildLoanScenarioStatement, buildSavingsPotScenarioStatement } from '../lib/scenarioStatement'
 import { nanoid } from 'nanoid'
+
+/** The bridged data the page computed its impacts from, so a card's Statement sheet reads the same loans and pots without threading it through every card. */
+const ScenarioDataContext = createContext<AppData | null>(null)
 
 const ACTION_LABELS: Record<ScenarioActionType, string> = {
   sell_asset: 'Sell an asset',
@@ -217,6 +222,7 @@ export function Scenarios() {
     }
     const editing = creating || (selected && editingId === selected.id)
     return (
+      <ScenarioDataContext.Provider value={data}>
       <div className="px-10 pt-8 pb-4 flex flex-col gap-6">
         <header className="flex flex-wrap items-center gap-3">
           <h1 className="font-display text-3xl font-semibold text-[var(--color-ink)] flex-1">What-if</h1>
@@ -368,6 +374,7 @@ export function Scenarios() {
             )
           })()}
       </div>
+      </ScenarioDataContext.Provider>
     )
   }
 
@@ -415,6 +422,7 @@ export function Scenarios() {
   }
 
   return (
+    <ScenarioDataContext.Provider value={data}>
     <div className="max-w-md mx-auto px-4 pt-6">
       <header className="mb-4 flex items-center justify-between">
         <h1 className="font-display text-2xl font-semibold text-[var(--color-ink)]">What-if scenarios</h1>
@@ -593,6 +601,7 @@ export function Scenarios() {
           )
         })()}
     </div>
+    </ScenarioDataContext.Provider>
   )
 }
 
@@ -993,6 +1002,7 @@ function DebtCard({
   onMakeReal?: (li: LoanImpact) => void
   loanImpacts: LoanImpact[]
 }) {
+  const [statementOpen, setStatementOpen] = useState(false)
   const positive = 'var(--color-positive)'
   const negative = 'var(--color-negative)'
   const paymentLabel = viewerId ? 'Your payment' : 'Household payment'
@@ -1091,12 +1101,127 @@ function DebtCard({
           )}
         </>
       )}
+
+      {/* Loans only: a credit card's What-if maths is dateless (one "Today" section, a flat payoff count), so it has no dates to list. */}
+      {di.dated && <StatementButton onClick={() => setStatementOpen(true)} />}
+      {statementOpen && (
+        <RowSheet title={di.targetName} subtitle="What-if statement" onClose={() => setStatementOpen(false)}>
+          <LoanStatementSheet impact={di} />
+        </RowSheet>
+      )}
+    </div>
+  )
+}
+
+function StatementButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="mt-4 w-full py-2.5 rounded-full inline-flex items-center justify-center gap-2 text-sm font-semibold text-white" style={{ background: 'var(--color-coral)' }}>
+      <ScrollText size={16} aria-hidden />
+      Statement
+    </button>
+  )
+}
+
+function shortDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })
+}
+
+const STATEMENT_COLUMNS = 'grid grid-cols-[minmax(0,1.1fr)_repeat(4,minmax(0,1fr))] items-baseline gap-2'
+
+/** "Without → with" for one figure, on the sheet's header. */
+function StatementCompare({ label, without, withIt }: { label: string; without: string; withIt: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 text-sm py-1">
+      <span className="text-[var(--color-ink-muted)]">{label}</span>
+      <span className="font-mono text-right text-[var(--color-ink)]">
+        {without === withIt ? withIt : `${without} → ${withIt}`}
+      </span>
+    </div>
+  )
+}
+
+/** A loan card's scenario, payment by payment (lib/scenarioStatement.ts). Built from the card's own events, so its last row is the card's "Finishes". */
+function LoanStatementSheet({ impact: di }: { impact: DebtImpact }) {
+  const data = useContext(ScenarioDataContext)
+  const loan = data?.loans.find((l) => l.id === di.targetId)
+  const st = loan ? buildLoanScenarioStatement(loan, di.loanEvents) : null
+  if (!st) return <p className="text-sm text-[var(--color-ink-muted)]">This loan has no interest schedule yet, so there are no dates to list. Calibrate its interest on the Borrowing page first.</p>
+  const money = (n: number) => `£${formatCurrency(n)}`
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <StatementCompare label="Finishes" without={st.without.finishDate ? formatFullDate(st.without.finishDate) : '—'} withIt={st.with.finishDate ? formatFullDate(st.with.finishDate) : '—'} />
+        <StatementCompare label="Payments left" without={`${st.without.payments}`} withIt={`${st.with.payments}`} />
+        <StatementCompare label="Interest from now" without={money(st.without.interest)} withIt={money(st.with.interest)} />
+        {st.extrasTotal > 0 && <StatementCompare label="Extra paid" without={money(st.extrasTotal)} withIt={money(st.extrasTotal)} />}
+        <p className="text-xs text-[var(--color-ink-muted)] mt-1">Owed now: {money(st.opening)}. Each payment day adds that month's interest, then takes off the payment and any extra.</p>
+      </div>
+      <div role="table" aria-label="Payments">
+        <div role="row" className={`${STATEMENT_COLUMNS} text-[10px] font-semibold uppercase tracking-wide text-[var(--color-ink-faint)] pb-1`}>
+          <span role="columnheader">Date</span>
+          <span role="columnheader" className="text-right">Interest</span>
+          <span role="columnheader" className="text-right">Paid</span>
+          <span role="columnheader" className="text-right">Extra</span>
+          <span role="columnheader" className="text-right">Balance</span>
+        </div>
+        {st.rows.map((r, i) => (
+          <div key={i} role="row" className={`${STATEMENT_COLUMNS} py-1.5 border-t text-xs font-mono`} style={{ borderColor: 'var(--color-track)' }}>
+            <span role="cell" className="font-body text-[var(--color-ink-muted)]">{shortDate(r.date)}</span>
+            <span role="cell" className="text-right" style={{ color: r.interest > 0 ? 'var(--color-warning)' : undefined }}>{r.interest > 0 ? `+${formatCurrency(r.interest)}` : ''}</span>
+            <span role="cell" className="text-right text-[var(--color-ink)]">{r.payment > 0 ? `−${formatCurrency(r.payment)}` : ''}</span>
+            <span role="cell" className="text-right" style={{ color: 'var(--color-coral)' }}>{r.extra > 0 ? `−${formatCurrency(r.extra)}` : ''}</span>
+            <span role="cell" className="text-right text-[var(--color-ink)]">{formatCurrency(r.balance)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** A savings-pot card's scenario, date by date: the pot's own schedule with this card's changes in it. */
+function PotStatementSheet({ impact: si }: { impact: SavingsPotImpact }) {
+  const data = useContext(ScenarioDataContext)
+  if (!data) return null
+  const st = buildSavingsPotScenarioStatement(si, data)
+  const money = (n: number) => `£${formatCurrency(n)}`
+  const reach = (d: string | null) => (d ? formatFullDate(d) : 'Not within 30 years')
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <StatementCompare label={`Balance on ${formatFullDate(st.endDate)}`} without={money(st.without.endBalance)} withIt={money(st.with.endBalance)} />
+        {si.targetAmount !== null && !si.targetReached && <StatementCompare label="Reaches target" without={reach(st.without.reachDate)} withIt={reach(st.with.reachDate)} />}
+        <p className="text-xs text-[var(--color-ink-muted)] mt-1">Balance now: {money(st.opening)}. Rows marked • are this what-if's own changes.</p>
+      </div>
+      <div role="table" aria-label="Pot activity">
+        <div role="row" className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-ink-faint)] pb-1">
+          <span role="columnheader">Date</span>
+          <span role="columnheader">What</span>
+          <span role="columnheader" className="text-right">Amount</span>
+          <span role="columnheader" className="text-right">Balance</span>
+        </div>
+        {st.rows.map((r, i) => (
+          <div key={i} role="row" className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)] items-baseline gap-2 py-1.5 border-t text-xs" style={{ borderColor: 'var(--color-track)' }}>
+            <span role="cell" className="text-[var(--color-ink-muted)]">{shortDate(r.date)}</span>
+            <span role="cell" className="text-[var(--color-ink)]">
+              {r.kind === 'deposit' ? 'Deposit' : r.kind === 'withdrawal' ? 'Withdrawal' : 'Interest'}
+              {r.whatIf && <span style={{ color: 'var(--color-coral)' }}> •</span>}
+            </span>
+            <span role="cell" className="font-mono text-right" style={{ color: r.amount < 0 ? 'var(--color-negative)' : 'var(--color-positive)' }}>
+              {r.amount < 0 ? '−' : '+'}
+              {formatCurrency(Math.abs(r.amount))}
+            </span>
+            <span role="cell" className="font-mono text-right text-[var(--color-ink)]">{formatCurrency(r.balance)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
 /** One card per savings pot: the pot now, one section per date (each building on the ones before), then all changes against now. */
 function SavingsPotCard({ impact: si }: { impact: SavingsPotImpact }) {
+  const [statementOpen, setStatementOpen] = useState(false)
   const positive = 'var(--color-positive)'
   const negative = 'var(--color-negative)'
   const showReach = si.targetAmount !== null && !si.targetReached
@@ -1181,6 +1306,13 @@ function SavingsPotCard({ impact: si }: { impact: SavingsPotImpact }) {
             />
           )}
         </>
+      )}
+
+      <StatementButton onClick={() => setStatementOpen(true)} />
+      {statementOpen && (
+        <RowSheet title={si.potName} subtitle="What-if statement" onClose={() => setStatementOpen(false)}>
+          <PotStatementSheet impact={si} />
+        </RowSheet>
       )}
     </div>
   )
