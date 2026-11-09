@@ -1756,6 +1756,64 @@ into a savings pot, withdrawal from a savings pot, change a pot's recurring depo
 `SavingsPotCard`, `PurchaseCard` and `ImpactSummary` render the results; `MakeRealButton` converts
 a scenario's overpayment into a real recurring one.
 
+### Loan finish dates, "Balance on", and the Statement
+
+**A loan card's "Finishes" is the date of the last row of its own statement**
+(`buildLoanStatementRows` in `lib/loans.ts`, called from `buildDebtImpacts`). The card and the statement
+read the same `simulateScenarioLoan` schedule, built from the card's own events
+(`DebtImpact.loanEvents`), so they cannot disagree.
+
+> 🚨 **Never gate a finish date (or anything else) on `ScenarioLoanOutcome.fullyPaidOff`.** It is
+> anchored to the chronologically LAST event, and a recurring overpayment is materialised as 600
+> monthly events (~50 years out), so with any recurring overpayment it is always true. Gating the
+> finish date on it made every lump + recurring combination "finish" on the last lump's date: £3,600
+> on 15 Feb 2027, £1,000 on 14 Apr 2027 and £450/month from 14 May 2027 on a £10,404.94 loan read
+> 14 Apr 2027, while £3,595.56 was still owed on 14 May; the last payment is 14 Oct 2027.
+> `verify-scenario-finish-date.ts` reproduces the old rule as its control.
+
+**"Balance on <date>" is the balance at the end of that day** (`loanBalanceOnDay`): everything dated on
+or before it, nothing after.
+
+> 🚨 **The engine files an overpayment in its calendar month's payment entry, AFTER that month's
+> payment, whichever side of the payment day it is dated** (`absorbingEntryIndex` mirrors
+> `buildLoanSchedule`'s `sameMonth` match). So an entry's `balanceAfter` already includes a lump paid
+> later in the same month, and a lump paid earlier in the month sits in the entry dated after it.
+> Neither `scheduleEntryAsOf` (first entry at-or-after: it read a 15 Feb lump as the balance after the
+> 14 March payment) nor an entry's own `balanceAfter` is the balance on a day.
+> `loanBalanceOnDay` starts from the last entry on or before the date, puts back that entry's extras
+> dated after it, and takes off the next entry's extras dated on or before it. The verify script covers
+> a lump before, on and after the payment day.
+
+**What an extra took off is never `overpaymentApplied`.** `buildLoanSchedule` records the full
+overpayment there and then clamps the balance at £0, so the final month overstates it (£450 recorded
+where £396.69 cleared the loan). `appliedExtraAt` derives it from the balance chain; the statement caps
+every extra at what is owed on its own day.
+
+**A lump that covers everything owed, dated before the final month's payment day, is the last row.**
+The loan is gone that day, so no payment follows it and that month's interest is never charged. This
+is the one place the statement differs from the engine's last entry, which still books a payment on
+the payment day. Everywhere else the rows carry the engine's own interest and payments, entry by entry,
+and every row satisfies previous balance + interest − payment − extra = balance.
+
+**The Statement button** (`lib/scenarioStatement.ts`, the sheets in `pages/Scenarios.tsx`) is on every
+loan and savings-pot card, in each scenario, Combined and the laptop view.
+
+- **Loans:** one row per date money moves: a payment row (interest, payment, any extra dated that day)
+  per schedule entry, and a row of its own for an extra on any other day. The header compares the
+  finish date, payments left and interest with and without this card's actions. An uncalibrated loan
+  has no schedule and so no rows; the sheet says so.
+- **Savings pots:** `buildSavingsPotScheduleRows` over the card's own hypothetical
+  (`SavingsPotImpact.whatIfPlan` through `potWhatIfActivity` / `potWhatIfTemplates`, the same helpers
+  the card uses), from today to the latest of the last change + 12 months, the pot's target date and
+  either reach date, capped at 30 years. The scenario's own lump sums and withdrawals are marked.
+- **Credit cards have no button.** What-if's card maths is dateless (one "Today" section, a flat
+  payoff count), so a dated statement would invent dates the engine never had.
+- **Not `buildLoanLedgerRows`:** Borrowing's ledger rows have a non-monotonic `balanceAfter`.
+
+Checks: `verify-scenario-finish-date.ts` and `verify-scenario-statement.ts`, against the real
+2026-11-08 backup fixture (read by absolute path from the tracking folder, never committed), with the
+clock pinned to that backup's day.
+
 ---
 
 ## 30. Charts and hit-testing
