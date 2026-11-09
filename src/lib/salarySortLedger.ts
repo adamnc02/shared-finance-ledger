@@ -17,6 +17,7 @@ import { generateJointContributionTransactions } from './jointLedger'
 import { potBillsAndLoans } from './potLedger'
 import { locationsEqual, transferLocationKey } from './transferLedger'
 import type { AppDataV2, PayCycleConfig, Pot, RecurringTemplate, SavingsPot, Transaction, TransferLocation } from '../types/ledger'
+import { cardActivity } from './outsideIncome'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -86,7 +87,7 @@ export function dueAmountForLocation(data: AppDataV2, location: TransferLocation
     let total = 0
     for (const template of templates) total += generateTransactionsForTemplate(template, window.start, window.end).reduce((sum, t) => sum + t.amount, 0)
     for (const loan of loans) total += generateLoanPaymentTransactions(loan, window.start, window.end).reduce((sum, t) => sum + t.amount, 0)
-    for (const card of creditCards) total += generateMinimumPaymentTransactions(card, window.start, window.end, data.transactions).reduce((sum, t) => sum + t.amount, 0)
+    for (const card of creditCards) total += generateMinimumPaymentTransactions(card, window.start, window.end, cardActivity(data, window.end)).reduce((sum, t) => sum + t.amount, 0)
     return round2(total)
   }
   if (location.type === 'joint') {

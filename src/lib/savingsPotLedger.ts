@@ -18,6 +18,8 @@ import { resolveCycleBounds } from './pensionLedger'
 import { daysBetweenInclusive } from './runningBalance'
 import { SAVINGS_CATEGORY_ID } from '../types/ledger'
 import type { AppDataV2, PayCycleConfig, RecurringOccurrenceOverride, RecurringTemplate, SavingsInterestMethod, SavingsPot, Transaction, TransferLocation } from '../types/ledger'
+import { countsFromIso, potOpening } from './openingBalance'
+import { isOutsideIncomeTemplate, isOutsideIncomeToSavings } from './outsideIncome'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 const MAX_OCCURRENCES = 2000
@@ -110,7 +112,7 @@ function walkDepositOccurrences(pot: SavingsPot, rangeStart: Date, rangeEnd: Dat
   const results: RawDepositOccurrence[] = []
   while (cursor <= walkEnd && iterations < MAX_OCCURRENCES) {
     const originalDate = toIso(cursor)
-    if (originalDate >= pot.openingDate) {
+    if (originalDate >= countsFromIso(potOpening(pot))) {
       // Pause is just the ordinary deleted-override mechanism now (see
       // SavingsPot.recurringDepositOverrides's own comment) — no separate
       // pause concept to check here at all.
@@ -230,7 +232,7 @@ export function scheduledDepositDates(pot: SavingsPot, rangeStart: Date, rangeEn
   const results: string[] = []
   while (cursor <= rangeEnd && iterations < MAX_OCCURRENCES) {
     const originalDate = toIso(cursor)
-    if (originalDate >= pot.openingDate) results.push(originalDate)
+    if (originalDate >= countsFromIso(potOpening(pot))) results.push(originalDate)
     cursor = clampToAnchorDay(addMonths(cursor, 1), anchorDay)
     iterations++
   }
@@ -289,7 +291,13 @@ export function generateSavingsDepositTransactions(
     // below picks up instead.
     .filter((t) => t.toLocation?.type === 'savings' && t.toLocation.savingsPotId === pot.id)
 
-  return [...legacy, ...fromTransfers]
+  // A recurring income paid in from OUTSIDE straight to this pot — nothing of
+  // the household's is debited, so it is `location: 'savings'`, never personal.
+  const fromOutside = transferTemplates
+    .filter((t) => isOutsideIncomeTemplate(t) && t.location === 'savings' && t.savingsPotId === pot.id)
+    .flatMap((t) => generateTransactionsForTemplate(t, rangeStart, rangeEnd, payCycle))
+
+  return [...legacy, ...fromTransfers, ...fromOutside]
 }
 
 /**
@@ -335,7 +343,7 @@ function transactionTouchesSavingsPot(t: Pick<Transaction, 'type' | 'savingsPotI
 export function savingsPotBalanceAsOf(pot: SavingsPot, activity: Transaction[], asOfDate: Date): number {
   const asOfIso = toIso(asOfDate)
   const relevant = activity
-    .filter((t) => transactionTouchesSavingsPot(t, pot.id) && t.date >= pot.openingDate && t.date <= asOfIso)
+    .filter((t) => transactionTouchesSavingsPot(t, pot.id) && t.date >= countsFromIso(potOpening(pot)) && t.date <= asOfIso)
     .sort((a, b) => a.date.localeCompare(b.date))
 
   let balance = pot.openingBalance
@@ -346,6 +354,7 @@ export function savingsPotBalanceAsOf(pot: SavingsPot, activity: Transaction[], 
 /** How one activity row moves this pot's balance — positive in, negative out, 0 for a type that doesn't touch the balance. The single rule both savingsPotBalanceAsOf and the trend series' in/out totals use, so the two can't disagree. */
 function savingsPotActivityDelta(t: Transaction, savingsPotId: string): number {
   if (t.type === 'savings_deposit' || t.type === 'savings_interest') return t.amount
+  if (isOutsideIncomeToSavings(t, savingsPotId)) return t.amount
   if (t.type === 'savings_withdrawal') return -t.amount
   if (t.type === 'transfer') return savingsPotSignedAmount(t, savingsPotId)
   return 0
@@ -362,7 +371,7 @@ function savingsPotActivityDelta(t: Transaction, savingsPotId: string): number {
  */
 function savingsPotPeakBalance(pot: SavingsPot, activity: Transaction[], startIso: string, endIso: string): number {
   const relevant = activity
-    .filter((t) => transactionTouchesSavingsPot(t, pot.id) && t.date >= pot.openingDate && t.date <= endIso)
+    .filter((t) => transactionTouchesSavingsPot(t, pot.id) && t.date >= countsFromIso(potOpening(pot)) && t.date <= endIso)
     .sort((a, b) => a.date.localeCompare(b.date))
   let balance = pot.openingBalance
   let i = 0
@@ -388,7 +397,7 @@ function savingsPotFlowsBetween(pot: SavingsPot, activity: Transaction[], startI
   let moneyIn = 0
   let moneyOut = 0
   for (const t of activity) {
-    if (!transactionTouchesSavingsPot(t, pot.id) || t.date < pot.openingDate || t.date < startIso || t.date > endIso) continue
+    if (!transactionTouchesSavingsPot(t, pot.id) || t.date < countsFromIso(potOpening(pot)) || t.date < startIso || t.date > endIso) continue
     const delta = savingsPotActivityDelta(t, pot.id)
     if (delta > 0) moneyIn += delta
     else moneyOut -= delta
@@ -526,7 +535,7 @@ function dailyBalancesFor(pot: SavingsPot, activity: Transaction[], periodStart:
     .filter(
       (t) =>
         transactionTouchesSavingsPot(t, pot.id) &&
-        (t.type === 'savings_deposit' || t.type === 'savings_withdrawal' || t.type === 'transfer') &&
+        (t.type === 'savings_deposit' || t.type === 'savings_withdrawal' || t.type === 'transfer' || isOutsideIncomeToSavings(t, pot.id)) &&
         t.date >= toIso(periodStart) &&
         t.date < toIso(periodEnd),
     )
@@ -535,7 +544,7 @@ function dailyBalancesFor(pot: SavingsPot, activity: Transaction[], periodStart:
   const result: { date: string; balance: number }[] = [{ date: toIso(periodStart), balance: openingBalance }]
   let balance = openingBalance
   for (const m of movements) {
-    const delta = m.type === 'savings_deposit' ? m.amount : m.type === 'savings_withdrawal' ? -m.amount : savingsPotSignedAmount(m, pot.id)
+    const delta = m.type === 'savings_deposit' || isOutsideIncomeToSavings(m, pot.id) ? m.amount : m.type === 'savings_withdrawal' ? -m.amount : savingsPotSignedAmount(m, pot.id)
     balance = round2(balance + delta)
     result.push({ date: m.date, balance })
   }
@@ -679,7 +688,7 @@ function savingsPotActivityForRange(
   transferTemplates: RecurringTemplate[] = [],
   payCycle?: PayCycleConfig,
 ): Transaction[] {
-  const potStored = stored.filter((t) => transactionTouchesSavingsPot(t, pot.id) && t.date >= pot.openingDate)
+  const potStored = stored.filter((t) => transactionTouchesSavingsPot(t, pot.id) && t.date >= countsFromIso(potOpening(pot)))
   const storedKeys = new Set(potStored.map((t) => `${t.type}:${t.date}`))
   const generatedDeposits = generateSavingsDepositTransactions(pot, rangeStart, rangeEnd, transferTemplates, payCycle).filter((t) => !storedKeys.has(`${t.type}:${t.date}`))
   const generatedWithdrawals = generateSavingsWithdrawalTransactions(pot, rangeStart, rangeEnd, transferTemplates, payCycle).filter((t) => !storedKeys.has(`${t.type}:${t.date}`))
@@ -897,7 +906,7 @@ export function projectedTargetDate(pot: SavingsPot, currentBalance: number, rea
   // currentBalance yet, so they're folded in here. Same dedupe as
   // projectedBalanceAt: a real row replaces a generated one of the same
   // type and date.
-  const pendingReal = realActivity.filter((t) => transactionTouchesSavingsPot(t, pot.id) && t.date > asOfIso && t.date >= pot.openingDate)
+  const pendingReal = realActivity.filter((t) => transactionTouchesSavingsPot(t, pot.id) && t.date > asOfIso && t.date >= countsFromIso(potOpening(pot)))
   const realKeys = new Set(pendingReal.map((t) => `${t.type}:${t.date}`))
   const combined = [
     ...pendingReal.map((t) => ({ date: t.date, amount: savingsPotActivityDelta(t, pot.id) })),

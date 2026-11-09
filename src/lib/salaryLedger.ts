@@ -32,6 +32,7 @@ import { addDays } from 'date-fns'
 const round2 = (n: number) => Math.round(n * 100) / 100
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
 import { planReschedule, redateStoredPayments } from './scheduleChange'
+import { countsFromDate, accountOpening } from './openingBalance'
 
 /** The snapshot effective on `date` — the latest one with effectiveFrom on or before it, never a future one. */
 /**
@@ -375,7 +376,7 @@ export function upcomingPaydays(payCycle: PayCycleConfig, fromDate: Date, count:
  */
 export function closedPaydays(payCycle: PayCycleConfig, beforeDate: Date, count: number): Date[] {
   const results: Date[] = []
-  const openingBalanceDate = parseLocalDate(payCycle.openingBalanceDate)
+  const openingBalanceDate = countsFromDate(accountOpening(payCycle))
   const floorMonth = new Date(openingBalanceDate.getFullYear(), openingBalanceDate.getMonth(), 1)
   let cursor = new Date(beforeDate.getFullYear(), beforeDate.getMonth(), 1)
   let guard = 0

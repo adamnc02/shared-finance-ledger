@@ -74,7 +74,10 @@ export function locationsEqual(a: TransferLocation | undefined, b: TransferLocat
   if (a.type !== b.type) return false
   if (a.type === 'savings') return a.savingsPotId === b.savingsPotId
   if (a.type === 'pot') return a.potId === b.potId
-  return true // 'personal' and 'joint' need no id — there's only ever one of each
+  // 'personal' with a personId is ANOTHER person's current account
+  // (a person-to-person transfer); without one, the owner's own.
+  if (a.type === 'personal') return (a.personId ?? '') === (b.personId ?? '')
+  return true // 'joint' needs no id — there's only ever one
 }
 
 /** A short label for a TransferLocation, e.g. for the "Savings → Joint Account" row title. Needs the live entity lists to resolve a pot/savings pot's name. */
@@ -82,10 +85,13 @@ export function transferLocationLabel(
   location: TransferLocation | undefined,
   savingsPots: { id: string; name: string }[],
   pots: { id: string; name: string }[],
+  /** Needed to name a person's current account in a person-to-person transfer. */
+  people: { id: string; name: string }[] = [],
 ): string {
   if (!location) return 'Unknown'
   switch (location.type) {
     case 'personal':
+      if (location.personId) return `${people.find((p) => p.id === location.personId)?.name ?? 'Their'}'s Current Account`
       return 'Current Account'
     case 'joint':
       return 'Joint Account'
@@ -98,6 +104,7 @@ export function transferLocationLabel(
 
 /** The same key scheme buildTransferLocationOptions below uses — lets a caller exclude/match a specific TransferLocation against an options list without re-deriving the scheme. */
 export function transferLocationKey(location: TransferLocation): string {
+  if (location.type === 'personal' && location.personId) return `personal:${location.personId}`
   return location.type === 'pot' ? `pot:${location.potId}` : location.type === 'savings' ? `savings:${location.savingsPotId}` : location.type
 }
 
@@ -142,6 +149,8 @@ export function buildTransferLocationOptions(
  */
 export function categoryForTransfer(from: TransferLocation | undefined, to: TransferLocation | undefined): string {
   if (from?.type === 'joint' || to?.type === 'joint') return TRANSFER_JOINT_CATEGORY_ID
+  // Person-to-person: household money moving between the two of you.
+  if (to?.type === 'personal' && to.personId) return TRANSFER_JOINT_CATEGORY_ID
   return SAVINGS_CATEGORY_ID
 }
 

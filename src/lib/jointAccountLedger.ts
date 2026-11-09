@@ -21,9 +21,10 @@ import { generateTransactionsForTemplate, payCycleForTemplate } from './schedule
 import { generateLoanPaymentTransactions } from './ledgerLoans'
 import { dedupeKey, horizonCycles, previousCycles, THREE_CYCLES_AHEAD, type ProjectionHorizon } from './projection'
 import { jointTransferSignedAmount, transferTouchesJoint } from './transferLedger'
-import { toLocalIsoDate as toIso, parseLocalDate } from './date'
+import { toLocalIsoDate as toIso } from './date'
 import { daysBetweenInclusive, buildDailyBalanceSeries, buildDailySpendSeries, type BalanceSpendGranularity, type BalanceSpendTrendSeries } from './runningBalance'
 import type { AppDataV2, Transaction } from '../types/ledger'
+import { countsFromDate, countsFromIso, accountOpening } from './openingBalance'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -134,11 +135,12 @@ export function computeJointAccountProjectionToDate(
 
   // Visibility floor, same rule as a personal ledger's own opening
   // balance date (projection.ts) — nothing before it is shown or counted.
-  const openingDateObj = parseLocalDate(openingBalanceDate)
+  const openingDateObj = countsFromDate(accountOpening(data.jointAccount))
+  const countsFrom = countsFromIso(accountOpening(data.jointAccount))
   const genStart = currentCycleStart > openingDateObj ? currentCycleStart : openingDateObj
 
   const stored = data.transactions.filter(
-    (t) => t.date >= openingBalanceDate && (t.location === 'joint' || t.type === 'joint_deposit' || t.type === 'joint_withdrawal' || (t.type === 'transfer' && transferTouchesJoint(t.fromLocation, t.toLocation))),
+    (t) => t.date >= countsFrom && (t.location === 'joint' || t.type === 'joint_deposit' || t.type === 'joint_withdrawal' || (t.type === 'transfer' && transferTouchesJoint(t.fromLocation, t.toLocation))),
   )
   const existingKeys = new Set(stored.map(dedupeKey).filter((k): k is string => k !== null))
 

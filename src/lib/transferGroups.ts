@@ -26,6 +26,7 @@ import { buildTransferLocationOptions, transferLocationKey, transferLocationLabe
 import { generateTransactionsForTemplate, payCycleForTemplate } from './schedule'
 import { resolveCycleBounds } from './pensionLedger'
 import { isInEditWindow } from './editWindow'
+import { transferRecipientId, templateRecipientId } from './personTransfer'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -68,7 +69,7 @@ function byDestination(items: { to: TransferLocation | undefined; amount: number
   for (const { to, amount } of items) {
     if (!to || amount <= 0) continue
     const key = transferLocationKey(to)
-    const d = map.get(key) ?? { key, label: transferLocationLabel(to, data.savingsPots, data.pots ?? []), location: to, amount: 0 }
+    const d = map.get(key) ?? { key, label: transferLocationLabel(to, data.savingsPots, data.pots ?? [], data.people), location: to, amount: 0 }
     d.amount = round2(d.amount + amount)
     map.set(key, d)
   }
@@ -94,7 +95,7 @@ export function groupTransfersByFrom(recurring: RecurringTemplate[], oneOffs: Tr
       g = {
         key,
         from: from ?? { type: 'personal' },
-        label: from ? transferLocationLabel(from, data.savingsPots, data.pots ?? []) : 'Unknown',
+        label: from ? transferLocationLabel(from, data.savingsPots, data.pots ?? [], data.people) : 'Unknown',
         recurring: [],
         oneOffs: [],
         perCycleTotal: 0,
@@ -105,8 +106,13 @@ export function groupTransfersByFrom(recurring: RecurringTemplate[], oneOffs: Tr
     return g
   }
 
-  for (const t of recurring) groupFor(t.transferFrom).recurring.push(t)
-  for (const t of oneOffs) groupFor(t.fromLocation).oneOffs.push(t)
+  // A person-to-person transfer someone ELSE sent here leaves THEIR current
+  // account, so it groups under their name, not under this device's own
+  // Current Account (lib/personTransfer.ts).
+  const fromOf = (from: TransferLocation | undefined, ownerId: string, recipient: string | null): TransferLocation | undefined =>
+    recipient && ownerId !== data.primaryPersonId ? { type: 'personal', personId: ownerId } : from
+  for (const t of recurring) groupFor(fromOf(t.transferFrom, t.ownerId, templateRecipientId({ ...t, active: true }))).recurring.push(t)
+  for (const t of oneOffs) groupFor(fromOf(t.fromLocation, t.ownerId, transferRecipientId(t))).oneOffs.push(t)
 
   for (const g of groups.values()) {
     const thisCycle = g.recurring.map((t) => ({ to: t.transferTo, amount: transferAmountThisCycle(t, data, asOf) }))

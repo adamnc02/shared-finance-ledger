@@ -201,13 +201,31 @@ export interface TransferLocation {
   type: TransferLocationType
   savingsPotId?: string // set only when type === 'savings'
   potId?: string // set only when type === 'pot'
+  /**
+   * Set only on a `'personal'` TO end, and only in a joint household: ANOTHER
+   * person's current account — a person-to-person transfer. One row, owned by
+   * the sender (`ownerId`, whose current account the FROM end is): the sender's
+   * projection books it out as for any transfer, and the recipient's
+   * projection books the same row in (lib/personTransfer.ts). Absent means the
+   * owner's own current account, as it always has. Never set on a FROM end:
+   * nobody records money taken out of someone else's account.
+   */
+  personId?: string
 }
 
 // 2026-09-14 — Transaction.location's own type: everywhere BillLocation
 // already reaches ('personal' | 'joint' | 'pot'), plus 'savings', used
 // exclusively by a savings_interest row paid into a Savings Pot. Scoped to
 // Transaction alone — see Transaction.location's own comment.
-export type TransactionLocation = BillLocation | 'savings'
+export type TransactionLocation = BillLocation | 'savings' | 'credit_card'
+
+// Where a RECURRING TEMPLATE's money lands. Bills and loans stay on
+// BillLocation; a recurring INCOME may also land straight on a savings pot
+// or a credit card (money paid in from outside the household — a refund, a
+// relative paying a card down). Those two are never 'personal', so every
+// `location === 'personal'` filter keeps them off the current account by
+// default and only the savings-pot and card engines opt in.
+export type RecurringTemplateLocation = BillLocation | 'savings' | 'credit_card'
 
 // ── Category ────────────────────────────────────────────────────────────
 // First-class entity (doc Section 3.5 / 4.1). Icon + colour live here now,
@@ -297,6 +315,14 @@ export interface Transaction {
   // interestDestination is a Savings Pot (see SavingsPot.interestDestination),
   // so it can correctly avoid ALSO counting toward the personal ledger's
   // cash balance the way a plain `location: 'personal'` row would.
+  //
+  // MONEY FROM OUTSIDE onto a savings pot or a credit card: a `type:
+  // 'income'` row with `location: 'savings'` + savingsPotId, or `location:
+  // 'credit_card'` + creditCardId. Nothing of the household's is debited.
+  // On a card it behaves exactly like an overpayment (a lump payment):
+  // it reduces the balance from its date and so every later minimum, and
+  // it is NEVER the minimum payment itself (lib/creditCards.ts
+  // cardCreditRows). On a savings pot it is a deposit.
   location: TransactionLocation
   ownerId: string // whose personal account, when location = 'personal'
 
@@ -477,7 +503,12 @@ export interface RecurringTemplate {
   // October. Absent = anchorDate's own day, as every template before this.
   // Cleared whenever anchorDate itself is edited.
   anchorDayOfMonth?: number
-  location: BillLocation
+  location: RecurringTemplateLocation
+  // Set only with location 'savings' / 'credit_card' — a recurring income
+  // from outside the household onto that savings pot or card (see
+  // Transaction.location).
+  savingsPotId?: string
+  creditCardId?: string
   ownerId: string
   payee: string
   payeeSharePercent: number
@@ -866,6 +897,8 @@ export interface PayCycleConfig {
   personId: string
   openingBalance: number
   openingBalanceDate: string // ISO date the opening balance was true as of
+  /** True when the opening balance is the balance at the END of its date — set by Rebalance, from a bank figure that already reflects that day's activity, so nothing dated on that day counts against it. Absent/false: the balance is as at the START of its date, and that day's transactions count (account setup). Any other edit that changes the opening balance or date clears it. Read through `countsFrom` (lib/openingBalance.ts), never directly. */
+  openingExcludesDate?: boolean
   /**
    * How far below zero this account may go — a POSITIVE number, where `0` means no overdraft at
    * all (Adam, 2026-09-22: *"if 0, assume no overdraft"*). `500` means the floor is −£500.
@@ -1344,6 +1377,8 @@ export interface SavingsPot {
   name: string
   openingBalance: number
   openingDate: string // ISO date — see file header; nothing before this date is ever considered
+  /** True when the opening balance is the balance at the END of its date — set by Rebalance, from a bank figure that already reflects that day's activity, so nothing dated on that day counts against it. Absent/false: the balance is as at the START of its date, and that day's transactions count (account setup). Any other edit that changes the opening balance or date clears it. Read through `countsFrom` (lib/openingBalance.ts), never directly. */
+  openingExcludesDate?: boolean
   active: boolean
 
   // Drawn from SHARED_CARD_COLORS, assigned round-robin on creation
@@ -1481,6 +1516,8 @@ export interface Pot {
   name: string
   openingBalance: number
   openingDate: string // ISO date — nothing before this date is ever considered, same rule as SavingsPot.openingDate
+  /** True when the opening balance is the balance at the END of its date — set by Rebalance, from a bank figure that already reflects that day's activity, so nothing dated on that day counts against it. Absent/false: the balance is as at the START of its date, and that day's transactions count (account setup). Any other edit that changes the opening balance or date clears it. Read through `countsFrom` (lib/openingBalance.ts), never directly. */
+  openingExcludesDate?: boolean
   active: boolean
   /**
    * How far below zero this account may go — a POSITIVE number, where `0` means no overdraft at
@@ -1738,6 +1775,8 @@ export interface SummaryDeckCard {
 export interface JointAccountConfig {
   openingBalance: number
   openingBalanceDate: string // ISO date
+  /** Same as PayCycleConfig.openingExcludesDate. */
+  openingExcludesDate?: boolean
   /**
    * How far below zero this account may go — a POSITIVE number, where `0` means no overdraft at
    * all (Adam, 2026-09-22: *"if 0, assume no overdraft"*). `500` means the floor is −£500.

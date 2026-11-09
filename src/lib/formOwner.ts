@@ -21,8 +21,9 @@
 // the primary person.
 
 import type { BillLocation } from '../types/models'
+import type { RecurringTemplateLocation } from '../types/ledger'
 
-export function formOwnerId(initial: { location?: BillLocation; ownerId?: string } | undefined, primaryPersonId: string): string {
+export function formOwnerId(initial: { location?: BillLocation | RecurringTemplateLocation; ownerId?: string } | undefined, primaryPersonId: string): string {
   if (!initial) return primaryPersonId
   if (initial.location === 'joint') return primaryPersonId // a standby, see above
   return initial.ownerId ? initial.ownerId : primaryPersonId

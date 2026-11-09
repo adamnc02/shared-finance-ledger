@@ -3230,3 +3230,93 @@ never wrap, the never-collapsing ledger, the swipe capture), `verify-bill-summar
 `verify-recurring-summary.ts` and `verify-overpayment-summary.ts`. The phone layout is checked by
 screenshot: build the previous `main` and the branch, and compare every page at 390px pixel for pixel —
 after `document.fonts.ready`, or font-loading timing reads as a difference.
+
+---
+
+## 49. Rebalance at the end of a day, money paid in from outside, person-to-person transfers
+
+### An opening balance at the END of its date (`lib/openingBalance.ts`)
+
+Every account ledger counts from its opening balance: `t.date >= openingDate`. Rebalance types the
+bank's figure, which already reflects everything that cleared that day, so counting that day again
+applied it twice. `openingExcludesDate: true` (on `PayCycleConfig`, `SavingsPot`, `Pot` and
+`JointAccountConfig`) means the balance is as at the **end** of its date; the ledgers count from
+`countsFrom` — the day after — via `potOpening()`, `accountOpening()` and `countsFromDate()`.
+Covered: `projection.ts` (stored filter and range start), `potLedger.ts`, `savingsPotLedger.ts`,
+`jointAccountLedger.ts`, `autoClear.ts` (three floors) and `salaryLedger.ts`' closed paydays.
+
+- Only Rebalance sets the flag (`RebalanceAccountsModal` → `openingExcludesDate: true`). Setting an
+  account up, or editing its opening balance in settings, still counts its own day: a deposit on the
+  opening day must count. `applyOpeningEdit()` clears the flag when any other edit changes the
+  balance or the date. **The trap:** changing `>=` to `>` everywhere breaks account creation.
+- Savings interest walks still start from `pot.openingDate`: interest accrues on the balance from that
+  date whichever end of the day it was taken at.
+- Labels read "end of <date>" when the flag is set.
+
+Check: `verify-rebalance-excludes-date.ts` (control: an un-flagged opening still counts its day).
+
+### The sign of an opening balance (`components/NumberInput.tsx`)
+
+`allowNegative` draws a **+ / −** toggle beside the box and keeps `inputMode="decimal"`: iOS's
+decimal and numeric pads have no minus key, and the only inputMode with one is the full keyboard.
+The box holds the amount; the toggle holds the sign; `onChange` receives the signed text. A minus
+typed or pasted flips the toggle. The input precedes the toggle in the DOM (drawn after it with
+`order-first`) because a wrapping `<label>` focuses its first labelable child, and a button is one.
+Opted in: Rebalance, pay-cycle settings and setup, the joint account, a new pot and the Coin Jar. Not
+a savings pot's opening balance, and never an overdraft (a negative overdraft inverts the alert
+floor). Check: `verify-number-input.ts`, both directions.
+
+### Money paid in from outside onto a card or savings pot (`lib/outsideIncome.ts`)
+
+An `income` transaction or recurring template with `location: 'credit_card'` (+ `creditCardId`) or
+`location: 'savings'` (+ `savingsPotId`) is money that arrived there from outside the household — a
+refund, someone else paying the card. It is **an overpayment with an external source**: not a refund
+type, and not a minimum payment.
+
+- **Card.** `withCardCredits()` / `cardActivity()` hand the card engine those rows (and future
+  template occurrences, which `generateMinimumPaymentTransactions` cannot otherwise see) as
+  payments. `cardBalanceAsOf`, `windowBalance`, `paymentsBetweenCloseAndRangeStart`,
+  `pendingLumpPayments` and `totalPaidForCard` count them; the cycle sections list them with
+  `sourceType: 'outside_income'` (display only). Every card caller passes `cardActivity(data)`.
+- **Savings.** `savingsPotActivityDelta`, the interest daily-balance walk and
+  `generateSavingsDepositTransactions` count them as deposits.
+- **Nothing of the household's is debited.** The location is new rather than a marker on
+  `'personal'`, so every `location === 'personal'` filter excludes it by default and only the card
+  and savings engines opt in. **The trap:** reusing `credit_card_payment` with no `sourceType` would
+  make it the minimum payment (APP-KNOWLEDGE §1.15) and debit the current account.
+- `autoClear.ts` Step 4b materialises the templates from the target's floor. Deleting the card or pot
+  drops its templates (`deleteReassign.ts`, `reconcilePersonReferences`).
+- The forms offer the savings pots and "Credit Card: name" for **income** only, and skip the
+  payment-method step. `RecurringTemplate.location` is `RecurringTemplateLocation`; `bills.ts`'
+  `billLocation()` narrows it back for bill-only code.
+
+Check: `verify-external-money-in.ts` (the minimums equal the same amount logged as a lump payment).
+
+### Person-to-person transfers (`lib/personTransfer.ts`)
+
+One transfer row, owned by the sender: `fromLocation {type:'personal'}`, `toLocation {type:'personal',
+personId: <recipient>}`. Offered in the **To** list only when From is your own Current Account and
+there are two people (`personTransferOptions`). No mirrored pair, so nothing can drift.
+
+- The recipient's projection takes the sender's rows and templates through `asIncoming()`, dated by
+  the template owner's pay cycle (`payCycleForTemplate`, APP-KNOWLEDGE §1.31c).
+- Visibility: a transfer naming you as recipient is yours to see, edit and delete. The sender sees
+  **Sent**, the recipient **Received**; `transferGroups` files it under the sender on the
+  recipient's device. Labels pass `people` (`transferLocationLabel`, statement).
+- `locationsEqual` and `transferLocationKey` (`personal:<id>`) include `personId`;
+  `categoryForTransfer` gives the joint-transfer category. Household's combined figures do not move.
+- A dangling recipient falls back to the sender's own account (`reconcilePersonReferences`).
+
+Check: `verify-person-transfer.ts`.
+
+### The sync columns
+
+Migration `20261109120000` adds `opening_excludes_date` (pots, savings_pots, pay_cycles,
+joint_account), `recurring_templates.savings_pot_id / credit_card_id / transfer_to_person_id` and
+`transactions.to_person_id`, and widens `transactions.location` (+`credit_card`) and
+`recurring_templates.location` (+`savings`, `credit_card`). The ids are plain text, never foreign
+keys: deletes upload child-tables-first, so an FK would reject a card's or person's delete with a
+23503, which the connector discards. `transferUp/transferDown` carry `personId` on a TO end only. The
+migration must be applied before this build uploads (MIGRATION-LESSONS §34: an unknown column is retried forever; a
+location the CHECK does not allow is a 23514, discarded). The ledger-alerts bundle (`_engine.js`)
+carries the same mapping and is redeployed with it. Check: `verify-outside-money-person-transfer-sync.ts`.

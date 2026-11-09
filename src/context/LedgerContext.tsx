@@ -29,6 +29,7 @@ import { defaultLedgerData, defaultPayCycleConfig } from '../lib/ledgerStorage'
 import { isPromiseLike, type LedgerStore } from '../lib/store/LedgerStore'
 import { localStorageLedgerStore } from '../lib/store/localStorageLedgerStore'
 import { createCategory, removeCategorySafely } from '../lib/categories'
+import { applyOpeningEdit } from '../lib/openingBalance'
 import { recordCreditCardSpend, recordCreditCardLumpPayment, pickNextSharedCardColor } from '../lib/creditCards'
 import { applyLoanOverpayment, settleLoan, calibrateLoanFromStatementLines, reassignLoanRecurringOverpaymentTransactions, type CalibrationResult } from '../lib/ledgerLoans'
 import { autoClearDuePayments } from '../lib/autoClear'
@@ -82,8 +83,11 @@ interface AdHocInput {
    * 'income' correctly on those ledgers, since only always-'out' types
    * (bill_payment/loan_payment) ever reached that fallback before.
    */
-  location?: 'joint' | 'pot'
+  location?: 'joint' | 'pot' | 'savings' | 'credit_card'
   potId?: string
+  /** INCOME only, paid in from outside (lib/outsideIncome.ts): with location 'savings' / 'credit_card'. */
+  savingsPotId?: string
+  creditCardId?: string
   /** PROMPT-13 B1a — this one entry opts out of rounding. Undefined/false = round it, per the switch. */
   roundUpSkipped?: boolean
 }
@@ -289,7 +293,7 @@ interface LedgerContextValue {
   // Upserts AppDataV2.jointAccount — used both by the non-dismissable
   // first-time setup flow (JointAccountSetupModal) and by the Wallet
   // page's own "edit" affordance once it exists.
-  setJointAccountOpening: (openingBalance: number, openingBalanceDate: string, overdraftAmount?: number) => void
+  setJointAccountOpening: (openingBalance: number, openingBalanceDate: string, overdraftAmount?: number, openingExcludesDate?: boolean) => void
   // Hand-logged from the Transactions page's "Joint" pill — two-sided
   // bookkeeping, same shape as logSavingsDeposit/logSavingsWithdrawal:
   // one call materializes the real Transaction that both the depositing
@@ -465,6 +469,9 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
       type: input.type,
       location: input.location ?? 'personal',
       potId: input.location === 'pot' ? input.potId : undefined,
+      // Money paid in from outside straight onto a savings pot or a card.
+      savingsPotId: input.type === 'income' && input.location === 'savings' ? input.savingsPotId : undefined,
+      creditCardId: input.type === 'income' && input.location === 'credit_card' ? input.creditCardId : undefined,
       ownerId: input.personId,
       personId: input.type === 'income' ? input.personId : undefined,
       note: input.note,
@@ -881,7 +888,7 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
     setDataState((prev) => {
       const exists = prev.payCycles.some((pc) => pc.personId === personId)
       const payCycles = exists
-        ? prev.payCycles.map((pc) => (pc.personId === personId ? { ...pc, ...updates } : pc))
+        ? prev.payCycles.map((pc) => (pc.personId === personId ? applyOpeningEdit(pc, updates, 'openingBalanceDate') : pc))
         : [...prev.payCycles, { ...defaultPayCycleConfig(personId), ...updates }]
       return { ...prev, payCycles }
     })
@@ -960,7 +967,7 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
     return id
   }
   const updateSavingsPot: LedgerContextValue['updateSavingsPot'] = (id, updates) => {
-    setDataState((prev) => ({ ...prev, savingsPots: prev.savingsPots.map((p) => (p.id === id ? { ...p, ...updates } : p)) }))
+    setDataState((prev) => ({ ...prev, savingsPots: prev.savingsPots.map((p) => (p.id === id ? applyOpeningEdit(p, updates, 'openingDate') : p)) }))
   }
   const removeSavingsPot: LedgerContextValue['removeSavingsPot'] = (id) => {
     setDataState((prev) => removeSavingsPotFromData(prev, id))
@@ -1152,7 +1159,7 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
     setDataState((prev) => removePensionFromData(prev, id))
   }
 
-  const setJointAccountOpening: LedgerContextValue['setJointAccountOpening'] = (openingBalance, openingBalanceDate, overdraftAmount) => {
+  const setJointAccountOpening: LedgerContextValue['setJointAccountOpening'] = (openingBalance, openingBalanceDate, overdraftAmount, openingExcludesDate) => {
     setDataState((prev) => ({
       ...prev,
       // The overdraft survives a re-setup of the opening balance: it is a fact
@@ -1160,7 +1167,11 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
       // The overdraft survives a re-setup of the opening balance when the
       // caller does not pass one — it is a fact about the account, not about
       // the reconciliation point. First-time setup (AppGuards) passes none.
-      jointAccount: { openingBalance, openingBalanceDate, overdraftAmount: overdraftAmount ?? prev.jointAccount?.overdraftAmount ?? 0 },
+      // openingExcludesDate: Rebalance passes true; any other caller that
+      // changes the balance or date clears it (applyOpeningEdit).
+      jointAccount: prev.jointAccount
+        ? applyOpeningEdit(prev.jointAccount, { openingBalance, openingBalanceDate, overdraftAmount: overdraftAmount ?? prev.jointAccount.overdraftAmount ?? 0, ...(openingExcludesDate !== undefined ? { openingExcludesDate } : {}) }, 'openingBalanceDate')
+        : { openingBalance, openingBalanceDate, overdraftAmount: overdraftAmount ?? 0, ...(openingExcludesDate ? { openingExcludesDate } : {}) },
     }))
   }
 
@@ -1231,7 +1242,7 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
     return id
   }
   const updatePot: LedgerContextValue['updatePot'] = (id, updates) => {
-    setDataState((prev) => ({ ...prev, pots: prev.pots.map((p) => (p.id === id ? { ...p, ...updates } : p)) }))
+    setDataState((prev) => ({ ...prev, pots: prev.pots.map((p) => (p.id === id ? applyOpeningEdit(p, updates, 'openingDate') : p)) }))
   }
   const removePot: LedgerContextValue['removePot'] = (id) => {
     setDataState((prev) => {

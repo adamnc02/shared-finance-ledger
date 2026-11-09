@@ -298,7 +298,10 @@ check('Month 2 (after the repayment): 5% of the balance after month 1\'s payment
 check('Month 3 continues compounding from the post-repayment balance', withRepayment[2].amount, round2((month2StartingBalance - withRepayment[1].amount) * 0.05))
 
 // A lump payment dated AFTER the horizon being generated must not be applied early.
-const farFutureDateIso = `${lumpGenStart.getFullYear() + 1}-01-15`
+// Derived from lumpGenEnd, never a fixed day: "15 January next year" falls INSIDE
+// the generated range whenever this runs in November or December.
+const dayAfterRange = new Date(lumpGenEnd.getFullYear(), lumpGenEnd.getMonth(), lumpGenEnd.getDate() + 1)
+const farFutureDateIso = `${dayAfterRange.getFullYear()}-${String(dayAfterRange.getMonth() + 1).padStart(2, '0')}-${String(dayAfterRange.getDate()).padStart(2, '0')}`
 const { updatedCard: cardWithFarFutureRepayment } = recordCreditCardLumpPayment(compoundingCard, 100, farFutureDateIso)
 const beforeThatRepayment = generateMinimumPaymentTransactions(cardWithFarFutureRepayment, lumpGenStart, lumpGenEnd)
 check('A lump payment dated after the generated range does not affect any of these months', beforeThatRepayment.map((t) => t.amount), noRepaymentForSameWindow.map((t) => t.amount))

@@ -94,7 +94,7 @@ export function JointAccountSetupModal({
         </p>
 
         <div className="flex flex-col gap-3">
-          <EditField label="Opening balance (£)" type="number" value={openingBalance} onChange={setOpeningBalance} />
+          <EditField label="Opening balance (£)" type="number" allowNegative value={openingBalance} onChange={setOpeningBalance} />
           <EditField label="As of date" type="date" value={openingBalanceDate} onChange={setOpeningBalanceDate} />
           <EditField label="Overdraft (£)" type="number" value={overdraft} onChange={setOverdraft} />
         </div>

@@ -15,7 +15,7 @@
 
 import { addDays } from 'date-fns'
 import { nanoid } from 'nanoid'
-import { generateTransactionsForTemplate } from './schedule'
+import { generateTransactionsForTemplate, payCycleForTemplate } from './schedule'
 import { generateLoanPaymentTransactions, resolveRecurringOverpaymentSource } from './ledgerLoans'
 import { generateMinimumPaymentTransactions } from './creditCards'
 import { generateSalaryTransactions } from './salaryLedger'
@@ -27,8 +27,11 @@ import { isLedgerTransaction, signedAmount, daysBetweenInclusive, buildDailyBala
 import type { AppDataV2, PayCycleConfig, Transaction } from '../types/ledger'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
-import { toLocalIsoDate as toIso, parseLocalDate } from './date'
+import { toLocalIsoDate as toIso } from './date'
 import { coinJarForOwner, roundRecurringOccurrences } from './roundUp'
+import { countsFromDate, countsFromIso, accountOpening } from './openingBalance'
+import { cardActivity } from './outsideIncome'
+import { transferRecipientId, templateRecipientId, asIncoming } from './personTransfer'
 
 export type ProjectionHorizon = 'current_cycle' | 'three_cycles'
 
@@ -222,7 +225,12 @@ export function computeProjectionToDate(
   // unaffected and lands in cleared exactly as before, which is the
   // ordinary case — log a loan today, overpay it in a fortnight, and it
   // clears normally.
-  const stored = data.transactions.filter((t) => t.location === 'personal' && t.ownerId === personId && t.date >= payCycle.openingBalanceDate)
+  const stored = [
+    ...data.transactions.filter((t) => t.location === 'personal' && t.ownerId === personId && t.date >= countsFromIso(accountOpening(payCycle))),
+    // A person-to-person transfer INTO this person's account: the sender owns
+    // the one row; here it is the same money arriving (lib/personTransfer.ts).
+    ...data.transactions.filter((t) => transferRecipientId(t) === personId && t.date >= countsFromIso(accountOpening(payCycle))).map(asIncoming),
+  ]
   const existingKeys = new Set(stored.map(dedupeKey).filter((k): k is string => k !== null))
 
   // Generation starts from the CURRENT cycle's start, not from asOfDate —
@@ -232,7 +240,8 @@ export function computeProjectionToDate(
   // Never generate anything before the opening balance date either, for
   // the same visibility-floor reason `stored` is filtered above.
   const cycleStart = resolveCycleBounds(data, personId, asOfDate).start
-  const rangeStart = cycleStart > parseLocalDate(payCycle.openingBalanceDate) ? cycleStart : parseLocalDate(payCycle.openingBalanceDate)
+  const countsFrom = countsFromDate(accountOpening(payCycle))
+  const rangeStart = cycleStart > countsFrom ? cycleStart : countsFrom
 
   const generated: Omit<Transaction, 'id'>[] = []
   for (const template of data.recurringTemplates.filter((t) => t.location === 'personal' && t.ownerId === personId)) {
@@ -244,6 +253,12 @@ export function computeProjectionToDate(
     // its date (roundRecurringOccurrences). `payCycle` is this person's, and the
     // loop only takes templates they own, so the switch and the jar are the owner's.
     generated.push(...roundRecurringOccurrences(generateTransactionsForTemplate(template, rangeStart, horizonEndDate, payCycle), payCycle, coinJarForOwner(data.pots ?? [], personId)?.id))
+  }
+  // Recurring person-to-person transfers INTO this person's account. Dated by
+  // the SENDER's pay cycle (a followsPayday transfer follows its owner's
+  // payday, APP-KNOWLEDGE §1.31c), counted from this person's own floor.
+  for (const template of data.recurringTemplates.filter((t) => templateRecipientId(t) === personId)) {
+    generated.push(...generateTransactionsForTemplate(template, rangeStart, horizonEndDate, payCycleForTemplate(template, data.payCycles, data.primaryPersonId)).map(asIncoming))
   }
   // UAT 2026-09-09 (ed-overpay-just-single) — pre-filtering loans by
   // `l.location === 'personal'` alone missed the REVERSE case from the
@@ -275,7 +290,7 @@ export function computeProjectionToDate(
     // card actually owes.
     // Personal rows only: a pot-funded minimum payment (CreditCard.location)
     // is internal to the pot, same as a pot-funded loan payment.
-    generated.push(...generateMinimumPaymentTransactions(card, rangeStart, horizonEndDate, data.transactions).filter((t) => t.location === 'personal'))
+    generated.push(...generateMinimumPaymentTransactions(card, rangeStart, horizonEndDate, cardActivity(data, horizonEndDate)).filter((t) => t.location === 'personal'))
   }
   if (person) {
     generated.push(...generateSalaryTransactions(person, payCycle, rangeStart, horizonEndDate))

@@ -20,7 +20,8 @@
 // is needed going forward.
 
 import type { BillLocation } from '../types/models'
-import type { AppDataV2, Transaction } from '../types/ledger'
+import type { AppDataV2, RecurringTemplateLocation, Transaction } from '../types/ledger'
+import { billLocation } from './bills'
 
 /**
  * Rewrites every stored Transaction matching (sourceType, sourceId) and
@@ -94,13 +95,16 @@ export function applyCreditCardLocationChange(data: AppDataV2, cardId: string, l
 
 /** Builds the locationHistory entry to append for the value being superseded — mirrors applyTemplateAmountChange's identical "prior value, falling back to the anchor date the first time this is ever changed" shape. */
 export function priorLocationEntry(current: {
-  location: BillLocation
+  // Wider than BillLocation only because a RecurringTemplate's is; a template
+  // relocated by these flows is always a bill or a recurring expense/income on
+  // personal / joint / pot (billLocation narrows).
+  location: RecurringTemplateLocation
   potId?: string
   locationEffectiveFrom?: string
 }, fallbackDate: string): { effectiveFrom: string; location: BillLocation; potId?: string } {
   return {
     effectiveFrom: current.locationEffectiveFrom ?? fallbackDate,
-    location: current.location,
+    location: billLocation(current.location),
     potId: current.potId,
   }
 }

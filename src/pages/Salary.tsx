@@ -1952,8 +1952,9 @@ function PotForm({
       {kind === 'existing' && (
         <div className="grid grid-cols-2 gap-3 mt-3">
           <Field label="Opening balance (£)">
+            {/* A pot can be opened already below zero (it has an overdraft). */}
             <NumberInput
-              inputMode="decimal"
+              allowNegative
               value={openingBalance || ''}
               onChange={(v) => setOpeningBalance(Number(v) || 0)}
               className="w-full bg-transparent border-b border-[var(--color-track)] py-1 text-[var(--color-ink)] outline-none font-mono"
@@ -2202,9 +2203,8 @@ export function PotEditForm({
         {pot.isCoinJar && (
           <>
             <Field label="Opening balance (£)">
-              {/* PROMPT-13 Part C — `allowNegative`: a jar can legitimately
-                  be reconciled below zero, and on iOS the decimal keypad
-                  has no minus key without it. */}
+              {/* `allowNegative`: a jar can legitimately be reconciled below
+                  zero; the field's + / − toggle gives it its sign. */}
               <NumberInput
                 allowNegative
                 value={openingBalance}
@@ -2450,7 +2450,7 @@ function PotRow({
         {isOpen && (
           <RowSheet title={pot.name} subtitle={`Pot · £${formatCurrency(balance)}`} onClose={onToggle}>
             <p className="text-xs text-[var(--color-ink-muted)] mb-3">
-              £{formatCurrency(pot.openingBalance)} opening ({formatFullDate(pot.openingDate)})
+              £{formatCurrency(pot.openingBalance)} opening ({pot.openingExcludesDate ? 'end of ' : ''}{formatFullDate(pot.openingDate)})
               {netActivity !== 0 ? ` · ${netActivity > 0 ? '+' : '-'}£${formatCurrency(Math.abs(netActivity))} since` : ''}
               {nextDeposit ? ` · next deposit ${nextDeposit.date}` : ''}
             </p>
@@ -2504,7 +2504,7 @@ function PotRow({
                 {people.length > 1 && <span className="text-xs text-[var(--color-ink-muted)] shrink-0">{owner?.name ?? 'Unknown'}</span>}
               </div>
               <p className="text-xs text-[var(--color-ink-muted)] mt-0.5">
-                £{formatCurrency(pot.openingBalance)} opening ({formatFullDate(pot.openingDate)})
+                £{formatCurrency(pot.openingBalance)} opening ({pot.openingExcludesDate ? 'end of ' : ''}{formatFullDate(pot.openingDate)})
                 {netActivity !== 0 ? ` · ${netActivity > 0 ? '+' : '-'}£${formatCurrency(Math.abs(netActivity))} since` : ''}
               </p>
               <p className="text-xs text-[var(--color-ink-muted)] mt-0.5">
@@ -3701,7 +3701,7 @@ export function Salary() {
                     onSaved={triggerJointFlash}
                   />
                   <button onClick={() => setEditingJointAccount(true)} className="self-start h-9 px-3.5 rounded-full text-xs font-semibold text-[var(--color-ink)]" style={{ background: 'var(--color-surface-raised)' }}>
-                    Opening balance: £{formatCurrency(data.jointAccount.openingBalance)} on {formatFullDate(data.jointAccount.openingBalanceDate)}
+                    Opening balance: £{formatCurrency(data.jointAccount.openingBalance)} {data.jointAccount.openingExcludesDate ? 'at the end of' : 'on'} {formatFullDate(data.jointAccount.openingBalanceDate)}
                   </button>
                 </div>
               </RowSheet>
@@ -3720,7 +3720,7 @@ export function Salary() {
             <button onClick={() => setEditingJointAccount(true)} className="w-full flex items-center justify-between text-left">
               <div>
                 <p className="text-sm font-medium text-[var(--color-ink)]">£{formatCurrency(data.jointAccount.openingBalance)} opening balance</p>
-                <p className="text-xs text-[var(--color-ink-muted)]">as of {formatFullDate(data.jointAccount.openingBalanceDate)}</p>
+                <p className="text-xs text-[var(--color-ink-muted)]">as of {data.jointAccount.openingExcludesDate ? 'the end of ' : ''}{formatFullDate(data.jointAccount.openingBalanceDate)}</p>
               </div>
               <OpensSheetIcon />
             </button>
@@ -3870,10 +3870,12 @@ export function Salary() {
               onSave={(results) => {
                 for (const { key, amount, date } of results) {
                   const [kind, id] = key.split(':')
-                  if (kind === 'pot') updatePot(id, { openingBalance: amount, openingDate: date })
-                  else if (kind === 'savingsPot') updateSavingsPot(id, { openingBalance: amount, openingDate: date })
-                  else if (kind === 'joint') setJointAccountOpening(amount, date)
-                  else if (kind === 'personal') updatePayCycle(id, { openingBalance: amount, openingBalanceDate: date })
+                  // openingExcludesDate: the figure is the bank's balance at the END of
+                  // `date`, so nothing dated that day counts against it (lib/openingBalance.ts).
+                  if (kind === 'pot') updatePot(id, { openingBalance: amount, openingDate: date, openingExcludesDate: true })
+                  else if (kind === 'savingsPot') updateSavingsPot(id, { openingBalance: amount, openingDate: date, openingExcludesDate: true })
+                  else if (kind === 'joint') setJointAccountOpening(amount, date, undefined, true)
+                  else if (kind === 'personal') updatePayCycle(id, { openingBalance: amount, openingBalanceDate: date, openingExcludesDate: true })
                 }
                 setRebalancing(false)
               }}
@@ -4606,13 +4608,10 @@ export function PayCycleSettingsModal({
             </>
           )}
           <Field label="Opening balance (£)">
-            {/* PROMPT-13 Part C — the exact field Adam could not type
-                −380.39 into on 2026-09-20 setting Ella up, and had to fix
-                with a direct UPDATE on pay_cycles. An opening balance
-                legitimately takes a minus: the account is overdrawn.
-                Nothing here ever clamped it — `Number(...)` below is
-                unclamped and there is no min="0" — the blocker was purely
-                that iOS's decimal keypad has no minus key. */}
+            {/* An opening balance legitimately takes a minus: the account is
+                overdrawn. `allowNegative` gives the field a + / − toggle
+                (iOS's decimal pad has no minus key); `Number(...)` below
+                is unclamped. */}
             <NumberInput
               allowNegative
               value={draftOpeningBalance}

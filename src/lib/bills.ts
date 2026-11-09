@@ -1,5 +1,6 @@
 import type { Bill } from '../types/models'
-import type { RecurringTemplate } from '../types/ledger'
+import type { RecurringTemplate, RecurringTemplateLocation } from '../types/ledger'
+import type { BillLocation } from '../types/models'
 
 /**
  * A RecurringTemplate is only a BILL when its `kind` says so. `kind` is
@@ -22,6 +23,16 @@ import type { RecurringTemplate } from '../types/ledger'
  * every kind counted, since a transfer out of the current account really
  * does reduce what's available to spend (confirmed 2026-09-20).
  */
+/**
+ * A bill's location as the bill-only helpers type it. Bills (`isBillTemplate`)
+ * are only ever personal / joint / pot; 'savings' and 'credit_card' belong to a
+ * recurring INCOME paid in from outside (RecurringTemplateLocation), which the
+ * Bills page never lists. Falls back to 'personal' only to satisfy the type.
+ */
+export function billLocation(location: RecurringTemplateLocation): BillLocation {
+  return location === 'savings' || location === 'credit_card' ? 'personal' : location
+}
+
 export function isBillTemplate(t: RecurringTemplate): boolean {
   return (t.kind ?? 'bill') === 'bill'
 }

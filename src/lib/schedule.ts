@@ -371,7 +371,9 @@ export function generateTransactionsForTemplate(
       // end — same convention as creditCardId/savingsPotId being set
       // only on the transaction types that need them.
       potId: isTransferKind ? (fromLoc?.type === 'pot' ? fromLoc.potId : toLoc?.type === 'pot' ? toLoc.potId : undefined) : template.location === 'pot' ? template.potId : undefined,
-      savingsPotId: isTransferKind ? (fromLoc?.type === 'savings' ? fromLoc.savingsPotId : toLoc?.type === 'savings' ? toLoc.savingsPotId : undefined) : undefined,
+      savingsPotId: isTransferKind ? (fromLoc?.type === 'savings' ? fromLoc.savingsPotId : toLoc?.type === 'savings' ? toLoc.savingsPotId : undefined) : template.location === 'savings' ? template.savingsPotId : undefined,
+      // A recurring income paid in from outside straight onto a card.
+      creditCardId: !isTransferKind && template.location === 'credit_card' ? template.creditCardId : undefined,
       fromLocation: fromLoc,
       toLocation: toLoc,
       followsPayday: isTransferKind ? template.followsPayday : undefined,

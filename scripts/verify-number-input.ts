@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { display as shownInBox, withSign } from '../src/components/NumberInput'
 // REPORTED: "Amount input fields do not clear completely in most places
 // in the app — when deleting all numbers the input field leaves a leading
 // zero which is really hard to clear."
@@ -150,13 +151,22 @@ const numberInput = readFile('src/components/NumberInput.tsx')
 const editField = readFile('src/components/EditField.tsx')
 const salary = readFile('src/pages/Salary.tsx')
 
-// The mechanism: inputMode is what picks the keypad, and only 'text' has
-// a minus key. `type="number"` still governs what is ACCEPTED, so this
-// widens the keyboard without widening the field.
+// The mechanism: a "+ / −" toggle beside the box supplies the sign, and
+// the box keeps the decimal pad. The full keyboard (inputMode "text", the
+// only iOS pad with a minus key) is never shown for a number.
 check('NumberInput takes an allowNegative opt-in', numberInput.includes('allowNegative'), true)
-check('...which switches inputMode to one with a minus key', numberInput.includes("inputMode={allowNegative ? 'text' : (rest.inputMode ?? 'decimal')}"), true)
-check('...and defaults to the decimal pad when not opted in', numberInput.includes("rest.inputMode ?? 'decimal'"), true)
+check('...and never switches to the full keyboard for it', numberInput.includes("inputMode={allowNegative ? 'text'"), false)
+check('...every number field keeps the decimal pad', numberInput.includes("inputMode={rest.inputMode ?? 'decimal'}"), true)
+check('...the opt-in draws a + / − toggle', numberInput.includes("signButton('+', !negative)") && numberInput.includes("signButton('−', negative)"), true)
+check('...after the input in the DOM, so a wrapping label still focuses the input', numberInput.indexOf('{input}</div>') < numberInput.indexOf('role="group"'), true)
 check('EditField passes it through, so every numeric EditField can opt in', editField.includes('allowNegative={allowNegative}'), true)
+
+// The sign logic itself: the box holds the amount, the toggle the sign.
+check('"−" with 380.39 typed sends -380.39', withSign('380.39', true), '-380.39')
+check('"+" with 380.39 typed sends 380.39', withSign('380.39', false), '380.39')
+check('"−" on an empty box sends empty (reads 0), never a bare "-"', withSign('', true), '')
+check('a stored -380.39 shows 380.39 in the box (the toggle shows −)', shownInBox(-380.39, true), '380.39')
+check('CONTROL: an unsigned field still shows a stored minus as typed', shownInBox(-5), '-5')
 
 // Parsing was never the problem, but pin it: a minus must survive the
 // same path a positive takes, and an empty field must still read 0.
@@ -170,10 +180,17 @@ check('an empty field still reads 0, not NaN', parseTyped(''), 0)
 // Counted as a bare PROP on its own line, so the prose mentioning it in
 // a nearby comment is not miscounted as a fourth opted-in field.
 const optedIn = salary.split('\n').filter((l) => l.trim() === 'allowNegative').length
-check('exactly three fields in Salary.tsx opt in', optedIn, 3)
+check('exactly four fields in Salary.tsx opt in', optedIn, 4)
 check('...the pay-cycle settings opening balance (Adam’s own case)', salary.includes('value={draftOpeningBalance}') && salary.includes('allowNegative'), true)
 check('...the salary setup form’s opening balance', salary.includes('value={openingBalance}'), true)
 check('...and the Coin Jar’s editable opening balance (B5)', salary.includes('value={openingBalance}\n                onChange={setOpeningBalance}'), true)
+const potCreate = salary.slice(salary.indexOf("placeholder=\"e.g. Bills\""), salary.indexOf("placeholder=\"e.g. Bills\"") + 900)
+check('...and a new pot’s opening balance', /allowNegative\s*\n\s*value=\{openingBalance \|\| ''\}/.test(potCreate), true)
+const savingsOpening = salary.slice(salary.indexOf('key="opening-balance"'), salary.indexOf('key="opening-date"'))
+check('CONTROL: a savings pot’s opening balance does NOT opt in', savingsOpening.length > 0 && !savingsOpening.includes('allowNegative'), true)
+const joint = readFile('src/components/JointAccountSetupModal.tsx')
+check('the joint account’s opening balance opts in', /label="Opening balance \(£\)"[^\n]*allowNegative/.test(joint), true)
+check('CONTROL: the joint account’s overdraft does NOT', /label="Overdraft \(£\)"[^\n]*allowNegative/.test(joint), false)
 
 // THE CONTROL — the fields that must still refuse a minus. Each is a
 // NumberInput in the same file that does NOT opt in.
@@ -186,6 +203,15 @@ check('CONTROL: the cycle-start-day field does NOT opt in', cycleField.includes(
 // into a day-of-month field is clamped away by the call site regardless.
 check('CONTROL: a minus typed into the payday field still clamps to 1', clampDay('-5'), 1)
 check('CONTROL: a minus in a split percent still clamps to 0', clampPercent('-20'), 0)
+
+// REBALANCE. The modal sets a new opening balance from the bank's figure,
+// and an overdrawn account's figure is negative. Without the opt-in the
+// iPhone decimal pad offers no minus key, so the real balance cannot be
+// typed at all.
+const rebalance = readFile('src/components/RebalanceAccountsModal.tsx')
+const rebalanceBalanceField = rebalance.split('\n').find((l) => l.includes('label="New opening balance (£)"')) ?? ''
+check('Rebalance: the new-opening-balance field opts in to a minus', rebalanceBalanceField.includes('allowNegative'), true)
+check('CONTROL: ...and the line read is that field, not a missing one', rebalanceBalanceField.includes('type="number"'), true)
 
 console.log(failures === 0 ? '\nAll number-input checks passed.' : `\n${failures} number-input check(s) failed.`)
 if (failures > 0) process.exit(1)

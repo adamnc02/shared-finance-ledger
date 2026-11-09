@@ -1,6 +1,5 @@
 import type { AppData, Person as LegacyPerson } from '../types/models'
-import type { BillLocation } from '../types/models'
-import type { AppDataV2, Pension, Person, RecurringTemplate, Transaction, TransferLocation } from '../types/ledger'
+import type { AppDataV2, Pension, Person, RecurringTemplate, RecurringTemplateLocation, Transaction, TransferLocation } from '../types/ledger'
 import { calculateNetSalary } from './tax'
 import { combineBillsWithLoans } from './loans'
 import { categoryForTransfer, locationTypeForTransfer } from './transferLedger'
@@ -96,7 +95,7 @@ export function reconcilePersonReferences(data: AppDataV2): AppDataV2 {
   const fallbackOwnerId = validIds.has(data.primaryPersonId) ? data.primaryPersonId : data.people[0].id
   const stillHasMultiplePeople = data.people.length >= 2
 
-  function reassign<T extends { location: BillLocation; ownerId: string; payee: string; payeeSharePercent: number }>(item: T): T {
+  function reassign<T extends { location: RecurringTemplateLocation; ownerId: string; payee: string; payeeSharePercent: number }>(item: T): T {
     if (item.location === 'joint') {
       if (!stillHasMultiplePeople) {
         return { ...item, location: 'personal', ownerId: fallbackOwnerId, payee: '', payeeSharePercent: 100 }
@@ -128,7 +127,7 @@ export function reconcilePersonReferences(data: AppDataV2): AppDataV2 {
   // every load. The generator then books it on the current account as money IN
   // (`direction` is 'in' whenever personal is not the source). Transfers are
   // checked endpoint by endpoint in fallBackDanglingTransfer below.
-  function fallBackDanglingPot<T extends { location: BillLocation; potId?: string; kind?: RecurringTemplate['kind'] }>(item: T): T {
+  function fallBackDanglingPot<T extends { location: RecurringTemplateLocation; potId?: string; kind?: RecurringTemplate['kind'] }>(item: T): T {
     if (item.kind === 'transfer') return item
     if (item.location === 'pot' && !validPotIds.has(item.potId ?? '')) {
       return { ...item, location: 'personal', potId: undefined }
@@ -143,6 +142,8 @@ export function reconcilePersonReferences(data: AppDataV2): AppDataV2 {
   function endpointExists(location: TransferLocation | undefined): boolean {
     if (location?.type === 'pot') return validPotIds.has(location.potId ?? '')
     if (location?.type === 'savings') return validSavingsPotIds.has(location.savingsPotId ?? '')
+    // A person-to-person transfer's recipient must still be in the household.
+    if (location?.type === 'personal' && location.personId) return validIds.has(location.personId)
     return true
   }
 
@@ -153,9 +154,12 @@ export function reconcilePersonReferences(data: AppDataV2): AppDataV2 {
   // somewhere the user never chose would be worse than stopping it, and
   // deleting the template would be a cascade.
   function fallBackDanglingTransfer(t: RecurringTemplate): RecurringTemplate {
-    if (t.kind !== 'transfer' || (endpointExists(t.transferFrom) && endpointExists(t.transferTo))) return t
+    // After `reassign` a removed sender's transfer can name its new owner as
+    // the recipient: money to yourself is no transfer, so it is dangling too.
+    const toSelf = t.transferTo?.type === 'personal' && !!t.transferTo.personId && t.transferTo.personId === t.ownerId
+    if (t.kind !== 'transfer' || (endpointExists(t.transferFrom) && endpointExists(t.transferTo) && !toSelf)) return t
     const from: TransferLocation = endpointExists(t.transferFrom) && t.transferFrom ? t.transferFrom : { type: 'personal' }
-    const to: TransferLocation = endpointExists(t.transferTo) && t.transferTo ? t.transferTo : { type: 'personal' }
+    const to: TransferLocation = endpointExists(t.transferTo) && t.transferTo && !toSelf ? t.transferTo : { type: 'personal' }
     return { ...t, transferFrom: from, transferTo: to, location: locationTypeForTransfer(from, to), categoryId: categoryForTransfer(from, to), active: false }
   }
 
@@ -187,7 +191,10 @@ export function reconcilePersonReferences(data: AppDataV2): AppDataV2 {
     ...data,
     primaryPersonId: fallbackOwnerId,
     transactions,
-    recurringTemplates: data.recurringTemplates.map(reassign).map(fallBackDanglingPot).map(fallBackDanglingTransfer).map(deriveTransferLocation),
+    // Backstop for imported data: a recurring income paid in from outside whose
+    // savings pot or card no longer exists is dropped (deleteReassign removes it
+    // with its target in-app).
+    recurringTemplates: data.recurringTemplates.filter((t) => !(t.location === 'savings' && !validSavingsPotIds.has(t.savingsPotId ?? '')) && !(t.location === 'credit_card' && !data.creditCards.some((c) => c.id === t.creditCardId))).map(reassign).map(fallBackDanglingPot).map(fallBackDanglingTransfer).map(deriveTransferLocation),
     loans: data.loans
       .map(reassign)
       .map(fallBackDanglingPot)

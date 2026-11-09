@@ -30,6 +30,7 @@ import { computeMinimumPaymentAmount, withLiveBalances } from './creditCards'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
+import { cardActivity } from './outsideIncome'
 
 // Exported for lib/scenarios.ts's savings-pot recurring-deposit-change
 // action, which needs the same weekly/every_n_weeks/quarterly/annual →
@@ -72,8 +73,10 @@ export function buildLegacyAppData(ledgerData: AppDataV2, asOf: Date = new Date(
     }
   })
 
+  // Money paid in from outside straight onto a savings pot or a credit card
+  // never reaches anyone's spendable cash, so the What-if baseline skips it.
   const bills: LegacyBill[] = ledgerData.recurringTemplates
-    .filter((t) => t.active)
+    .filter((t): t is RecurringTemplate & { location: LegacyBill['location'] } => t.active && t.location !== 'savings' && t.location !== 'credit_card')
     .map((template) => {
       const category = ledgerData.categories.find((c) => c.id === template.categoryId)
       return {
@@ -97,7 +100,7 @@ export function buildLegacyAppData(ledgerData: AppDataV2, asOf: Date = new Date(
   // Live balances, not the stored anchors — the What-if engine's whole
   // job is to reason about what's owed right now, so it must see the
   // derived figure (see cardBalanceAsOf in creditCards.ts).
-  for (const card of withLiveBalances(ledgerData.creditCards.filter((c) => c.active), ledgerData.transactions)) {
+  for (const card of withLiveBalances(ledgerData.creditCards.filter((c) => c.active), cardActivity(ledgerData))) {
     const minPayment = computeMinimumPaymentAmount(card)
     if (minPayment <= 0) continue
     bills.push({
@@ -165,7 +168,7 @@ export function buildLegacyAppData(ledgerData: AppDataV2, asOf: Date = new Date(
     // separate from the minimum-payment-folded-into-bills loop above
     // (which only feeds baseline monthly totals). Only active cards are
     // exposed as scenario targets, same filter as that loop.
-    creditCards: withLiveBalances(ledgerData.creditCards.filter((c) => c.active), ledgerData.transactions),
+    creditCards: withLiveBalances(ledgerData.creditCards.filter((c) => c.active), cardActivity(ledgerData)),
     scenarios: ledgerData.scenarios,
     primaryPersonId: ledgerData.primaryPersonId,
 

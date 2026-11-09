@@ -30,6 +30,8 @@ import { compareByDateSalaryFirst } from './cycleSummary'
 import { toLocalIsoDate as toIso, parseLocalDate } from './date'
 import { formatCurrency } from './format'
 import { transferLocationLabel } from './transferLedger'
+import { cardActivity } from './outsideIncome'
+import { transferRecipientId } from './personTransfer'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -371,8 +373,9 @@ function transactionDetail(t: Transaction, data: AppDataV2): StatementRowDetail 
     payee: t.payee ?? '',
     note: t.note ?? '',
     owner: nameOf(data.people, t.ownerId),
-    from: isTransfer ? transferLocationLabel(t.fromLocation, data.savingsPots, data.pots ?? []) : '',
-    to: isTransfer ? transferLocationLabel(t.toLocation, data.savingsPots, data.pots ?? []) : '',
+    // Person-to-person: the From is the sender's (owner's) current account, named.
+    from: isTransfer ? transferLocationLabel(transferRecipientId(t) ? { type: 'personal', personId: t.ownerId } : t.fromLocation, data.savingsPots, data.pots ?? [], data.people) : '',
+    to: isTransfer ? transferLocationLabel(t.toLocation, data.savingsPots, data.pots ?? [], data.people) : '',
     linkedTo,
     source: sourceLabel(t.sourceType, t.id.startsWith('generated:') ? 'Scheduled' : 'Logged by hand'),
     roundedFrom: t.roundedFrom ?? null,
@@ -622,7 +625,7 @@ function buildCard(entry: DeckEntry, data: AppDataV2, ctx: CardContext): BuiltCa
       const card = data.creditCards.find((c) => c.id === entry.cardId)
       if (!card) return null
       const periods = creditCardCyclePeriodsInRange(card, ctx.windowStartDate, ctx.windowEndDate)
-      const sections = buildCreditCardCycleSections(card, data.transactions, periods)
+      const sections = buildCreditCardCycleSections(card, cardActivity(data), periods)
       const flat = sections
         .flatMap((s) => s.rows)
         .filter((r) => r.date >= ctx.fullRangeStart && r.date <= ctx.fullRangeEnd)
@@ -632,9 +635,9 @@ function buildCard(entry: DeckEntry, data: AppDataV2, ctx: CardContext): BuiltCa
       // fold of the rows. Interest has no row of its own to fold (see
       // CreditCardCycleSection.closingBalance' own comment), so summing
       // rows would silently omit it.
-      const opening = cardBalanceAsOf(card, data.transactions, addDays(ctx.windowStartDate, -1))
+      const opening = cardBalanceAsOf(card, cardActivity(data), addDays(ctx.windowStartDate, -1))
       const rows: StatementRow[] = flat.map((r, i) => {
-        const balance = cardBalanceAsOf(card, data.transactions, parseLocalDate(r.date))
+        const balance = cardBalanceAsOf(card, cardActivity(data), parseLocalDate(r.date))
         // Spend increases what is owed; a payment reduces it.
         const amount = r.type === 'credit_card_payment' ? round2(r.amount) : round2(-r.amount)
         return {
