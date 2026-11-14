@@ -1513,6 +1513,21 @@ that reorders JSX moves the phone too. 🚨 `SwipeToDelete` must not take pointe
   and clamps the balance. Use `appliedExtraAt`.
 - Credit cards have no dated What-if maths, so no Statement. `TECHNICAL.md` §29 in both live apps.
 
+### 1.41 No row is cleared while it is dated after today (2026-11-14)
+
+- **The Current balance and the running balance are only the same quantity if this holds.** The
+  first is the opening balance plus every cleared row, unbounded by date; the second is a fold in
+  date order. A cleared row dated next week is in the first today and in the second next week.
+- **Status is set from the date at creation, so every date edit must re-derive it.**
+  `updateTransaction` runs `reopenIfRedatedToFuture`; a row moved to today or earlier is cleared by
+  auto-clear's Step 1.
+- **Stored data is repaired on load** by `reopenFutureClearedRows` in `autoClearDuePayments`. It
+  returns the same reference when there is nothing to reopen, so a normal load writes nothing.
+- `settleLoan` writes `cleared` without reading the date; a future-dated settlement is reopened by
+  the step above and clears on its date.
+- `verify-future-cleared-row.ts`, on `finance-ledger-backup-2026-11-14-mum.json`, with a control
+  that reproduces the gap. `TECHNICAL.md` §10 in both live apps.
+
 ## 2. The credit-card engine is the single most fragile area
 
 **One reported symptom — "balance never reaches zero" — took five separate fixes**, each a
