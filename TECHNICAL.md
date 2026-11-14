@@ -484,11 +484,20 @@ Two separate things come due, and both are handled:
 Pure and idempotent: it returns the **same `data` reference, unchanged**, when there is nothing to
 settle, which is what lets the caller run it on every load without causing a write.
 
-**Clearing runs both ways.** `reconcileRecurringTemplateTransactions` does the reverse: a
-generated row dated in the future is **never** `cleared`. Written as a *state* rule rather than a
-transition, so rows already stranded by an earlier bug self-heal on load. Safe only because
-`autoClearDuePayments` is the only thing in the app that clears anything, and clearing has no side
-effect of its own. **If a manual "mark as cleared" path is ever added, this needs revisiting.**
+**Clearing runs both ways.** No row is ever `cleared` while it is dated after today:
+`reconcileRecurringTemplateTransactions` reopens a generated row, and `reopenFutureClearedRows`
+(the step after the reconcilers) reopens **any** stored row, ad-hoc entries and one-off transfers
+included. Both are *state* rules rather than transitions, so a row already stranded self-heals on
+load and clears again on its own date. Safe only because `autoClearDuePayments` is the only thing
+in the app that clears anything, and clearing has no side effect of its own. **If a manual "mark as
+cleared" path is ever added, this needs revisiting.**
+
+🚨 **An edit that changes the date must re-derive the status.** Status comes from the date when a
+row is created; `updateTransaction` merges the edit in, so without `reopenIfRedatedToFuture` a row
+added as today and moved to next week stays `cleared`. The Current balance (every cleared row,
+unbounded by date) then counts it while the running balance (a date-ordered fold) does not reach it
+until its date, and the two figures disagree by its amount. `verify-future-cleared-row.ts`, on a
+real backup where the gap was £250.
 
 **The edit window** (`lib/editWindow.ts`, `EDIT_WINDOW_DAYS = 5`). A payment dated in the last five
 days, today included, can still be corrected: a payment on 9 Oct is open 9–13 Oct and settles on

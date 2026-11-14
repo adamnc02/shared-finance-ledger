@@ -32,7 +32,7 @@ import { createCategory, removeCategorySafely } from '../lib/categories'
 import { applyOpeningEdit } from '../lib/openingBalance'
 import { recordCreditCardSpend, recordCreditCardLumpPayment, pickNextSharedCardColor } from '../lib/creditCards'
 import { applyLoanOverpayment, settleLoan, calibrateLoanFromStatementLines, reassignLoanRecurringOverpaymentTransactions, type CalibrationResult } from '../lib/ledgerLoans'
-import { autoClearDuePayments } from '../lib/autoClear'
+import { autoClearDuePayments, reopenIfRedatedToFuture } from '../lib/autoClear'
 import { applyTemplateScheduleChange, type TemplateSchedule } from '../lib/schedule'
 import { applyPensionScheduleChange, type PensionSchedule } from '../lib/pensionLedger'
 import { applyLoanStartDateChange, applyRecurringOverpaymentStartDateChange } from '../lib/ledgerLoans'
@@ -531,7 +531,8 @@ function LedgerDataProvider({ children, store, initialData }: { children: ReactN
         // A transfer whose endpoints changed is re-routed, not just re-labelled:
         // location, direction and the flat pot ids all follow the new endpoints.
         const endpointsEdited = t.type === 'transfer' && (updates.fromLocation !== undefined || updates.toLocation !== undefined)
-        const merged = endpointsEdited ? retargetTransferRow({ ...t, ...updates }, updates.fromLocation ?? t.fromLocation, updates.toLocation ?? t.toLocation) : { ...t, ...updates }
+        // A cleared row moved after today is pending again (autoClear.ts).
+        const merged = reopenIfRedatedToFuture(endpointsEdited ? retargetTransferRow({ ...t, ...updates }, updates.fromLocation ?? t.fromLocation, updates.toLocation ?? t.toLocation) : { ...t, ...updates }, updates, todayIso())
         const payCycle = prev.payCycles.find((c) => c.personId === merged.ownerId)
         const jar = coinJarForOwner(prev.pots, merged.ownerId)
         return { ...merged, ...roundUpFields({ ...merged, amount: updates.amount ?? unroundedAmount(t) }, payCycle, jar?.id) }

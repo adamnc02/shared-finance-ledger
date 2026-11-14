@@ -464,6 +464,35 @@ function reconcilePotTransactions(data: AppDataV2): AppDataV2 {
   return changed ? { ...data, transactions } : data
 }
 
+/**
+ * A row is cleared only once its date has arrived. Status is set from the
+ * date when a row is created, but a row created as today and then edited
+ * to next week kept 'cleared': the Current balance (every cleared row,
+ * unbounded by date) then counted it while the running balance (a fold in
+ * date order) did not reach it until next week, so the two figures on one
+ * screen differed by its amount.
+ *
+ * Applied to every edit by LedgerContext.updateTransaction. A row moved
+ * to today or earlier needs nothing here: Step 1 of autoClearDuePayments
+ * clears it.
+ */
+export function reopenIfRedatedToFuture(row: Transaction, updates: Partial<Transaction>, asOfIso: string): Transaction {
+  if (updates.date === undefined || row.status !== 'cleared' || row.date <= asOfIso) return row
+  return { ...row, status: 'pending' }
+}
+
+/**
+ * Every stored row that is cleared but dated after today goes back to
+ * pending, and Step 1 clears it again on its own date. Repairs rows
+ * written before reopenIfRedatedToFuture existed, and any other writer
+ * that set 'cleared' without checking the date. Returns the SAME `data`
+ * when there is nothing to reopen, so a normal load writes nothing.
+ */
+export function reopenFutureClearedRows(data: AppDataV2, asOfIso: string): AppDataV2 {
+  if (!data.transactions.some((t) => t.status === 'cleared' && t.date > asOfIso)) return data
+  return { ...data, transactions: data.transactions.map((t) => (t.status === 'cleared' && t.date > asOfIso ? { ...t, status: 'pending' } : t)) }
+}
+
 export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): AppDataV2 {
   const asOfIso = toLocalIsoDate(asOf)
   let result = data
@@ -477,6 +506,15 @@ export function autoClearDuePayments(data: AppDataV2, asOf: Date = new Date()): 
   )
   if (reconciled !== data) {
     result = reconciled
+    changed = true
+  }
+
+  // Step 0 — a cleared row dated after today is reopened (see
+  // reopenFutureClearedRows). After the reconcilers, so a row they re-date
+  // is checked in the same pass.
+  const reopened = reopenFutureClearedRows(result, asOfIso)
+  if (reopened !== result) {
+    result = reopened
     changed = true
   }
 
